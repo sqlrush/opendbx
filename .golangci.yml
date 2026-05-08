@@ -1,0 +1,36 @@
+# golangci-lint config for opendbx
+# 详细规范见设计仓 docs/cicd-and-methodology.md § 3
+# 本文件在 spec-0.10 中正式定稿。
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - gosec
+    - gocritic
+    - revive
+    - goimports
+    - gofmt
+    - goconst
+    - errorlint
+    - ineffassign
+    - nilnil
+    - nolintlint
+    - unused
+
+issues:
+  exclude-rules:
+    - linters: [errorlint]
+      text: "error strings should not be capitalized"
+    - path: _test\.go
+      linters: [goconst]
+
+output:
+  formats:
+    - format: colored-line-number

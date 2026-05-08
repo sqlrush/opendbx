@@ -1,0 +1,48 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.iml
+
+# Go build artifacts
+/bin/
+/dist/
+/build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go test
+*.test
+*.out
+coverage.out
+coverage.html
+*.prof
+*.pprof
+
+# Go workspace
+go.work
+go.work.sum
+
+# Environment files (never commit secrets)
+.env
+.env.local
+*.pem
+*.key
+
+# Personal notes
+NOTES.md
+TODO.local.md
+
+# Generated docs
+/dist-docs/
