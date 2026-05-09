@@ -34,10 +34,22 @@ else
 fi
 
 if [ -z "$LINT_BIN" ]; then
-  echo "[commit-msg hook] WARN: opendbrb-commit-lint binary not found; skipping check." >&2
-  echo "  install:  cd scripts/opendbrb-commit-lint && go install ." >&2
+  # codex review #H-5 fix: fail-closed by default. Bootstrap-friendly opt-out
+  # requires explicit OPENDBRB_COMMIT_LINT_OPTIONAL=1 in env.
+  if [ "${OPENDBRB_COMMIT_LINT_OPTIONAL:-}" = "1" ]; then
+    echo "[commit-msg hook] WARN: opendbrb-commit-lint not found; bypass via OPENDBRB_COMMIT_LINT_OPTIONAL=1" >&2
+    exit 0
+  fi
+  echo "[commit-msg hook] ERR: opendbrb-commit-lint binary not found." >&2
+  echo "  install:  cd <opendbrb>/scripts/opendbrb-commit-lint && go install ." >&2
   echo "  or build: go build -o /tmp/opendbrb-commit-lint ." >&2
-  exit 0  # don't block commit if binary missing in bootstrap; CI will catch.
+  echo "" >&2
+  echo "  bootstrap-friendly bypass (NOT for production use):" >&2
+  echo "    OPENDBRB_COMMIT_LINT_OPTIONAL=1 git commit ..." >&2
+  echo "" >&2
+  echo "  emergency one-off bypass:" >&2
+  echo "    git commit --no-verify ..." >&2
+  exit 1
 fi
 
 exec "$LINT_BIN" check "$MSG_FILE"
