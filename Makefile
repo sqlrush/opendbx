@@ -1,4 +1,4 @@
-.PHONY: all build test gate lint fmt clean help
+.PHONY: all build test gate lint fmt clean help hooks-install hooks-status
 
 BIN_DIR := bin
 BIN_NAME := opendbx
@@ -44,3 +44,41 @@ gate: ## Local layer-2 gate (must pass before push)
 
 clean: ## Remove build artifacts
 	rm -rf $(BIN_DIR) coverage.out *.prof
+
+# ===== git hooks (spec-0.1 D-8) =====
+
+GIT_HOOKS_DIR := $(shell git rev-parse --git-dir 2>/dev/null)/hooks
+SRC_HOOKS := $(wildcard git-hooks/*)
+
+hooks-install: ## Install repo git hooks into .git/hooks/ (idempotent)
+	@if [ -z "$(GIT_HOOKS_DIR)" ]; then \
+		echo "ERR: not in a git repo"; exit 1; \
+	fi
+	@for h in $(SRC_HOOKS); do \
+		name=$$(basename "$$h"); \
+		dest="$(GIT_HOOKS_DIR)/$$name"; \
+		ln -sf "$(CURDIR)/$$h" "$$dest"; \
+		echo "linked $$h -> $$dest"; \
+	done
+	@echo ""
+	@echo "git hooks installed."
+	@echo "next: build commit-lint binary so the hook can find it:"
+	@echo "  cd ../opendbrb/scripts/opendbrb-commit-lint && go install ."
+	@echo "  (or build to /tmp/opendbrb-commit-lint as a fallback)"
+
+hooks-status: ## Show installed git hooks
+	@if [ -z "$(GIT_HOOKS_DIR)" ]; then \
+		echo "ERR: not in a git repo"; exit 1; \
+	fi
+	@for h in $(SRC_HOOKS); do \
+		name=$$(basename "$$h"); \
+		dest="$(GIT_HOOKS_DIR)/$$name"; \
+		if [ -L "$$dest" ]; then \
+			target=$$(readlink "$$dest"); \
+			echo "OK    $$name -> $$target"; \
+		elif [ -e "$$dest" ]; then \
+			echo "FILE  $$name (not symlink — manually managed?)"; \
+		else \
+			echo "MISS  $$name (run 'make hooks-install')"; \
+		fi; \
+	done
