@@ -289,97 +289,16 @@ Reserved — actual install scripts land in spec-4.7-install.
 done
 
 # ---- docs/dependencies/ ----
-mkdir -p docs/dependencies
-[ -f docs/dependencies/README.md ] || cat > docs/dependencies/README.md <<'EOF'
-# `docs/dependencies/` — dependency allowlist
-
-opendbx enforces a 3-tier dependency allowlist per spec-0.2 § 2.5 + CLAUDE.md
-rule 6.
-
-## `allowlist.yml` shape
-
-```yaml
-direct_allowed:
-  - module: github.com/example/foo
-    introduced_by: spec-X.Y-slug
-transitive_lock:
-  - module: golang.org/x/text
-    version: v0.14.0
-tool_only:
-  - module: golang.org/x/tools
-    introduced_by: spec-0.2
-```
-
-## Tiers
-
-1. **`direct_allowed`** — modules that opendbx explicitly `require`s.
-   Adding requires a spec decision (`introduced_by` must reference a real
-   spec id). Enforced by `tools/dep-allowlist-check`.
-
-2. **`transitive_lock`** — snapshot of indirect modules pulled by
-   `direct_allowed` deps. Updates require human review (compare diff vs
-   previous lock snapshot before merging).
-
-3. **`tool_only`** — modules importable **only** by code under `tools/`.
-   Production code (`cmd/`, `internal/`) must not import these.
-
-## Workflow when adding a new dep
-
-1. Spec mentions the dep in its § 5 contract with `introduced_by: spec-X.Y`.
-2. PR adds the dep to the relevant tier in `allowlist.yml`.
-3. `go get` and `go mod tidy` are run.
-4. CI `dep-check` job validates `go list -m -json all` against `allowlist.yml`.
-5. If transitive deps changed, update `transitive_lock` in the same PR.
-
-## Reference
-
-- `tools/dep-allowlist-check/` — enforcement binary
-- spec-0.2-go-module-layout.md § 2.4 / § 2.5
-- CLAUDE.md rule 6 (dependency management)
-EOF
-
-[ -f docs/dependencies/allowlist.yml ] || cat > docs/dependencies/allowlist.yml <<'EOF'
-# opendbx dependency allowlist (spec-0.2 § 2.5)
-#
-# Three tiers — see docs/dependencies/README.md for semantics.
-# Enforced by tools/dep-allowlist-check.
-#
-# Business deps (direct_allowed) live here as a contract; the actual `require`
-# in go.mod is added only by the spec that introduces the dep (spec-0.12 ~ 2.12).
-# `golang.org/x/tools` is the unique exception: spec-0.2 itself introduces it
-# under tool_only and adds it to root go.mod (T-5 import-rules-check uses
-# go/packages from golang.org/x/tools).
-
-direct_allowed:
-  - module: github.com/gdamore/tcell/v2
-    purpose: terminal abstraction
-    introduced_by: spec-0.12-tcell-bootstrap
-  - module: github.com/yuin/goldmark
-    purpose: Markdown AST parsing
-    introduced_by: spec-1.11-markdown-block
-  - module: github.com/alecthomas/chroma/v2
-    purpose: source code syntax highlighting
-    introduced_by: spec-1.12-code-highlight-block
-  - module: github.com/mattn/go-runewidth
-    purpose: rune width (EastAsianWidth=false invariant per CLAUDE.md § 3.9)
-    introduced_by: spec-1.14-string-width
-  - module: github.com/jackc/pgx/v5
-    purpose: PostgreSQL driver
-    introduced_by: spec-1.18-pg-driver
-  - module: github.com/anthropics/anthropic-sdk-go
-    purpose: Claude LLM client
-    introduced_by: spec-1.20-llm-client
-  - module: modernc.org/sqlite
-    purpose: pure-Go SQLite (CGO_ENABLED=0 cross-compile compatible)
-    introduced_by: spec-2.12-session-sqlite-fts5
-
-transitive_lock: []  # populated by spec-0.12 onwards as direct deps land
-
-tool_only:
-  - module: golang.org/x/tools
-    purpose: go/packages — used by tools/import-rules-check only
-    introduced_by: spec-0.2-go-module-layout
-EOF
+# Note: this script does NOT regenerate docs/dependencies/{README.md,allowlist.json}.
+# Those files are committed to the repo as authoritative; previous versions of
+# this scaffold held an embedded fallback that drifted from the real allowlist
+# (codex M-08). If the files are missing, fail loudly instead of writing stale
+# templates.
+if [ ! -f docs/dependencies/README.md ] || [ ! -f docs/dependencies/allowlist.json ]; then
+  echo "ERR: docs/dependencies/{README.md,allowlist.json} missing." >&2
+  echo "     They are committed to the repo; restore from git rather than running scaffold." >&2
+  exit 1
+fi
 
 echo "scaffold complete."
 echo ""

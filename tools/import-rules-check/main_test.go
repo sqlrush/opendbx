@@ -25,6 +25,14 @@ func TestPathToLayer(t *testing.T) {
 		{"encoding/json", rules.LayerStdlib},
 		{"os/exec", rules.LayerStdlib},
 		{"io", rules.LayerStdlib},
+		{"context", rules.LayerStdlib},
+		{"strings", rules.LayerStdlib},
+		// unknown opendbx-internal path
+		{"github.com/sqlrush/opendbx/internal/foo", rules.LayerUnknown},
+		// pkg + tests sub-paths
+		{"github.com/sqlrush/opendbx/pkg/skillsdk/v2", rules.LayerPkg},
+		{"github.com/sqlrush/opendbx/tests/e2e/uitest-visual", rules.LayerTests},
+		{"github.com/sqlrush/opendbx/tools/dep-allowlist-check", rules.LayerTools},
 		// external
 		{"golang.org/x/tools/go/packages", rules.LayerExternal},
 		{"github.com/jackc/pgx/v5", rules.LayerExternal},
@@ -79,10 +87,20 @@ func TestCheckEdge_LayerMatrix(t *testing.T) {
 
 		// cmd → platform/version (UNIQUE EXCEPTION)
 		{"cmd→platform/version", M + "cmd/opendbx", M + "internal/platform/version", true, ""},
+		// cmd → platform/version subpkg (NOT covered by exception — exact match only)
+		{"cmd→platform/version/sub_FAIL", M + "cmd/opendbx", M + "internal/platform/version/build", false, "cmd may import only"},
 		// cmd → other platform = FAIL
 		{"cmd→platform/config_FAIL", M + "cmd/opendbx", M + "internal/platform/config", false, "cmd may import only"},
 		{"cmd→platform/apperr_FAIL", M + "cmd/opendbx", M + "internal/platform/apperr", false, "cmd may import only"},
 		{"cmd→platform/migrations_FAIL", M + "cmd/opendbx", M + "internal/platform/migrations", false, "migrations"},
+
+		// schemas global-read (spec § 2.2 重要细则 #2): any layer may import schemas
+		{"platform→schemas_OK", M + "internal/platform/apperr", M + "internal/domain/schemas", true, ""},
+		{"cmd→schemas_OK", M + "cmd/opendbx", M + "internal/domain/schemas", true, ""},
+		{"app→schemas_OK", M + "internal/app/diagnose", M + "internal/domain/schemas", true, ""},
+		{"entrypoints→schemas_OK", M + "internal/entrypoints/admin", M + "internal/domain/schemas", true, ""},
+		// schemas sibling path (boundary check): platform → domain/schemas-foo should still fail with the regular layer rule
+		{"platform→schemas_sibling_FAIL", M + "internal/platform/apperr", M + "internal/domain/schemas-foo", false, "not allowed"},
 
 		// cmd → other layers = FAIL
 		{"cmd→app_FAIL", M + "cmd/opendbx", M + "internal/app/cli/tui", false, "not allowed"},
@@ -126,6 +144,9 @@ func TestCheckEdge_LayerMatrix(t *testing.T) {
 		{"domain→migrations_FAIL", M + "internal/domain/db", M + "internal/platform/migrations", false, "migrations may only"},
 		{"platform→migrations_FAIL", M + "internal/platform/version", M + "internal/platform/migrations", false, "migrations may only"},
 		{"entrypoints→migrations_FAIL", M + "internal/entrypoints/admin", M + "internal/platform/migrations", false, "migrations may only"},
+		{"app→migrations_subpkg_FAIL", M + "internal/app/diagnose", M + "internal/platform/migrations/sql", false, "migrations may only"},
+		// migrations sibling path (boundary check): app → platform/migrations2 should be a normal layer rule (which IS allowed app→platform)
+		{"app→migrations_sibling_OK", M + "internal/app/diagnose", M + "internal/platform/migrations2", true, ""},
 
 		// tools
 		{"tools→stdlib", M + "tools/import-rules-check", "fmt", true, ""},
@@ -172,14 +193,18 @@ func TestCheckCluster(t *testing.T) {
 		{"services_mcp→auth_FAIL", M + "internal/app/services/mcp", M + "internal/app/services/auth", false, "services must communicate"},
 		{"services_costtracker→notifier_FAIL", M + "internal/app/services/costtracker", M + "internal/app/services/notifier", false, "services must communicate"},
 		{"services_self_OK", M + "internal/app/services/mcp", M + "internal/app/services/mcp/server", true, ""},
+		{"services_self_util→sub_OK", M + "internal/app/services/mcp/util", M + "internal/app/services/mcp/sub", true, ""},
 		{"services_to_app_other_OK", M + "internal/app/services/mcp", M + "internal/app/diagnose", true, ""},
 		// db driver isolation
 		{"db_postgres→mysql_FAIL", M + "internal/domain/db/postgres", M + "internal/domain/db/mysql", false, "DB drivers are isolated"},
 		{"db_mysql→oracle_FAIL", M + "internal/domain/db/mysql", M + "internal/domain/db/oracle", false, "DB drivers are isolated"},
 		{"db_postgres→postgres_self_OK", M + "internal/domain/db/postgres", M + "internal/domain/db/postgres/util", true, ""},
 		{"db_postgres→db_root_OK", M + "internal/domain/db/postgres", M + "internal/domain/db", true, ""},
-		// scrollback ↛ components
+		// scrollback ↛ components (boundary-safe)
 		{"scrollback→components_FAIL", M + "internal/app/cli/render/scrollback", M + "internal/app/cli/components", false, "scrollback is a render"},
+		{"scrollback_sub→components_FAIL", M + "internal/app/cli/render/scrollback/internal", M + "internal/app/cli/components", false, "scrollback is a render"},
+		// scrollback prefix-but-not-boundary sibling: render/scrollback-extra should NOT trip cluster rule
+		{"scrollback_sibling_OK", M + "internal/app/cli/render/scrollback-extra", M + "internal/app/cli/components", true, ""},
 		// unrelated edges pass
 		{"unrelated_OK", M + "internal/app/diagnose", M + "internal/domain/llm", true, ""},
 	}
@@ -237,13 +262,17 @@ func TestCheckRenderDAG(t *testing.T) {
 		{"streaming→scheduler_FAIL", R + "streaming", R + "scheduler", false, "render-DAG"},
 
 		// edges outside render/ are ignored
-		{"non_render_from", R + "../diagnose", R + "buffer", true, ""},
-		{"non_render_to", R + "buffer", "fmt", true, ""},
+		{"non_render_from_diagnose", "github.com/sqlrush/opendbx/internal/app/diagnose", R + "buffer", true, ""},
+		{"non_render_to_stdlib", R + "buffer", "fmt", true, ""},
 		{"both_non_render", "fmt", "io", true, ""},
 
 		// edges into render-with-subpkg also classify
 		{"terminal_subpkg→buffer", R + "terminal/sub", R + "buffer", true, ""},
 		{"buffer_subpkg→terminal_FAIL", R + "buffer/sub", R + "terminal", false, "render-DAG"},
+
+		// unknown render subpackage hard-fails (must be added to DAG first)
+		{"unknown_render_subpkg_from_FAIL", R + "newpkg/foo", R + "buffer", false, "not in RenderOrder"},
+		{"unknown_render_subpkg_to_FAIL", R + "buffer", R + "futurepkg", false, "not in RenderOrder"},
 	}
 
 	for _, tc := range cases {

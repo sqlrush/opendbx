@@ -1,0 +1,28 @@
+{
+  "_comment": "opendbx dependency allowlist (spec-0.2 § 2.5). Three tiers: direct_allowed / transitive_lock / tool_only. Schema and semantics — see docs/dependencies/README.md.",
+  "_comment2": "Business deps (direct_allowed) are documented promises; the actual `require` in go.mod is added by the spec that introduces the dep (spec-0.12 ~ 2.12). `golang.org/x/tools` is the unique tool-only exception that spec-0.2 itself introduces and lands in root go.mod (D-5 / D-6 use go/packages).",
+
+  "direct_allowed": [
+    { "module": "github.com/gdamore/tcell/v2",         "purpose": "terminal abstraction",                                  "introduced_by": "spec-0.12-tcell-bootstrap" },
+    { "module": "github.com/yuin/goldmark",            "purpose": "Markdown AST parsing",                                  "introduced_by": "spec-1.11-markdown-block" },
+    { "module": "github.com/alecthomas/chroma/v2",     "purpose": "source code syntax highlighting",                       "introduced_by": "spec-1.12-code-highlight-block" },
+    { "module": "github.com/mattn/go-runewidth",       "purpose": "rune width (EastAsianWidth=false invariant)",           "introduced_by": "spec-1.14-string-width" },
+    { "module": "github.com/jackc/pgx/v5",             "purpose": "PostgreSQL driver",                                     "introduced_by": "spec-1.18-pg-driver" },
+    { "module": "github.com/anthropics/anthropic-sdk-go", "purpose": "Claude LLM client",                                  "introduced_by": "spec-1.20-llm-client" },
+    { "module": "modernc.org/sqlite",                  "purpose": "pure-Go SQLite (CGO_ENABLED=0 cross-compile compatible)", "introduced_by": "spec-2.12-session-sqlite-fts5" }
+  ],
+
+  "transitive_lock": [
+    { "module": "golang.org/x/mod",         "version": "v0.25.0" },
+    { "module": "golang.org/x/sync",        "version": "v0.10.0" },
+    { "module": "golang.org/x/sys",         "version": "v0.29.0" },
+    { "module": "golang.org/x/telemetry",   "version": "v0.0.0-20240521205824-bda55230c457" },
+    { "module": "golang.org/x/net",         "version": "v0.34.0" },
+    { "module": "github.com/google/go-cmp", "version": "v0.6.0" },
+    { "module": "github.com/yuin/goldmark", "version": "v1.4.13" }
+  ],
+
+  "tool_only": [
+    { "module": "golang.org/x/tools", "purpose": "go/packages — used by tools/import-rules-check + tools/dep-allowlist-check", "introduced_by": "spec-0.2-go-module-layout" }
+  ]
+}

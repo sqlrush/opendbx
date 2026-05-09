@@ -62,6 +62,8 @@ jobs:
           cache: true
       - name: Build
         run: make build
+      - name: CGO_ENABLED=0 smoke build (spec § 3.3)
+        run: CGO_ENABLED=0 go build -o /tmp/opendbx-cgo0 ./cmd/opendbx
       - name: Smoke test --version
         run: ./bin/opendbx --version
       - name: Smoke test interact stub

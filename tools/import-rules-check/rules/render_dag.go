@@ -43,33 +43,59 @@ var RenderOrder = []string{
 	"width",
 }
 
-// renderIndex returns the position of a render-subpackage path in
-// RenderOrder, or -1 if path is not within the render subsystem (or is the
-// render root itself).
-func renderIndex(importPath string) int {
+// renderClassify inspects an import path. Returns:
+//
+//	(idx, ok=true)            — path is under render/ AND its first segment
+//	                            is in RenderOrder; idx is RenderOrder position.
+//	(0, ok=false, unknown="x") — path is under render/ but first segment is
+//	                            NOT in RenderOrder (unknown subpackage —
+//	                            must be added to DAG before use).
+//	(0, ok=false, unknown="")  — path is not under render/ at all.
+func renderClassify(importPath string) (idx int, ok bool, unknown string) {
 	if !strings.HasPrefix(importPath, RenderRoot) {
-		return -1
+		return 0, false, ""
 	}
 	rel := strings.TrimPrefix(importPath, RenderRoot)
 	first := firstSegment(rel)
 	if first == "" {
-		return -1
+		return 0, false, ""
 	}
 	for i, name := range RenderOrder {
 		if first == name {
-			return i
+			return i, true, ""
 		}
 	}
-	return -1
+	return 0, false, first
 }
 
 // CheckRenderDAG returns "" if the edge obeys the render strict DAG, or a
-// violation reason. Edges where either endpoint is outside render/ are
-// ignored (other rule families handle those).
+// violation reason. Behavior:
+//   - Edges where neither endpoint is under render/ are ignored.
+//   - If either endpoint is under render/ but its first segment is unknown
+//     to RenderOrder, the edge fails (a new render subpackage must be
+//     added to RenderOrder explicitly before it can be imported).
+//   - Otherwise: idx_from < idx_to is allowed, idx_from >= idx_to fails.
 func CheckRenderDAG(from, to string) string {
-	fi := renderIndex(from)
-	ti := renderIndex(to)
-	if fi < 0 || ti < 0 {
+	fi, fOK, fUnknown := renderClassify(from)
+	ti, tOK, tUnknown := renderClassify(to)
+
+	// Both outside render/: this rule family doesn't care.
+	if fUnknown == "" && !fOK && tUnknown == "" && !tOK {
+		return ""
+	}
+	// Unknown render subpackage on either side: hard fail (force authors
+	// to update RenderOrder before adding new render/* dirs).
+	if fUnknown != "" {
+		return fmt.Sprintf("render-DAG: from-package render/%s is not in RenderOrder — add it to RenderOrder (and update spec § 2.2) before using. Current order: %s",
+			fUnknown, strings.Join(RenderOrder, " → "))
+	}
+	if tUnknown != "" {
+		return fmt.Sprintf("render-DAG: imported package render/%s is not in RenderOrder — add it to RenderOrder (and update spec § 2.2) before using. Current order: %s",
+			tUnknown, strings.Join(RenderOrder, " → "))
+	}
+	// Only one endpoint is in render/, the other is outside — no DAG
+	// constraint applies (other rule families handle inter-layer).
+	if !fOK || !tOK {
 		return ""
 	}
 	if fi >= ti {

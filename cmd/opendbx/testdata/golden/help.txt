@@ -4,7 +4,7 @@ USAGE:
   opendbx [SUBCOMMAND] [flags]
 
 SUBCOMMANDS:
-  interact       Start interactive TUI session (default)
+  interact       Start interactive TUI session
   agent          Run as autopilot agent (Stage 9+)
   cluster        Cluster mode commands (Stage 9+)
   admin          Administrative commands (migrations, etc.)

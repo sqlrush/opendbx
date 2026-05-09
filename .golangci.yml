@@ -1,52 +1,59 @@
-# golangci-lint config for opendbx
-# 详细规范见设计仓 docs/cicd-and-methodology.md § 3
-# 本文件在 spec-0.10 中正式定稿。
+# golangci-lint v2 config for opendbx
+#
+# spec-0.2 D-7 baseline: enables a minimal set of linters + revive
+# package-naming rules. spec-0.10-lint-static-analysis will expand to the
+# full ruleset.
+#
+# Schema reference: https://golangci-lint.run/usage/configuration/
+
+version: "2"
 
 run:
   timeout: 5m
-  tests: true
 
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck
     - govet
     - staticcheck
     - gosec
-    - gocritic
     - revive
-    - goimports
-    - gofmt
-    - goconst
     - errorlint
     - ineffassign
     - nilnil
-    - nolintlint
     - unused
+    - nolintlint
 
-linters-settings:
-  revive:
-    # spec-0.2 D-7 baseline: only enable package-naming rules. spec-0.10
-    # expands to the full revive ruleset (effective-go + Google Go style).
-    # Naming rules per opendbrb/docs/methodology/go-package-naming.md.
+  settings:
+    revive:
+      rules:
+        - name: package-comments
+        - name: var-naming
+        - name: exported
+
+  exclusions:
     rules:
-      - name: package-comments
-      - name: var-naming
-      - name: exported
+      # error message capitalization conventions differ in opendbx (Code/
+      # Message/Hint triple — Message may start with capital noun) — disable
+      # this errorlint sub-rule.
+      - linters: [errorlint]
+        text: "error strings should not be capitalized"
+      - path: _test\.go
+        linters: [goconst]
+      # Stage-0 scaffolding: stub doc.go files contain only a package
+      # comment + design ref; revive's "exported" rule complains about
+      # packages with no exported identifiers, which is intentional here.
+      - path: internal/.*/doc\.go
+        linters: [revive]
 
-issues:
-  exclude-rules:
-    - linters: [errorlint]
-      text: "error strings should not be capitalized"
-    - path: _test\.go
-      linters: [goconst]
-    # Stage-0 scaffolding: stub doc.go files contain only a package
-    # comment + design ref; revive's "exported" rule pings the package
-    # itself if it has no exported identifiers yet, which is intentional
-    # at this stage.
-    - path: internal/.*/doc\.go
-      linters: [revive]
+formatters:
+  enable:
+    - gofmt
+    - goimports
 
 output:
   formats:
-    - format: colored-line-number
+    text:
+      path: stdout
+      colors: true

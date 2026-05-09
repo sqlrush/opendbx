@@ -12,26 +12,29 @@ import (
 	"testing"
 )
 
-func TestLoadAllowlist_Valid(t *testing.T) {
+func writeAllowlist(t *testing.T, body string) string {
+	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "allowlist.yml")
-	body := `
-direct_allowed:
-  - module: github.com/foo/bar
-    purpose: example
-    introduced_by: spec-1.0
-transitive_lock:
-  - module: golang.org/x/text
-    version: v0.14.0
-tool_only:
-  - module: golang.org/x/tools
-    purpose: go/packages
-    introduced_by: spec-0.2
-`
+	path := filepath.Join(dir, "allowlist.json")
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	a, err := loadAllowlist(path)
+	return path
+}
+
+func TestLoadAllowlist_Valid(t *testing.T) {
+	body := `{
+		"direct_allowed": [
+			{ "module": "github.com/foo/bar", "purpose": "example", "introduced_by": "spec-1.0" }
+		],
+		"transitive_lock": [
+			{ "module": "golang.org/x/text", "version": "v0.14.0" }
+		],
+		"tool_only": [
+			{ "module": "golang.org/x/tools", "purpose": "go/packages", "introduced_by": "spec-0.2" }
+		]
+	}`
+	a, err := loadAllowlist(writeAllowlist(t, body))
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -47,32 +50,55 @@ tool_only:
 }
 
 func TestLoadAllowlist_MissingIntroducedBy(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "allowlist.yml")
-	body := `
-direct_allowed:
-  - module: github.com/foo/bar
-`
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := loadAllowlist(path); err == nil {
+	body := `{"direct_allowed": [{"module": "github.com/foo/bar"}]}`
+	if _, err := loadAllowlist(writeAllowlist(t, body)); err == nil {
 		t.Error("expected error on missing introduced_by")
 	}
 }
 
 func TestLoadAllowlist_MissingTransitiveVersion(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "allowlist.yml")
-	body := `
-transitive_lock:
-  - module: golang.org/x/text
-`
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := loadAllowlist(path); err == nil {
+	body := `{"transitive_lock": [{"module": "golang.org/x/text"}]}`
+	if _, err := loadAllowlist(writeAllowlist(t, body)); err == nil {
 		t.Error("expected error on missing version")
+	}
+}
+
+func TestLoadAllowlist_DuplicateIntraTier(t *testing.T) {
+	body := `{
+		"direct_allowed": [
+			{ "module": "github.com/foo/bar", "introduced_by": "spec-1.0" },
+			{ "module": "github.com/foo/bar", "introduced_by": "spec-2.0" }
+		]
+	}`
+	if _, err := loadAllowlist(writeAllowlist(t, body)); err == nil {
+		t.Error("expected error on intra-tier duplicate")
+	}
+}
+
+func TestLoadAllowlist_UnknownTopField(t *testing.T) {
+	body := `{
+		"direct_allowed": [],
+		"unknown_field": []
+	}`
+	if _, err := loadAllowlist(writeAllowlist(t, body)); err == nil {
+		t.Error("expected error on unknown top-level field")
+	}
+}
+
+// TestLoadAllowlist_CrossTierAllowed checks that a module legitimately
+// appearing in both direct_allowed (forward contract) and transitive_lock
+// (current actual state) does NOT fail the loader (claude M-5 compromise).
+func TestLoadAllowlist_CrossTierAllowed(t *testing.T) {
+	body := `{
+		"direct_allowed": [
+			{ "module": "github.com/yuin/goldmark", "introduced_by": "spec-1.11-markdown-block" }
+		],
+		"transitive_lock": [
+			{ "module": "github.com/yuin/goldmark", "version": "v1.4.13" }
+		]
+	}`
+	if _, err := loadAllowlist(writeAllowlist(t, body)); err != nil {
+		t.Errorf("cross-tier dual listing must be allowed (forward-contract pattern), got: %v", err)
 	}
 }
 

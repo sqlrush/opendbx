@@ -74,11 +74,15 @@ func main() {
 // scan loads all packages under root and returns the list of violation
 // strings (sorted later by caller). Returns the count of opendbx-internal
 // packages scanned for the verbose mode.
+//
+// Tests:true ensures *_test.go files participate in the import graph; the
+// test variant of a package gets a synthesized PkgPath like
+// `<pkg>.test` or `<pkg> [<pkg>.test]` — strip those before classifying.
 func scan(root string) ([]string, int, error) {
 	cfg := &packages.Config{
 		Mode:  packages.NeedName | packages.NeedFiles | packages.NeedImports,
 		Dir:   root,
-		Tests: false,
+		Tests: true,
 	}
 	pkgs, err := packages.Load(cfg, "./...")
 	if err != nil {
@@ -97,19 +101,49 @@ func scan(root string) ([]string, int, error) {
 
 	var violations []string
 	scanned := 0
+	seen := make(map[string]bool, len(pkgs))
 	for _, pkg := range pkgs {
+		fromPath := canonicalPath(pkg.PkgPath)
 		// Only consider packages from the opendbx module (skip stdlib + transitive
 		// external deps that get pulled into the package graph).
-		if !strings.HasPrefix(pkg.PkgPath, rules.ModulePrefix) {
+		if !strings.HasPrefix(fromPath, rules.ModulePrefix) {
 			continue
 		}
-		scanned++
+		// Avoid double-counting: Tests:true emits the same package twice
+		// (production + test variant). Count distinct PkgPaths only.
+		if !seen[fromPath] {
+			seen[fromPath] = true
+			scanned++
+		}
 		for _, imp := range pkg.Imports {
-			edges := checkEdge(pkg.PkgPath, imp.PkgPath)
+			toPath := canonicalPath(imp.PkgPath)
+			// Skip self-edges (Tests:true synthesizes test variant of a
+			// package that imports itself; not a real Go import edge).
+			if fromPath == toPath {
+				continue
+			}
+			edges := checkEdge(fromPath, toPath)
 			violations = append(violations, edges...)
 		}
 	}
+
+	// Filesystem pass: doc.go presence + pkg/ empty.
+	fsViolations, err := rules.CheckFilesystem(root)
+	if err != nil {
+		return nil, 0, fmt.Errorf("filesystem check: %w", err)
+	}
+	violations = append(violations, fsViolations...)
+
 	return violations, scanned, nil
+}
+
+// canonicalPath strips the test-variant suffix that packages.Load adds when
+// Tests:true (e.g. `pkg.test`, `pkg [pkg.test]`).
+func canonicalPath(p string) string {
+	if i := strings.Index(p, " ["); i >= 0 {
+		return p[:i]
+	}
+	return strings.TrimSuffix(p, ".test")
 }
 
 // checkEdge runs the three rule families against a single edge.

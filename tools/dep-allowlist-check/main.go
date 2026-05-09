@@ -1,19 +1,23 @@
 // Copyright 2026 opendbx contributors. See LICENSE.
 //
 // dep-allowlist-check: validates the opendbx module's dependency graph
-// against docs/dependencies/allowlist.yml (spec-0.2 § 2.4 / § 2.5, D-6).
+// against docs/dependencies/allowlist.json (spec-0.2 § 2.4 / § 2.5, D-6).
 //
 // Three rules:
 //
 //  1. Every direct require in go.mod must be listed under
-//     `direct_allowed:` in allowlist.yml. Modules listed there must include
+//     `direct_allowed` in allowlist.json. Modules listed there must include
 //     `introduced_by: spec-X.Y` referencing the spec that approved them.
 //  2. Every indirect (transitive) module must be listed under
-//     `transitive_lock:` (with version). New transitive arrivals fail CI
+//     `transitive_lock` (with version). New transitive arrivals fail CI
 //     and require human review (update lock atomically with the dep change).
-//  3. Modules listed under `tool_only:` may only be imported by packages
+//  3. Modules listed under `tool_only` may only be imported by packages
 //     under `tools/`. Imports from `cmd/`, `internal/`, `tests/`, or `pkg/`
 //     are violations.
+//
+// JSON (not YAML) is used so the only third-party dep is golang.org/x/tools
+// (already approved as the spec-0.2 unique tool-only example); no extra
+// YAML library required.
 //
 // Author: sqlrush
 package main
@@ -29,7 +33,6 @@ import (
 	"strings"
 
 	"golang.org/x/tools/go/packages"
-	"gopkg.in/yaml.v3"
 )
 
 const usage = `dep-allowlist-check [-v] [<repo-root>]
@@ -44,16 +47,16 @@ Flags:
 const modulePrefix = "github.com/sqlrush/opendbx/"
 
 type allowEntry struct {
-	Module       string `yaml:"module"`
-	Purpose      string `yaml:"purpose"`
-	IntroducedBy string `yaml:"introduced_by"`
-	Version      string `yaml:"version"` // only used by transitive_lock
+	Module       string `json:"module"`
+	Purpose      string `json:"purpose"`
+	IntroducedBy string `json:"introduced_by"`
+	Version      string `json:"version"` // only used by transitive_lock
 }
 
 type allowlist struct {
-	DirectAllowed  []allowEntry `yaml:"direct_allowed"`
-	TransitiveLock []allowEntry `yaml:"transitive_lock"`
-	ToolOnly       []allowEntry `yaml:"tool_only"`
+	DirectAllowed  []allowEntry `json:"direct_allowed"`
+	TransitiveLock []allowEntry `json:"transitive_lock"`
+	ToolOnly       []allowEntry `json:"tool_only"`
 }
 
 type goModule struct {
@@ -99,7 +102,7 @@ func main() {
 }
 
 func check(root string, verbose bool) ([]string, error) {
-	allow, err := loadAllowlist(filepath.Join(root, "docs", "dependencies", "allowlist.yml"))
+	allow, err := loadAllowlist(filepath.Join(root, "docs", "dependencies", "allowlist.json"))
 	if err != nil {
 		return nil, fmt.Errorf("load allowlist: %w", err)
 	}
@@ -159,17 +162,62 @@ func check(root string, verbose bool) ([]string, error) {
 	return violations, nil
 }
 
-// loadAllowlist reads and validates the allowlist.yml file.
+// loadAllowlist reads and validates the allowlist.json file.
+//
+// Keys starting with "_" are ignored (used for inline comments since JSON
+// has no native comment syntax). All other unknown top-level keys fail.
 func loadAllowlist(path string) (*allowlist, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var a allowlist
-	if err := yaml.Unmarshal(raw, &a); err != nil {
-		return nil, fmt.Errorf("parse yaml: %w", err)
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return nil, fmt.Errorf("parse json: %w", err)
 	}
-	// Validate every entry has a module path.
+	known := map[string]bool{
+		"direct_allowed":  true,
+		"transitive_lock": true,
+		"tool_only":       true,
+	}
+	for k := range top {
+		if strings.HasPrefix(k, "_") {
+			continue
+		}
+		if !known[k] {
+			return nil, fmt.Errorf("unknown top-level key %q (allowed: direct_allowed / transitive_lock / tool_only; underscore-prefixed keys are treated as inline comments)", k)
+		}
+	}
+	var a allowlist
+	if v, ok := top["direct_allowed"]; ok {
+		if err := json.Unmarshal(v, &a.DirectAllowed); err != nil {
+			return nil, fmt.Errorf("parse direct_allowed: %w", err)
+		}
+	}
+	if v, ok := top["transitive_lock"]; ok {
+		if err := json.Unmarshal(v, &a.TransitiveLock); err != nil {
+			return nil, fmt.Errorf("parse transitive_lock: %w", err)
+		}
+	}
+	if v, ok := top["tool_only"]; ok {
+		if err := json.Unmarshal(v, &a.ToolOnly); err != nil {
+			return nil, fmt.Errorf("parse tool_only: %w", err)
+		}
+	}
+
+	// Validate per-tier required fields + within-tier duplicate detection.
+	// Cross-tier duplicates are intentionally allowed (e.g. a module currently
+	// pulled transitively that direct_allowed promises will become direct in
+	// a later spec).
+	if err := validateNoIntraTierDuplicates(a.DirectAllowed, "direct_allowed"); err != nil {
+		return nil, err
+	}
+	if err := validateNoIntraTierDuplicates(a.TransitiveLock, "transitive_lock"); err != nil {
+		return nil, err
+	}
+	if err := validateNoIntraTierDuplicates(a.ToolOnly, "tool_only"); err != nil {
+		return nil, err
+	}
 	for _, e := range a.DirectAllowed {
 		if e.Module == "" || e.IntroducedBy == "" {
 			return nil, fmt.Errorf("direct_allowed entry must have module + introduced_by; got %+v", e)
@@ -186,6 +234,17 @@ func loadAllowlist(path string) (*allowlist, error) {
 		}
 	}
 	return &a, nil
+}
+
+func validateNoIntraTierDuplicates(entries []allowEntry, tier string) error {
+	seen := map[string]bool{}
+	for _, e := range entries {
+		if seen[e.Module] {
+			return fmt.Errorf("%s contains duplicate module %s", tier, e.Module)
+		}
+		seen[e.Module] = true
+	}
+	return nil
 }
 
 // goListModules invokes `go list -m -json all` and parses the streaming

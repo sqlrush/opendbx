@@ -108,12 +108,27 @@ func PathToLayer(importPath string) Layer {
 // CmdPlatformVersionExceptionPath is the unique platform subpackage that
 // `cmd/...` is permitted to import (spec-0.2 § 2.2). Everything else under
 // internal/platform/* is off-limits to cmd; cmd must route through
-// entrypoints → bootstrap.
+// entrypoints → bootstrap. Exception applies to the exact package path
+// only — sub-packages like `internal/platform/version/build` do NOT
+// satisfy the exception.
 const CmdPlatformVersionExceptionPath = ModulePrefix + "internal/platform/version"
 
-// MigrationsPathPrefix is the platform/migrations path; only bootstrap may
-// import it (spec-0.2 § 2.2 重要细则 #1).
-const MigrationsPathPrefix = ModulePrefix + "internal/platform/migrations"
+// MigrationsPath is the platform/migrations path; only bootstrap may
+// import it (spec-0.2 § 2.2 重要细则 #1). Path-boundary safe: matches the
+// exact path or any sub-path under it (e.g. migrations/sql), but NOT
+// sibling paths like migrations2 or migrations-test.
+const MigrationsPath = ModulePrefix + "internal/platform/migrations"
+
+// SchemasPath is the domain/schemas path; spec § 2.2 重要细则 #2 declares
+// it global-read (any layer may import). Pure data, no behavior.
+const SchemasPath = ModulePrefix + "internal/domain/schemas"
+
+// pathHasBoundary returns true when target equals prefix exactly, or target
+// is a sub-path under prefix (boundary-safe; rejects sibling like
+// `<prefix>2` or `<prefix>-foo`).
+func pathHasBoundary(target, prefix string) bool {
+	return target == prefix || strings.HasPrefix(target, prefix+"/")
+}
 
 // LayerMatrix encodes the allowed from→to layer transitions
 // (spec-0.2 § 2.2 matrix). Read as: layerMatrix[fromLayer][toLayer] == true
@@ -182,21 +197,26 @@ func CheckEdge(from, to string) string {
 	if toLayer == LayerStdlib {
 		return ""
 	}
-	// External deps are dep-allowlist-check's domain (except: internal/* must
-	// not import external — that's caught by tier rules in dep-allowlist-check).
-	// Tools are allowed to import external (e.g., golang.org/x/tools).
+	// External deps are dep-allowlist-check's domain.
 	if toLayer == LayerExternal {
-		// internal code never imports external directly without going via tier rules.
-		// This binary doesn't enforce that — dep-allowlist-check does. So pass.
 		return ""
 	}
 
-	// migrations gating: only bootstrap may import platform/migrations
-	if strings.HasPrefix(to, MigrationsPathPrefix) && fromLayer != LayerBootstrap {
+	// schemas global-read exception (spec § 2.2 重要细则 #2): pure data
+	// package, any layer may import (including platform).
+	if pathHasBoundary(to, SchemasPath) {
+		return ""
+	}
+
+	// migrations gating: only bootstrap may import platform/migrations.
+	// Boundary-safe: matches platform/migrations and platform/migrations/sub
+	// but not platform/migrations2.
+	if pathHasBoundary(to, MigrationsPath) && fromLayer != LayerBootstrap {
 		return fmt.Sprintf("internal/platform/migrations may only be imported by internal/bootstrap (got %s)", layerOrPath(fromLayer, from))
 	}
 
-	// cmd → platform: only platform/version is allowed.
+	// cmd → platform: only platform/version is allowed (exact match — sub
+	// paths like platform/version/build do NOT qualify).
 	if fromLayer == LayerCmd && toLayer == LayerPlatform {
 		if to == CmdPlatformVersionExceptionPath {
 			return ""
