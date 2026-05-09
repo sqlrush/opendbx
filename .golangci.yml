@@ -24,12 +24,28 @@ linters:
     - nolintlint
     - unused
 
+linters-settings:
+  revive:
+    # spec-0.2 D-7 baseline: only enable package-naming rules. spec-0.10
+    # expands to the full revive ruleset (effective-go + Google Go style).
+    # Naming rules per opendbrb/docs/methodology/go-package-naming.md.
+    rules:
+      - name: package-comments
+      - name: var-naming
+      - name: exported
+
 issues:
   exclude-rules:
     - linters: [errorlint]
       text: "error strings should not be capitalized"
     - path: _test\.go
       linters: [goconst]
+    # Stage-0 scaffolding: stub doc.go files contain only a package
+    # comment + design ref; revive's "exported" rule pings the package
+    # itself if it has no exported identifiers yet, which is intentional
+    # at this stage.
+    - path: internal/.*/doc\.go
+      linters: [revive]
 
 output:
   formats:

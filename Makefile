@@ -3,7 +3,7 @@
 BIN_DIR := bin
 BIN_NAME := opendbx
 GO := go
-GO_BUILD_FLAGS := -trimpath -ldflags="-s -w -X main.version=$(shell git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
+GO_BUILD_FLAGS := -trimpath -ldflags="-s -w -X github.com/sqlrush/opendbx/internal/platform/version.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
 
 all: build
 
