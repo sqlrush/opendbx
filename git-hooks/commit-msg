@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# opendbrb commit-msg hook (D-2)
+#
+# Validates conventional commit format + Spec footer by shelling out to
+# opendbrb-commit-lint Go binary (single source of truth, shared with CI).
+#
+# Install: bash scripts/install-hooks.sh   (or `make hooks-install` in opendbx)
+# Bypass:  git commit --no-verify          (emergency only; CHANGELOG must note)
+#
+# Design: opendbrb/specs/stage-0/spec-0.1-repo-bootstrap.md § 2.3 (D-2)
+
+set -euo pipefail
+
+MSG_FILE="${1:?usage: commit-msg <msg-file>}"
+
+# Locate the Go binary. Search order:
+#   1. $PATH                                       (after 'go install')
+#   2. ../scripts/opendbrb-commit-lint/_bin/...    (local dev build)
+#   3. /tmp/opendbrb-commit-lint                   (fallback)
+LINT_BIN=""
+if command -v opendbrb-commit-lint >/dev/null 2>&1; then
+  LINT_BIN="opendbrb-commit-lint"
+else
+  for candidate in \
+    "$(git rev-parse --show-toplevel 2>/dev/null)/scripts/opendbrb-commit-lint/_bin/opendbrb-commit-lint" \
+    "$(git rev-parse --show-toplevel 2>/dev/null)/scripts/opendbrb-commit-lint/opendbrb-commit-lint" \
+    "/tmp/opendbrb-commit-lint"
+  do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      LINT_BIN="$candidate"
+      break
+    fi
+  done
+fi
+
+if [ -z "$LINT_BIN" ]; then
+  echo "[commit-msg hook] WARN: opendbrb-commit-lint binary not found; skipping check." >&2
+  echo "  install:  cd scripts/opendbrb-commit-lint && go install ." >&2
+  echo "  or build: go build -o /tmp/opendbrb-commit-lint ." >&2
+  exit 0  # don't block commit if binary missing in bootstrap; CI will catch.
+fi
+
+exec "$LINT_BIN" check "$MSG_FILE"
