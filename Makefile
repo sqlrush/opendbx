@@ -1,9 +1,9 @@
-.PHONY: all build test gate lint fmt clean help hooks-install hooks-status
+.PHONY: all build test gate lint fmt clean help hooks-install hooks-status import-check dep-check golden golden-update
 
 BIN_DIR := bin
 BIN_NAME := opendbx
 GO := go
-GO_BUILD_FLAGS := -trimpath -ldflags="-s -w -X main.version=$(shell git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
+GO_BUILD_FLAGS := -trimpath -ldflags="-s -w -X github.com/sqlrush/opendbx/internal/platform/version.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
 
 all: build
 
@@ -33,14 +33,29 @@ bench: ## Run benchmarks
 
 # Layer-2 gate: 所有这些命令必须 PASS 才允许 push
 # 详见设计仓 docs/cicd-and-methodology.md § 2
-gate: ## Local layer-2 gate (must pass before push)
+gate: import-check dep-check golden ## Local layer-2 gate (must pass before push)
 	@echo "=== Layer-2 Gate ==="
 	gofmt -l . | tee /tmp/opendbx-fmt.txt && [ ! -s /tmp/opendbx-fmt.txt ] || (echo "gofmt failed" && exit 1)
 	$(GO) vet ./...
 	$(GO) mod tidy && git diff --exit-code go.mod go.sum 2>/dev/null || (echo "go.mod/go.sum dirty after tidy" && exit 1)
 	@command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout 5m || echo "golangci-lint not installed (skip in bootstrap)"
+	CGO_ENABLED=0 $(GO) build ./...
 	$(GO) test -race ./...
 	@echo "=== Layer-2 Gate PASSED ==="
+
+# spec-0.2 governance gates (D-5 / D-6 / D-3) — see docs/cicd-and-methodology.md
+import-check: ## Run import-rules-check (spec-0.2 D-5)
+	$(GO) run ./tools/import-rules-check -v .
+
+dep-check: ## Run dep-allowlist-check (spec-0.2 D-6)
+	$(GO) run ./tools/dep-allowlist-check -v .
+
+golden: ## Run CLI text golden tests (spec-0.2 D-3)
+	$(GO) test -race -run 'TestGolden|TestSubcommandStubs' ./cmd/opendbx/...
+
+golden-update: ## Regenerate CLI golden files
+	TEST_UPDATE_GOLDEN=1 $(GO) test -run TestGolden ./cmd/opendbx/...
+	@echo "goldens updated. Review with 'git diff cmd/opendbx/testdata/golden/'"
 
 clean: ## Remove build artifacts
 	rm -rf $(BIN_DIR) coverage.out *.prof

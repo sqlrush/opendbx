@@ -1,36 +1,71 @@
-# golangci-lint config for opendbx
-# 详细规范见设计仓 docs/cicd-and-methodology.md § 3
-# 本文件在 spec-0.10 中正式定稿。
+# golangci-lint v2 config for opendbx
+#
+# spec-0.2 D-7 baseline: enables a minimal set of linters + revive
+# package-naming rules. spec-0.10-lint-static-analysis will expand to the
+# full ruleset.
+#
+# Schema reference: https://golangci-lint.run/usage/configuration/
+
+version: "2"
 
 run:
   timeout: 5m
-  tests: true
 
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck
     - govet
     - staticcheck
     - gosec
-    - gocritic
     - revive
-    - goimports
-    - gofmt
-    - goconst
     - errorlint
     - ineffassign
     - nilnil
-    - nolintlint
     - unused
+    - nolintlint
 
-issues:
-  exclude-rules:
-    - linters: [errorlint]
-      text: "error strings should not be capitalized"
-    - path: _test\.go
-      linters: [goconst]
+  settings:
+    revive:
+      rules:
+        - name: package-comments
+        - name: var-naming
+        - name: exported
+
+  exclusions:
+    rules:
+      # error message capitalization conventions differ in opendbx (Code/
+      # Message/Hint triple — Message may start with capital noun) — disable
+      # this errorlint sub-rule.
+      - linters: [errorlint]
+        text: "error strings should not be capitalized"
+      - path: _test\.go
+        linters: [goconst, gosec]
+      # Stage-0 scaffolding: stub doc.go files contain only a package
+      # comment + design ref; revive's "exported" rule complains about
+      # packages with no exported identifiers, which is intentional here.
+      - path: internal/.*/doc\.go
+        linters: [revive]
+      # tools/dep-allowlist-check intentionally takes a user-supplied path
+      # to allowlist.yml; gosec G304 (potential file inclusion via variable)
+      # is the intended interface here.
+      - path: tools/dep-allowlist-check/.*\.go
+        text: "G304:"
+        linters: [gosec]
+      # cmd/opendbx subcommand stubs are stage-0 placeholders; they
+      # legitimately ignore writer error returns (writer is bytes.Buffer
+      # in tests, os.Stdout in prod — neither fails). Will become real
+      # error-aware code in spec-0.3.
+      - path: cmd/opendbx/.*\.go
+        linters: [errcheck]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
 
 output:
   formats:
-    - format: colored-line-number
+    text:
+      path: stdout
+      colors: true

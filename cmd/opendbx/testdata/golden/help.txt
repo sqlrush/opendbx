@@ -1,0 +1,20 @@
+opendbx — DB-focused Claude-Code-style agent platform.
+
+USAGE:
+  opendbx [SUBCOMMAND] [flags]
+
+SUBCOMMANDS:
+  interact       Start interactive TUI session
+  agent          Run as autopilot agent (Stage 9+)
+  cluster        Cluster mode commands (Stage 9+)
+  admin          Administrative commands (migrations, etc.)
+  help           Show this help message
+  version        Print version and exit
+
+FLAGS:
+  -h, --help     Show help
+  -v, --version  Show version
+
+Run 'opendbx <subcommand> --help' for more on a subcommand.
+
+See https://github.com/sqlrush/opendbrb (private) for design docs.
