@@ -1,4 +1,4 @@
-.PHONY: all build test gate lint fmt clean help hooks-install hooks-status import-check dep-check golden golden-update
+.PHONY: all build test gate lint fmt clean help hooks-install hooks-status import-check dep-check golden golden-update cc-help-diff
 
 BIN_DIR := bin
 BIN_NAME := opendbx
@@ -56,6 +56,24 @@ golden: ## Run CLI text golden tests (spec-0.2 D-3)
 golden-update: ## Regenerate CLI golden files
 	TEST_UPDATE_GOLDEN=1 $(GO) test -run TestGolden ./cmd/opendbx/...
 	@echo "goldens updated. Review with 'git diff cmd/opendbx/testdata/golden/'"
+
+# spec-0.3 D-6: drift check vs CC v2.1.138 baseline. Doesn't fail; surfaces
+# a unified diff that humans review (ad hoc when CC upgrades) per user D8 +
+# D13 decisions.
+CC_HELP_BASELINE := ../opendbrb/docs/cc-help-baseline-v2.1.138.txt
+cc-help-diff: build ## Diff opendbx --help against the CC help baseline
+	@echo "=== opendbx --help vs $(CC_HELP_BASELINE) ==="
+	@if [ ! -f "$(CC_HELP_BASELINE)" ]; then \
+		echo "ERR: baseline not found: $(CC_HELP_BASELINE)"; \
+		echo "     (per user D3 + D8: lock to local CC version; do not chase latest)"; \
+		exit 1; \
+	fi
+	@./$(BIN_DIR)/$(BIN_NAME) --help > /tmp/opendbx-help.txt 2>&1
+	@echo "(exit code below is from diff: 0=identical, 1=differences exist, 2=error)"
+	@diff -u $(CC_HELP_BASELINE) /tmp/opendbx-help.txt || true
+	@echo ""
+	@echo "Differences are expected (DB-flavored adaptations + opendbx-specific commands)."
+	@echo "Curated rationale: ../opendbrb/docs/cc-vs-opendbx-help-diff.md"
 
 clean: ## Remove build artifacts
 	rm -rf $(BIN_DIR) coverage.out *.prof

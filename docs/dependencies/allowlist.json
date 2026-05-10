@@ -9,7 +9,8 @@
     { "module": "github.com/mattn/go-runewidth",       "purpose": "rune width (EastAsianWidth=false invariant)",           "introduced_by": "spec-1.14-string-width" },
     { "module": "github.com/jackc/pgx/v5",             "purpose": "PostgreSQL driver",                                     "introduced_by": "spec-1.18-pg-driver" },
     { "module": "github.com/anthropics/anthropic-sdk-go", "purpose": "Claude LLM client",                                  "introduced_by": "spec-1.20-llm-client" },
-    { "module": "modernc.org/sqlite",                  "purpose": "pure-Go SQLite (CGO_ENABLED=0 cross-compile compatible)", "introduced_by": "spec-2.12-session-sqlite-fts5" }
+    { "module": "modernc.org/sqlite",                  "purpose": "pure-Go SQLite (CGO_ENABLED=0 cross-compile compatible)", "introduced_by": "spec-2.12-session-sqlite-fts5" },
+    { "module": "github.com/spf13/cobra",              "purpose": "CLI framework (subcommand tree + flag parsing)",        "introduced_by": "spec-0.3-cmd-entrypoints" }
   ],
 
   "transitive_lock": [
@@ -19,7 +20,13 @@
     { "module": "golang.org/x/telemetry",   "version": "v0.0.0-20240521205824-bda55230c457" },
     { "module": "golang.org/x/net",         "version": "v0.34.0" },
     { "module": "github.com/google/go-cmp", "version": "v0.6.0" },
-    { "module": "github.com/yuin/goldmark", "version": "v1.4.13" }
+    { "module": "github.com/yuin/goldmark", "version": "v1.4.13" },
+    { "module": "github.com/inconshreveable/mousetrap", "version": "v1.1.0" },
+    { "module": "github.com/spf13/pflag",   "version": "v1.0.9" },
+    { "module": "github.com/cpuguy83/go-md2man/v2", "version": "v2.0.6" },
+    { "module": "github.com/russross/blackfriday/v2", "version": "v2.1.0" },
+    { "module": "go.yaml.in/yaml/v3",       "version": "v3.0.4" },
+    { "module": "gopkg.in/check.v1",        "version": "v0.0.0-20161208181325-20d25e280405" }
   ],
 
   "tool_only": [

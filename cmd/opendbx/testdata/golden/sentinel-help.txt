@@ -1,0 +1,19 @@
+DB metric probes (opendbx-specific, Stage 1+ for skeleton, Stage 3 for full)
+
+Usage:
+  opendbx sentinel [command]
+
+Available Commands:
+  start       Start the sentinel probes
+  status      Show sentinel probe status
+  stop        Stop the sentinel probes
+
+Flags:
+  -h, --help   help for sentinel
+
+Global Flags:
+  -d, --debug string        Enable debug mode with optional category filtering (e.g., "api,hooks" or "!1p,!file")
+      --debug-file string   Write debug logs to a specific file path (implicitly enables debug mode)
+      --verbose             Override verbose mode setting from config
+
+Use "opendbx sentinel [command] --help" for more information about a command.

@@ -1,0 +1,24 @@
+Configure and manage MCP servers
+
+Usage:
+  opendbx mcp [command]
+
+Available Commands:
+  add                     Add an MCP server
+  add-from-claude-desktop Import MCP servers from Claude Desktop (Mac and WSL only)
+  add-json                Add an MCP server (stdio or SSE) with a JSON string
+  get                     Get details about an MCP server
+  list                    List configured MCP servers
+  remove                  Remove an MCP server
+  reset-project-choices   Reset all approved/rejected project-scoped (.mcp.json) servers
+  serve                   Start the opendbx MCP server
+
+Flags:
+  -h, --help   help for mcp
+
+Global Flags:
+  -d, --debug string        Enable debug mode with optional category filtering (e.g., "api,hooks" or "!1p,!file")
+      --debug-file string   Write debug logs to a specific file path (implicitly enables debug mode)
+      --verbose             Override verbose mode setting from config
+
+Use "opendbx mcp [command] --help" for more information about a command.

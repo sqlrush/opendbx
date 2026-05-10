@@ -107,13 +107,16 @@ func PathToLayer(importPath string) Layer {
 	}
 }
 
-// CmdPlatformVersionExceptionPath is the unique platform subpackage that
-// `cmd/...` is permitted to import (spec-0.2 § 2.2). Everything else under
-// internal/platform/* is off-limits to cmd; cmd must route through
-// entrypoints → bootstrap. Exception applies to the exact package path
-// only — sub-packages like `internal/platform/version/build` do NOT
-// satisfy the exception.
-const CmdPlatformVersionExceptionPath = ModulePrefix + "internal/platform/version"
+// CmdPlatformExceptionPaths lists every platform subpackage that `cmd/...`
+// is permitted to import. Exact-match only — sub-packages like
+// `internal/platform/version/build` do NOT satisfy an exception.
+//
+// Per spec-0.2 § 2.2 the only exception is internal/platform/version.
+// spec-0.3 D-9 routes profile checkpoints via internal/entrypoints to
+// preserve this invariant (R2 fixup per codex H-6).
+var CmdPlatformExceptionPaths = []string{
+	ModulePrefix + "internal/platform/version",
+}
 
 // MigrationsPath is the platform/migrations path; only bootstrap may
 // import it (spec-0.2 § 2.2 重要细则 #1). Path-boundary safe: matches the
@@ -217,13 +220,15 @@ func CheckEdge(from, to string) string {
 		return fmt.Sprintf("internal/platform/migrations may only be imported by internal/bootstrap (got %s)", layerOrPath(fromLayer, from))
 	}
 
-	// cmd → platform: only platform/version is allowed (exact match — sub
-	// paths like platform/version/build do NOT qualify).
+	// cmd → platform: only the exact paths in CmdPlatformExceptionPaths
+	// are allowed (sub-paths do NOT qualify).
 	if fromLayer == LayerCmd && toLayer == LayerPlatform {
-		if to == CmdPlatformVersionExceptionPath {
-			return ""
+		for _, allowed := range CmdPlatformExceptionPaths {
+			if to == allowed {
+				return ""
+			}
 		}
-		return fmt.Sprintf("cmd may import only %s (got %s)", CmdPlatformVersionExceptionPath, to)
+		return fmt.Sprintf("cmd may import only %v (got %s)", CmdPlatformExceptionPaths, to)
 	}
 
 	if !LayerMatrix[fromLayer][toLayer] {
