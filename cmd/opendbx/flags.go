@@ -49,6 +49,11 @@ func registerFlags(cmd *cobra.Command, opts *Options) {
 	// Debug
 	cmd.PersistentFlags().StringVarP(&opts.Debug.Debug, "debug", "d", "",
 		"Enable debug mode with optional category filtering (e.g., \"api,hooks\" or \"!1p,!file\")")
+	// Naked `--debug` must NOT eat the next token as filter value (CC parity:
+	// `claude --debug mcp` toggles debug + dispatches to mcp). NoOptDefVal=" "
+	// marks --debug as "valid without =value"; downstream treats any non-empty
+	// Debug as "enabled".
+	cmd.PersistentFlags().Lookup("debug").NoOptDefVal = " "
 	cmd.PersistentFlags().BoolVar(&opts.Debug.DebugToStderr, "debug-to-stderr", false,
 		"Enable debug mode (to stderr)")
 	if err := cmd.PersistentFlags().MarkHidden("debug-to-stderr"); err != nil {
@@ -60,138 +65,138 @@ func registerFlags(cmd *cobra.Command, opts *Options) {
 		"Override verbose mode setting from config")
 
 	// Session
-	cmd.Flags().BoolVarP(&opts.Session.Continue, "continue", "c", false,
+	cmd.PersistentFlags().BoolVarP(&opts.Session.Continue, "continue", "c", false,
 		"Continue the most recent diagnosis session in the current directory")
-	cmd.Flags().StringVarP(&opts.Session.Resume, "resume", "r", "",
+	cmd.PersistentFlags().StringVarP(&opts.Session.Resume, "resume", "r", "",
 		"Resume a session by session ID, or open interactive picker with optional search term")
-	cmd.Flags().Lookup("resume").NoOptDefVal = " " // [value] optional
-	cmd.Flags().BoolVar(&opts.Session.ForkSession, "fork-session", false,
+	cmd.PersistentFlags().Lookup("resume").NoOptDefVal = " " // [value] optional
+	cmd.PersistentFlags().BoolVar(&opts.Session.ForkSession, "fork-session", false,
 		"When resuming, create a new session ID instead of reusing the original (use with --resume or --continue)")
-	cmd.Flags().StringVar(&opts.Session.FromPR, "from-pr", "",
+	cmd.PersistentFlags().StringVar(&opts.Session.FromPR, "from-pr", "",
 		"Resume a session linked to a PR by PR number/URL, or open interactive picker with optional search term")
-	cmd.Flags().Lookup("from-pr").NoOptDefVal = " "
-	cmd.Flags().BoolVar(&opts.Session.NoSessionPersist, "no-session-persistence", false,
+	cmd.PersistentFlags().Lookup("from-pr").NoOptDefVal = " "
+	cmd.PersistentFlags().BoolVar(&opts.Session.NoSessionPersist, "no-session-persistence", false,
 		"Disable session persistence - sessions will not be saved to disk and cannot be resumed (only works with --print)")
-	cmd.Flags().StringVar(&opts.Session.SessionID, "session-id", "",
+	cmd.PersistentFlags().StringVar(&opts.Session.SessionID, "session-id", "",
 		"Use a specific session ID for the conversation (must be a valid UUID)")
-	cmd.Flags().StringVarP(&opts.Session.Name, "name", "n", "",
+	cmd.PersistentFlags().StringVarP(&opts.Session.Name, "name", "n", "",
 		"Set a display name for this session (shown in /resume picker and terminal title)")
-	cmd.Flags().StringVar(&opts.Session.Prefill, "prefill", "",
+	cmd.PersistentFlags().StringVar(&opts.Session.Prefill, "prefill", "",
 		"Pre-fill the prompt input with text without submitting it")
-	if err := cmd.Flags().MarkHidden("prefill"); err != nil {
+	if err := cmd.PersistentFlags().MarkHidden("prefill"); err != nil {
 		panic(err)
 	}
 
 	// Print
-	cmd.Flags().BoolVarP(&opts.Print.Print, "print", "p", false,
+	cmd.PersistentFlags().BoolVarP(&opts.Print.Print, "print", "p", false,
 		"Print response and exit (useful for pipes). Note: trust dialog skipped in non-interactive mode.")
-	cmd.Flags().StringVar(&opts.Print.OutputFormat, "output-format", "",
+	cmd.PersistentFlags().StringVar(&opts.Print.OutputFormat, "output-format", "",
 		"Output format (only works with --print): \"text\" (default), \"json\" (single result), or \"stream-json\" (realtime streaming)")
-	cmd.Flags().StringVar(&opts.Print.InputFormat, "input-format", "",
+	cmd.PersistentFlags().StringVar(&opts.Print.InputFormat, "input-format", "",
 		"Input format (only works with --print): \"text\" (default), or \"stream-json\" (realtime streaming input)")
-	cmd.Flags().BoolVar(&opts.Print.IncludeHookEvents, "include-hook-events", false,
+	cmd.PersistentFlags().BoolVar(&opts.Print.IncludeHookEvents, "include-hook-events", false,
 		"Include all hook lifecycle events in the output stream (only works with --output-format=stream-json)")
-	cmd.Flags().BoolVar(&opts.Print.IncludePartialMsgs, "include-partial-messages", false,
+	cmd.PersistentFlags().BoolVar(&opts.Print.IncludePartialMsgs, "include-partial-messages", false,
 		"Include partial message chunks as they arrive (only works with --print and --output-format=stream-json)")
-	cmd.Flags().StringVar(&opts.Print.JSONSchema, "json-schema", "",
+	cmd.PersistentFlags().StringVar(&opts.Print.JSONSchema, "json-schema", "",
 		"JSON Schema for structured output validation. Example: {\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"]}")
-	cmd.Flags().BoolVar(&opts.Print.ReplayUserMessages, "replay-user-messages", false,
+	cmd.PersistentFlags().BoolVar(&opts.Print.ReplayUserMessages, "replay-user-messages", false,
 		"Re-emit user messages from stdin back on stdout for acknowledgment (only works with --input-format=stream-json and --output-format=stream-json)")
-	cmd.Flags().Float64Var(&opts.Print.MaxBudgetUSD, "max-budget-usd", 0,
+	cmd.PersistentFlags().Float64Var(&opts.Print.MaxBudgetUSD, "max-budget-usd", 0,
 		"Maximum dollar amount to spend on API calls (only works with --print)")
 
 	// Tools
-	cmd.Flags().StringSliceVar(&opts.Tools.AllowedTools, "allowed-tools", nil,
+	cmd.PersistentFlags().StringSliceVar(&opts.Tools.AllowedTools, "allowed-tools", nil,
 		"Comma or space-separated list of tool names to allow (e.g. \"Bash(psql:*) Query\")")
 	// CC camelCase alias for parity (hidden to avoid duplicating in --help).
-	cmd.Flags().StringSliceVar(&opts.Tools.AllowedTools, "allowedTools", nil, "")
-	if err := cmd.Flags().MarkHidden("allowedTools"); err != nil {
+	cmd.PersistentFlags().StringSliceVar(&opts.Tools.AllowedTools, "allowedTools", nil, "")
+	if err := cmd.PersistentFlags().MarkHidden("allowedTools"); err != nil {
 		panic(err)
 	}
-	cmd.Flags().StringSliceVar(&opts.Tools.DisallowedTools, "disallowed-tools", nil,
+	cmd.PersistentFlags().StringSliceVar(&opts.Tools.DisallowedTools, "disallowed-tools", nil,
 		"Comma or space-separated list of tool names to deny (e.g. \"Bash(psql:*) Query\")")
-	cmd.Flags().StringSliceVar(&opts.Tools.DisallowedTools, "disallowedTools", nil, "")
-	if err := cmd.Flags().MarkHidden("disallowedTools"); err != nil {
+	cmd.PersistentFlags().StringSliceVar(&opts.Tools.DisallowedTools, "disallowedTools", nil, "")
+	if err := cmd.PersistentFlags().MarkHidden("disallowedTools"); err != nil {
 		panic(err)
 	}
-	cmd.Flags().StringSliceVar(&opts.Tools.Tools, "tools", nil,
+	cmd.PersistentFlags().StringSliceVar(&opts.Tools.Tools, "tools", nil,
 		"Specify the list of available tools from the built-in set. Use \"\" to disable all tools, \"default\" for all, or specify names.")
-	cmd.Flags().BoolVar(&opts.Tools.DisableSlash, "disable-slash-commands", false,
+	cmd.PersistentFlags().BoolVar(&opts.Tools.DisableSlash, "disable-slash-commands", false,
 		"Disable all skills")
 
 	// IO
-	cmd.Flags().StringVar(&opts.IO.Settings, "settings", "",
+	cmd.PersistentFlags().StringVar(&opts.IO.Settings, "settings", "",
 		"Path to a settings JSON file or a JSON string to load additional settings from")
-	cmd.Flags().StringSliceVar(&opts.IO.AddDir, "add-dir", nil,
+	cmd.PersistentFlags().StringSliceVar(&opts.IO.AddDir, "add-dir", nil,
 		"Additional directories to allow tool access to")
-	cmd.Flags().BoolVar(&opts.IO.IDE, "ide", false,
+	cmd.PersistentFlags().BoolVar(&opts.IO.IDE, "ide", false,
 		"Automatically connect to IDE on startup if exactly one valid IDE is available")
-	cmd.Flags().StringVar(&opts.IO.SystemPrompt, "system-prompt", "",
+	cmd.PersistentFlags().StringVar(&opts.IO.SystemPrompt, "system-prompt", "",
 		"System prompt to use for the session")
-	cmd.Flags().StringVar(&opts.IO.AppendSystem, "append-system-prompt", "",
+	cmd.PersistentFlags().StringVar(&opts.IO.AppendSystem, "append-system-prompt", "",
 		"Append a system prompt to the default system prompt")
 	// Hidden file variants of the system prompt (per spec § 2.3 Class D).
 	var sysPromptFile, appendSysPromptFile string
-	cmd.Flags().StringVar(&sysPromptFile, "system-prompt-file", "",
+	cmd.PersistentFlags().StringVar(&sysPromptFile, "system-prompt-file", "",
 		"Read system prompt from a file")
-	cmd.Flags().StringVar(&appendSysPromptFile, "append-system-prompt-file", "",
+	cmd.PersistentFlags().StringVar(&appendSysPromptFile, "append-system-prompt-file", "",
 		"Read system prompt from a file and append to the default system prompt")
 	for _, name := range []string{"system-prompt-file", "append-system-prompt-file"} {
-		if err := cmd.Flags().MarkHidden(name); err != nil {
+		if err := cmd.PersistentFlags().MarkHidden(name); err != nil {
 			panic(err)
 		}
 	}
-	cmd.Flags().StringVar(&opts.IO.SettingSources, "setting-sources", "",
+	cmd.PersistentFlags().StringVar(&opts.IO.SettingSources, "setting-sources", "",
 		"Comma-separated list of setting sources to load (user, project, local).")
-	cmd.Flags().StringSliceVar(&opts.IO.PluginDir, "plugin-dir", nil,
+	cmd.PersistentFlags().StringSliceVar(&opts.IO.PluginDir, "plugin-dir", nil,
 		"Load plugins from a directory for this session only (repeatable)")
-	cmd.Flags().StringSliceVar(&opts.IO.File, "file", nil,
+	cmd.PersistentFlags().StringSliceVar(&opts.IO.File, "file", nil,
 		"File resources to download at startup. Format: file_id:relative_path")
-	cmd.Flags().BoolVar(&opts.IO.Bare, "bare", false,
+	cmd.PersistentFlags().BoolVar(&opts.IO.Bare, "bare", false,
 		"Minimal mode: skip hooks, plugin sync, auto-memory, background prefetches, and CLAUDE.md auto-discovery. Sets OPENDBX_SIMPLE=1.")
-	cmd.Flags().StringVar(&opts.IO.PermissionMode, "permission-mode", "",
+	cmd.PersistentFlags().StringVar(&opts.IO.PermissionMode, "permission-mode", "",
 		"Permission mode to use for the session")
-	cmd.Flags().BoolVar(&opts.IO.DangerouslySkip, "dangerously-skip-permissions", false,
+	cmd.PersistentFlags().BoolVar(&opts.IO.DangerouslySkip, "dangerously-skip-permissions", false,
 		"Bypass all permission checks. Recommended only for sandboxes with no internet access.")
-	cmd.Flags().BoolVar(&opts.IO.AllowDangerous, "allow-dangerously-skip-permissions", false,
+	cmd.PersistentFlags().BoolVar(&opts.IO.AllowDangerous, "allow-dangerously-skip-permissions", false,
 		"Enable bypassing all permission checks as an option, without it being enabled by default.")
 
 	// === Class B: CC name kept, DB-flavored description ===
 
-	cmd.Flags().StringVar(&opts.Model.Model, "model", "",
+	cmd.PersistentFlags().StringVar(&opts.Model.Model, "model", "",
 		"Model for the current diagnosis session. Provide an alias (e.g. 'sonnet' or 'opus') or a full model name.")
-	cmd.Flags().StringVar(&opts.Model.Agent, "agent", "",
+	cmd.PersistentFlags().StringVar(&opts.Model.Agent, "agent", "",
 		"Diagnosis agent profile (overrides 'agent' setting in config).")
-	cmd.Flags().StringVar(&opts.Model.FallbackModel, "fallback-model", "",
+	cmd.PersistentFlags().StringVar(&opts.Model.FallbackModel, "fallback-model", "",
 		"Enable automatic fallback to specified model when default model is overloaded (only works with --print)")
-	cmd.Flags().StringVar(&opts.Model.Effort, "effort", "",
+	cmd.PersistentFlags().StringVar(&opts.Model.Effort, "effort", "",
 		"Effort level for the current diagnosis session (low, medium, high, max)")
 
-	cmd.Flags().StringSliceVar(&opts.MCP.MCPConfig, "mcp-config", nil,
+	cmd.PersistentFlags().StringSliceVar(&opts.MCP.MCPConfig, "mcp-config", nil,
 		"Load MCP servers from JSON files or strings (space-separated). DB-related MCP servers can be configured here.")
-	cmd.Flags().BoolVar(&opts.MCP.StrictMCPConfig, "strict-mcp-config", false,
+	cmd.PersistentFlags().BoolVar(&opts.MCP.StrictMCPConfig, "strict-mcp-config", false,
 		"Only use MCP servers from --mcp-config, ignoring all other MCP configurations")
 
 	// === Class C: opendbx-specific NEW flags (per D5: --llm-tier semantically independent of --model) ===
 
-	cmd.Flags().StringVar(&opts.DB.DB, "db", "",
+	cmd.PersistentFlags().StringVar(&opts.DB.DB, "db", "",
 		"Database type for the session: postgres (MVP), mysql/oracle/opengauss (Stage 6+ reserved)")
-	cmd.Flags().StringVar(&opts.DB.Connection, "connection", "",
+	cmd.PersistentFlags().StringVar(&opts.DB.Connection, "connection", "",
 		"Database connection DSN, e.g. \"postgres://user:pass@host:5432/dbname\". Mutually exclusive with --connection-alias.")
-	cmd.Flags().StringVar(&opts.DB.ConnectionAlias, "connection-alias", "",
+	cmd.PersistentFlags().StringVar(&opts.DB.ConnectionAlias, "connection-alias", "",
 		"Database connection alias from 'opendbx db list'. Mutually exclusive with --connection.")
-	cmd.Flags().StringVar(&opts.Model.LLMTier, "llm-tier", "",
+	cmd.PersistentFlags().StringVar(&opts.Model.LLMTier, "llm-tier", "",
 		"LLM model tier (strategy layer, semantically independent of --model): tier-1 (Opus primary) / tier-2 (glm-5 backup) / tier-3 (deepseek deep-dive) / tier-4 (local). tier→model mapping resolved from config.")
 
 	// === Class D: hidden flags (kept for compatibility, not in --help) ===
 
-	cmd.Flags().BoolVar(&opts.Hidden.Init, "init", false, "Run Setup hooks with init trigger, then continue")
-	cmd.Flags().BoolVar(&opts.Hidden.InitOnly, "init-only", false, "Run Setup and SessionStart:startup hooks, then exit")
-	cmd.Flags().BoolVar(&opts.Hidden.Maintenance, "maintenance", false, "Run Setup hooks with maintenance trigger, then continue")
-	cmd.Flags().StringVar(&opts.Hidden.Thinking, "thinking", "",
+	cmd.PersistentFlags().BoolVar(&opts.Hidden.Init, "init", false, "Run Setup hooks with init trigger, then continue")
+	cmd.PersistentFlags().BoolVar(&opts.Hidden.InitOnly, "init-only", false, "Run Setup and SessionStart:startup hooks, then exit")
+	cmd.PersistentFlags().BoolVar(&opts.Hidden.Maintenance, "maintenance", false, "Run Setup hooks with maintenance trigger, then continue")
+	cmd.PersistentFlags().StringVar(&opts.Hidden.Thinking, "thinking", "",
 		"Thinking mode: enabled (equivalent to adaptive), disabled")
 	for _, name := range []string{"init", "init-only", "maintenance", "thinking"} {
-		if err := cmd.Flags().MarkHidden(name); err != nil {
+		if err := cmd.PersistentFlags().MarkHidden(name); err != nil {
 			panic(err)
 		}
 	}
@@ -207,7 +212,7 @@ type optionSpecRow struct {
 
 // optionSpecs is the curated adaptation table. Validated by
 // TestOptionSpecMatchesFlags in main_test.go: every row resolves via
-// cmd.Flags().Lookup(); no flag exists outside the table.
+// cmd.PersistentFlags().Lookup(); no flag exists outside the table.
 var optionSpecs = []optionSpecRow{
 	// === --version + -v handled separately (manual) ===
 	{Name: "version", Short: "v", Class: classA},
