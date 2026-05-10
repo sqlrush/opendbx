@@ -4,6 +4,7 @@ Usage:
   opendbx admin [command]
 
 Available Commands:
+  config      Manage opendbx configuration
   migrate     Run pending database/state migrations
 
 Flags:

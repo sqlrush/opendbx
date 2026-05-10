@@ -20,6 +20,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/pflag"
+
 	"github.com/sqlrush/opendbx/internal/platform/version"
 )
 
@@ -223,6 +225,52 @@ func TestOptionSpecMatchesFlags(t *testing.T) {
 			}
 			if row.Hidden && !f.Hidden {
 				t.Errorf("optionSpecs row %q expects Hidden=true but cobra flag is visible", row.Name)
+			}
+		})
+	}
+}
+
+// TestAllFlagsInOptionSpec is the REVERSE direction (spec-0.4 D-12 R3): every
+// cobra flag must appear in optionSpecs (no flag escapes the audit table).
+func TestAllFlagsInOptionSpec(t *testing.T) {
+	cmd := newRootCommand()
+	indexed := map[string]bool{}
+	for _, row := range optionSpecs {
+		indexed[row.Name] = true
+	}
+
+	check := func(visit func(func(name string))) {
+		visit(func(name string) {
+			if !indexed[name] {
+				t.Errorf("cobra flag %q has no optionSpecs row (add to optionSpecs)", name)
+			}
+		})
+	}
+	check(func(yield func(string)) {
+		cmd.Flags().VisitAll(func(f *pflag.Flag) { yield(f.Name) })
+	})
+	check(func(yield func(string)) {
+		cmd.PersistentFlags().VisitAll(func(f *pflag.Flag) { yield(f.Name) })
+	})
+}
+
+// TestOptionSpecsHaveCCRef enforces that every Class A/B row carries CCRef +
+// CCDesc (audit chain to CC source). Class C rows (opendbx-specific NEW) do
+// NOT need CCRef (they have no CC equivalent).
+func TestOptionSpecsHaveCCRef(t *testing.T) {
+	for _, row := range optionSpecs {
+		t.Run(row.Name, func(t *testing.T) {
+			if row.Class == classC {
+				return // NEW flags need OdxDesc but not CCRef
+			}
+			if row.CCRef == "" {
+				t.Errorf("optionSpecs row %q (class %s) missing CCRef", row.Name, row.Class)
+			}
+			if row.CCDesc == "" {
+				t.Errorf("optionSpecs row %q (class %s) missing CCDesc", row.Name, row.Class)
+			}
+			if row.Reason == "" {
+				t.Errorf("optionSpecs row %q missing Reason", row.Name)
 			}
 		})
 	}

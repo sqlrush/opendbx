@@ -12,9 +12,12 @@
 // files.
 //
 // Per spec § 2.2 the only platform package main may import is
-// internal/platform/version (the unique cmd → platform exception).
-// Profile checkpoints route through internal/entrypoints.Checkpoint to
-// preserve that invariant (spec-0.3 R2 fixup per codex H-6).
+// internal/platform/version. Config + profile checkpoints route through
+// internal/entrypoints to preserve that invariant.
+//
+// spec-0.4 D-9: actual config.Load runs in root command's
+// PersistentPreRunE (after cobra parses --settings + other flags). main()
+// only sets up the root command + checkpoints.
 package main
 
 import (
