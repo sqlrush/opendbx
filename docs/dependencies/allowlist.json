@@ -10,7 +10,9 @@
     { "module": "github.com/jackc/pgx/v5",             "purpose": "PostgreSQL driver",                                     "introduced_by": "spec-1.18-pg-driver" },
     { "module": "github.com/anthropics/anthropic-sdk-go", "purpose": "Claude LLM client",                                  "introduced_by": "spec-1.20-llm-client" },
     { "module": "modernc.org/sqlite",                  "purpose": "pure-Go SQLite (CGO_ENABLED=0 cross-compile compatible)", "introduced_by": "spec-2.12-session-sqlite-fts5" },
-    { "module": "github.com/spf13/cobra",              "purpose": "CLI framework (subcommand tree + flag parsing)",        "introduced_by": "spec-0.3-cmd-entrypoints" }
+    { "module": "github.com/spf13/cobra",              "purpose": "CLI framework (subcommand tree + flag parsing)",        "introduced_by": "spec-0.3-cmd-entrypoints" },
+    { "module": "github.com/spf13/pflag",              "purpose": "POSIX-style flags (cobra dependency, also used directly by main_test.go reverse-iteration audit)", "introduced_by": "spec-0.4-config-framework" },
+    { "module": "go.yaml.in/yaml/v3",                  "purpose": "YAML parser for config-framework (canonical home for yaml v3 since v3.0.2)", "introduced_by": "spec-0.4-config-framework" }
   ],
 
   "transitive_lock": [

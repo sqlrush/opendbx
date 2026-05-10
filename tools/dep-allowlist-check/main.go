@@ -280,9 +280,14 @@ func checkToolOnly(root string, toolOnly map[string]struct{}) ([]string, error) 
 		return nil, nil
 	}
 	cfg := &packages.Config{
+		// spec-0.4 D-13 (R3): Tests:true so that _test.go files also
+		// participate in tool_only enforcement. spec-0.2 D-6 contract is
+		// "tool_only modules importable only from tools/"; the previous
+		// Tests:false silently exempted test files outside tools/ from
+		// the rule. Caught by user review M-7.
 		Mode:  packages.NeedName | packages.NeedFiles | packages.NeedImports,
 		Dir:   root,
-		Tests: false,
+		Tests: true,
 	}
 	pkgs, err := packages.Load(cfg, "./...")
 	if err != nil {

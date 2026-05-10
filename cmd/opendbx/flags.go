@@ -202,80 +202,155 @@ func registerFlags(cmd *cobra.Command, opts *Options) {
 	}
 }
 
-// optionSpecRow records one CLI flag's adaptation decision (spec-0.3 D-7).
+// optionSpecRow records one CLI flag's adaptation decision.
+//
+// spec-0.4 D-12 (R3): R2 had only Name/Short/Class/Hidden. R3 expands to 8
+// fields: + CCRef (CC main.tsx file:line) + CCDesc (CC verbatim description)
+// + OdxDesc (opendbx adapted description) + Reason (≥ 1 sentence rationale).
+//
+// Used as single-source-of-truth audit table; TestAllFlagsInOptionSpec +
+// TestOptionSpecsHaveCCRef + TestOptionSpecMatchesFlags enforce sync with
+// the cobra registration in registerFlags().
 type optionSpecRow struct {
-	Name   string     // pflag long name (no leading --)
-	Short  string     // shorthand (single letter, "" if none)
-	Class  adaptClass // A/B/C/D
-	Hidden bool       // true if MarkHidden in registerFlags
+	Name    string     // pflag long name (no leading --)
+	Short   string     // shorthand (single letter, "" if none)
+	Class   adaptClass // A/B/C/D
+	Hidden  bool       // true if MarkHidden in registerFlags
+	CCRef   string     // CC main.tsx file:line (e.g. "main.tsx:L988"); empty for opendbx-specific NEW flags
+	CCDesc  string     // CC verbatim description (when adaptation is ★A 1:1)
+	OdxDesc string     // opendbx adapted description (when class B/C and wording differs)
+	Reason  string     // adaptation rationale, ≥ 1 sentence
 }
 
-// optionSpecs is the curated adaptation table. Validated by
-// TestOptionSpecMatchesFlags in main_test.go: every row resolves via
-// cmd.PersistentFlags().Lookup(); no flag exists outside the table.
+// optionSpecs is the curated adaptation table. Validated by 3 tests:
+//   - TestAllFlagsInOptionSpec: every cobra flag exists in this table
+//   - TestOptionSpecsHaveCCRef:  every Class A/B row has non-empty CCRef
+//   - TestOptionSpecMatchesFlags: every table row resolves via cobra Lookup
 var optionSpecs = []optionSpecRow{
 	// === --version + -v handled separately (manual) ===
-	{Name: "version", Short: "v", Class: classA},
+	{Name: "version", Short: "v", Class: classA, CCRef: "main.tsx:L3808",
+		CCDesc: "Output the version number",
+		Reason: "1:1 — opendbx version semantic identical to CC",
+	},
 
 	// === Class A: direct 1:1 ===
-	{Name: "debug", Short: "d", Class: classA},
-	{Name: "debug-to-stderr", Class: classA, Hidden: true},
-	{Name: "debug-file", Class: classA},
-	{Name: "verbose", Class: classA},
-	{Name: "continue", Short: "c", Class: classA},
-	{Name: "resume", Short: "r", Class: classA},
-	{Name: "fork-session", Class: classA},
-	{Name: "from-pr", Class: classA},
-	{Name: "no-session-persistence", Class: classA},
-	{Name: "session-id", Class: classA},
-	{Name: "name", Short: "n", Class: classA},
-	{Name: "prefill", Class: classA, Hidden: true},
-	{Name: "print", Short: "p", Class: classA},
-	{Name: "output-format", Class: classA},
-	{Name: "input-format", Class: classA},
-	{Name: "include-hook-events", Class: classA},
-	{Name: "include-partial-messages", Class: classA},
-	{Name: "json-schema", Class: classA},
-	{Name: "replay-user-messages", Class: classA},
-	{Name: "max-budget-usd", Class: classA},
-	{Name: "allowed-tools", Class: classA},
-	{Name: "allowedTools", Class: classA, Hidden: true}, // CC camelCase alias
-	{Name: "disallowed-tools", Class: classA},
-	{Name: "disallowedTools", Class: classA, Hidden: true}, // CC camelCase alias
-	{Name: "tools", Class: classA},
-	{Name: "disable-slash-commands", Class: classA},
-	{Name: "settings", Class: classA},
-	{Name: "add-dir", Class: classA},
-	{Name: "ide", Class: classA},
-	{Name: "system-prompt", Class: classA},
-	{Name: "append-system-prompt", Class: classA},
-	{Name: "system-prompt-file", Class: classA, Hidden: true},
-	{Name: "append-system-prompt-file", Class: classA, Hidden: true},
-	{Name: "setting-sources", Class: classA},
-	{Name: "plugin-dir", Class: classA},
-	{Name: "file", Class: classA},
-	{Name: "bare", Class: classA},
-	{Name: "permission-mode", Class: classA},
-	{Name: "dangerously-skip-permissions", Class: classA},
-	{Name: "allow-dangerously-skip-permissions", Class: classA},
+	{Name: "debug", Short: "d", Class: classA, CCRef: "main.tsx:L972",
+		CCDesc: "Enable debug mode with optional category filtering (e.g., \"api,hooks\" or \"!1p,!file\")",
+		Reason: "1:1 — debug categories share spec-0.5 logger taxonomy; NoOptDefVal added per spec-0.3 hotfix"},
+	{Name: "debug-to-stderr", Class: classA, Hidden: true, CCRef: "main.tsx:L976",
+		CCDesc: "Enable debug mode (to stderr)", Reason: "1:1 hidden alias"},
+	{Name: "debug-file", Class: classA, CCRef: "main.tsx:L977",
+		CCDesc: "Write debug logs to a specific file path (implicitly enables debug mode)",
+		Reason: "1:1 — same file-path semantics"},
+	{Name: "verbose", Class: classA, CCRef: "main.tsx:L978",
+		CCDesc: "Override verbose mode setting from config", Reason: "1:1 — opendbx config has same verbose semantic"},
+	{Name: "continue", Short: "c", Class: classA, CCRef: "main.tsx:L1000",
+		CCDesc:  "Continue the most recent conversation in the current directory",
+		OdxDesc: "Continue the most recent diagnosis session in the current directory",
+		Reason:  "Class A; 'conversation' → 'diagnosis session' (DB context)"},
+	{Name: "resume", Short: "r", Class: classA, CCRef: "main.tsx:L1001",
+		CCDesc:  "Resume a conversation by session ID, or open interactive picker with optional search term",
+		OdxDesc: "Resume a session by session ID, or open interactive picker with optional search term",
+		Reason:  "Class A; 'conversation' dropped"},
+	{Name: "fork-session", Class: classA, CCRef: "main.tsx:L1002",
+		CCDesc: "When resuming, create a new session ID instead of reusing the original (use with --resume or --continue)", Reason: "1:1"},
+	{Name: "from-pr", Class: classA, CCRef: "main.tsx:L1006",
+		CCDesc: "Resume a session linked to a PR by PR number/URL, or open interactive picker with optional search term", Reason: "1:1 — PR resume is generic"},
+	{Name: "no-session-persistence", Class: classA, CCRef: "main.tsx:L1007",
+		CCDesc: "Disable session persistence - sessions will not be saved to disk and cannot be resumed (only works with --print)", Reason: "1:1"},
+	{Name: "session-id", Class: classA, CCRef: "main.tsx:L1008",
+		CCDesc: "Use a specific session ID for the conversation (must be a valid UUID)", Reason: "1:1 — UUID semantic identical"},
+	{Name: "name", Short: "n", Class: classA, CCRef: "main.tsx:L1009",
+		CCDesc: "Set a display name for this session (shown in /resume picker and terminal title)", Reason: "1:1"},
+	{Name: "prefill", Class: classA, Hidden: true, CCRef: "main.tsx:L1003",
+		CCDesc: "Pre-fill the prompt input with text without submitting it", Reason: "1:1 hidden"},
+	{Name: "print", Short: "p", Class: classA, CCRef: "main.tsx:L984",
+		CCDesc: "Print response and exit (useful for pipes). Note: trust dialog skipped in non-interactive mode.", Reason: "1:1 — pipe friendly"},
+	{Name: "output-format", Class: classA, CCRef: "main.tsx:L989",
+		CCDesc: "Output format (only works with --print): \"text\" (default), \"json\" (single result), or \"stream-json\" (realtime streaming)", Reason: "1:1 — same enum"},
+	{Name: "input-format", Class: classA, CCRef: "main.tsx:L991",
+		CCDesc: "Input format (only works with --print): \"text\" (default), or \"stream-json\" (realtime streaming input)", Reason: "1:1"},
+	{Name: "include-hook-events", Class: classA, CCRef: "main.tsx:L992", CCDesc: "Include all hook lifecycle events in the output stream (only works with --output-format=stream-json)", Reason: "1:1"},
+	{Name: "include-partial-messages", Class: classA, CCRef: "main.tsx:L993", CCDesc: "Include partial message chunks as they arrive (only works with --print and --output-format=stream-json)", Reason: "1:1"},
+	{Name: "json-schema", Class: classA, CCRef: "main.tsx:L990", CCDesc: "JSON Schema for structured output validation.", Reason: "1:1 — JSON Schema generic"},
+	{Name: "replay-user-messages", Class: classA, CCRef: "main.tsx:L997", CCDesc: "Re-emit user messages from stdin back on stdout for acknowledgment (only works with --input-format=stream-json and --output-format=stream-json)", Reason: "1:1"},
+	{Name: "max-budget-usd", Class: classA, CCRef: "main.tsx:L1010", CCDesc: "Maximum dollar amount to spend on API calls (only works with --print)", Reason: "1:1 — opendbx LLM tier billing same shape"},
+	{Name: "allowed-tools", Class: classA, CCRef: "main.tsx:L988",
+		CCDesc:  "Comma or space-separated list of tool names to allow (e.g. \"Bash(git:*) Edit\")",
+		OdxDesc: "Comma or space-separated list of tool names to allow (e.g. \"Bash(psql:*) Query\")",
+		Reason:  "Class A; example uses 'Bash(psql:*) Query' for DB context (spec-0.3 D-3 catalog)"},
+	{Name: "allowedTools", Class: classA, Hidden: true, CCRef: "main.tsx:L988",
+		CCDesc: "(camelCase alias of --allowed-tools)", Reason: "CC parity — both names accepted, hidden in --help"},
+	{Name: "disallowed-tools", Class: classA, CCRef: "main.tsx:L988",
+		CCDesc:  "Comma or space-separated list of tool names to deny (e.g. \"Bash(git:*) Edit\")",
+		OdxDesc: "Comma or space-separated list of tool names to deny (e.g. \"Bash(psql:*) Query\")",
+		Reason:  "Class A; same example adaptation as --allowed-tools"},
+	{Name: "disallowedTools", Class: classA, Hidden: true, CCRef: "main.tsx:L988",
+		CCDesc: "(camelCase alias of --disallowed-tools)", Reason: "CC parity"},
+	{Name: "tools", Class: classA, CCRef: "main.tsx:L988", CCDesc: "Specify the list of available tools from the built-in set. Use \"\" to disable all tools, \"default\" to use all tools, or specify tool names.", Reason: "1:1"},
+	{Name: "disable-slash-commands", Class: classA, CCRef: "main.tsx:L1011", CCDesc: "Disable all skills", Reason: "1:1 — opendbx 'skill' = CC 'skill'"},
+	{Name: "settings", Class: classA, CCRef: "main.tsx:L1009",
+		CCDesc:  "Path to a settings JSON file or a JSON string to load additional settings from",
+		OdxDesc: "Path to a settings YAML/JSON file or a JSON string to load additional settings from",
+		Reason:  "Class A; YAML accepted in addition to JSON (spec-0.4 § 1.4 yaml.v3 default + JSON-as-YAML-subset)"},
+	{Name: "add-dir", Class: classA, CCRef: "main.tsx:L1009", CCDesc: "Additional directories to allow tool access to", Reason: "1:1"},
+	{Name: "ide", Class: classA, CCRef: "main.tsx:L1009", CCDesc: "Automatically connect to IDE on startup if exactly one valid IDE is available", Reason: "1:1 — opendbx IDE plugin shape"},
+	{Name: "system-prompt", Class: classA, CCRef: "main.tsx:L996", CCDesc: "System prompt to use for the session", Reason: "1:1"},
+	{Name: "append-system-prompt", Class: classA, CCRef: "main.tsx:L996", CCDesc: "Append a system prompt to the default system prompt", Reason: "1:1"},
+	{Name: "system-prompt-file", Class: classA, Hidden: true, CCRef: "main.tsx:L996", CCDesc: "Read system prompt from a file", Reason: "1:1 hidden file variant"},
+	{Name: "append-system-prompt-file", Class: classA, Hidden: true, CCRef: "main.tsx:L996", CCDesc: "Read system prompt from a file and append to the default system prompt", Reason: "1:1 hidden"},
+	{Name: "setting-sources", Class: classA, CCRef: "main.tsx:L1009", CCDesc: "Comma-separated list of setting sources to load (user, project, local).", Reason: "1:1 — sources match opendbx Q1 ★B SettingSource naming"},
+	{Name: "plugin-dir", Class: classA, CCRef: "main.tsx:L1006", CCDesc: "Load plugins from a directory for this session only (repeatable)", Reason: "1:1 — plugin/Skill semantics aligned"},
+	{Name: "file", Class: classA, CCRef: "main.tsx:L1006", CCDesc: "File resources to download at startup. Format: file_id:relative_path", Reason: "1:1"},
+	{Name: "bare", Class: classA, CCRef: "main.tsx:L985",
+		CCDesc:  "Minimal mode: skip hooks, LSP, plugin sync, attribution, auto-memory, background prefetches, keychain reads, and CLAUDE.md auto-discovery. Sets CLAUDE_CODE_SIMPLE=1.",
+		OdxDesc: "Minimal mode: skip hooks, plugin sync, auto-memory, background prefetches, and CLAUDE.md auto-discovery. Sets OPENDBX_SIMPLE=1.",
+		Reason:  "Class A; env var rename CLAUDE_CODE_SIMPLE → OPENDBX_SIMPLE; LSP/keychain/attribution dropped (not applicable)"},
+	{Name: "permission-mode", Class: classA, CCRef: "main.tsx:L999", CCDesc: "Permission mode to use for the session", Reason: "1:1 — same enum"},
+	{Name: "dangerously-skip-permissions", Class: classA, CCRef: "main.tsx:L995", CCDesc: "Bypass all permission checks. Recommended only for sandboxes with no internet access.", Reason: "1:1"},
+	{Name: "allow-dangerously-skip-permissions", Class: classA, CCRef: "main.tsx:L995", CCDesc: "Enable bypassing all permission checks as an option, without it being enabled by default.", Reason: "1:1"},
 
 	// === Class B: CC name kept, DB-flavored description ===
-	{Name: "model", Class: classB},
-	{Name: "agent", Class: classB},
-	{Name: "fallback-model", Class: classB},
-	{Name: "effort", Class: classB},
-	{Name: "mcp-config", Class: classB},
-	{Name: "strict-mcp-config", Class: classB},
+	{Name: "model", Class: classB, CCRef: "main.tsx:L1010",
+		CCDesc:  "Model for the current session.",
+		OdxDesc: "Model for the current diagnosis session.",
+		Reason:  "Class B — DB diagnosis context"},
+	{Name: "agent", Class: classB, CCRef: "main.tsx:L1010",
+		CCDesc:  "Agent for the current session. Overrides the 'agent' setting.",
+		OdxDesc: "Diagnosis agent profile (overrides 'agent' setting in config).",
+		Reason:  "Class B — DB diagnosis context"},
+	{Name: "fallback-model", Class: classB, CCRef: "main.tsx:L1010",
+		CCDesc: "Enable automatic fallback to specified model when default model is overloaded (only works with --print)",
+		Reason: "Class B — same fallback behavior; tier-based fallback also configurable via --llm-tier (spec-0.4 D-1)"},
+	{Name: "effort", Class: classB, CCRef: "main.tsx:L1010",
+		CCDesc:  "Effort level for the current session (low, medium, high, max)",
+		OdxDesc: "Effort level for the current diagnosis session (low, medium, high, max)",
+		Reason:  "Class B — DB diagnosis context"},
+	{Name: "mcp-config", Class: classB, CCRef: "main.tsx:L1006",
+		CCDesc:  "Load MCP servers from JSON files or strings (space-separated)",
+		OdxDesc: "Load MCP servers from JSON files or strings (space-separated). DB-related MCP servers can be configured here.",
+		Reason:  "Class B — DB-relevant note"},
+	{Name: "strict-mcp-config", Class: classB, CCRef: "main.tsx:L1006",
+		CCDesc: "Only use MCP servers from --mcp-config, ignoring all other MCP configurations",
+		Reason: "1:1 — opendbx mcp config supports same strict mode"},
 
 	// === Class C: opendbx-specific NEW ===
-	{Name: "db", Class: classC},
-	{Name: "connection", Class: classC},
-	{Name: "connection-alias", Class: classC},
-	{Name: "llm-tier", Class: classC},
+	{Name: "db", Class: classC,
+		OdxDesc: "Database type for the session: postgres (MVP), mysql/oracle/opengauss (Stage 6+ reserved)",
+		Reason:  "NEW — opendbx-specific DB type selector (no CC equivalent)"},
+	{Name: "connection", Class: classC,
+		OdxDesc: "Database connection DSN, e.g. \"postgres://user:pass@host:5432/dbname\". Mutually exclusive with --connection-alias.",
+		Reason:  "NEW — opendbx-specific DB connection (no CC equivalent)"},
+	{Name: "connection-alias", Class: classC,
+		OdxDesc: "Database connection alias from 'opendbx db list'. Mutually exclusive with --connection.",
+		Reason:  "NEW — alias resolution for connection-config (spec-1.19)"},
+	{Name: "llm-tier", Class: classC,
+		OdxDesc: "LLM model tier (strategy layer, semantically independent of --model): tier-1 / tier-2 / tier-3 / tier-4. tier→model mapping resolved from config.",
+		Reason:  "NEW — opendbx tier strategy (user R3 Q4 D5: independent of --model)"},
 
 	// === Class D: hidden ===
-	{Name: "init", Class: classD, Hidden: true},
-	{Name: "init-only", Class: classD, Hidden: true},
-	{Name: "maintenance", Class: classD, Hidden: true},
-	{Name: "thinking", Class: classD, Hidden: true},
+	{Name: "init", Class: classD, Hidden: true, CCRef: "main.tsx:L985", CCDesc: "Run Setup hooks with init trigger, then continue", Reason: "Class D — hidden, kept for compatibility"},
+	{Name: "init-only", Class: classD, Hidden: true, CCRef: "main.tsx:L985", CCDesc: "Run Setup and SessionStart:startup hooks, then exit", Reason: "Class D — hidden"},
+	{Name: "maintenance", Class: classD, Hidden: true, CCRef: "main.tsx:L985", CCDesc: "Run Setup hooks with maintenance trigger, then continue", Reason: "Class D — hidden"},
+	{Name: "thinking", Class: classD, Hidden: true, CCRef: "main.tsx:L998", CCDesc: "Thinking mode: enabled (equivalent to adaptive), disabled", Reason: "Class D — hidden, deprecated; use --effort instead"},
 }
