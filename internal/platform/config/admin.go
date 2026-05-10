@@ -93,6 +93,9 @@ func WriteSources(w io.Writer, cfg *Config, field string) error {
 
 // ValidateFile loads ONE yaml file (ignoring other sources / ENV / CLI) and
 // runs Validate against the result. Used by `admin config validate <file>`.
+//
+// CFG-MED-01 fix: applies the same 1MB size limit + KnownFields strict mode
+// as mergeFile.
 func ValidateFile(path string) error {
 	if path == "" {
 		return fmt.Errorf("validate: path is empty")
@@ -104,14 +107,15 @@ func ValidateFile(path string) error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
+	if len(raw) > 1<<20 {
+		return fmt.Errorf("%s: file too large (>1MB)", path)
+	}
 	cfg := Default()
 	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
 	dec.KnownFields(true)
-	var overlay Config
-	if err := dec.Decode(&overlay); err != nil && !errors.Is(err, io.EOF) {
+	if err := dec.Decode(cfg); err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("parse %s: %w", path, err)
 	}
-	mergeOverlay(cfg, &overlay, SourceUserSettings)
 	return Validate(cfg)
 }
 

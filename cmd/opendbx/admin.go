@@ -84,12 +84,18 @@ func newAdminConfigCommand() *cobra.Command {
 
 	cfgCmd.AddCommand(&cobra.Command{
 		Use:   "sources [field]",
-		Short: "Show the source (default/user/project/local/flag-settings/env/cli) of each config field, or just <field>",
+		Short: "Show the source (default/user/project/local/env/flag-settings/cli) of each config field, or just <field>",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := entrypoints.LoadConfigDefault()
-			if err != nil {
-				return err
+			// PersistentPreRunE has already loaded config + stashed it in ctx.
+			cfg := entrypoints.ConfigFromContext(cmd.Context())
+			if cfg == nil {
+				// Fallback (shouldn't happen in normal flow).
+				var err error
+				cfg, err = entrypoints.LoadConfigDefault()
+				if err != nil {
+					return err
+				}
 			}
 			field := ""
 			if len(args) == 1 {

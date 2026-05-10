@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 
 	yaml "go.yaml.in/yaml/v3"
@@ -69,6 +70,12 @@ func Load(opts LoadOptions) (*Config, error) {
 	if err := mergeFile(cfg, paths.LocalPath, SourceLocalSettings); err != nil {
 		return nil, err
 	}
+
+	// Per spec § 1.1 D-2 override chain: ... → Local → ENV → --settings → CLI flag.
+	// CFG-HIGH-02 fix: ENV must run BEFORE --settings (so --settings beats ENV).
+	if err := applyENV(cfg); err != nil {
+		return nil, err
+	}
 	if paths.FlagPath != "" {
 		// --settings <path>: file MUST exist (per spec § 3.1 fail-fast).
 		if !fileExists(paths.FlagPath) {
@@ -77,10 +84,6 @@ func Load(opts LoadOptions) (*Config, error) {
 		if err := mergeFile(cfg, paths.FlagPath, SourceFlagSettings); err != nil {
 			return nil, err
 		}
-	}
-
-	if err := applyENV(cfg); err != nil {
-		return nil, err
 	}
 	if err := applyFlagOverrides(cfg, opts.FlagOverrides); err != nil {
 		return nil, err
@@ -92,11 +95,16 @@ func Load(opts LoadOptions) (*Config, error) {
 	return cfg, nil
 }
 
-// mergeFile reads `path` (if it exists) and merges it into cfg, marking
-// each top-level section that has any non-zero field with `src`.
+// mergeFile reads `path` (if it exists) and merges it into cfg field-by-field
+// (preserves existing default values for fields not present in the YAML).
 //
 // File-not-found is a no-op (silent skip — spec § 3.1 only fails on parse
 // errors). YAML parse errors propagate immediately.
+//
+// Per CFG-HIGH-01 fix: decodes directly into cfg (yaml.v3 leaves
+// untouched fields alone), so `output: {format: json}` no longer wipes
+// `Output.Color="auto"` etc. Section provenance is recorded by walking the
+// yaml.Node tree to find which top-level sections appear in the file.
 func mergeFile(cfg *Config, path string, src SettingSource) error {
 	if path == "" || !fileExists(path) {
 		return nil
@@ -108,74 +116,104 @@ func mergeFile(cfg *Config, path string, src SettingSource) error {
 	if len(raw) > 1<<20 {
 		return fmt.Errorf("%s (%s source): file too large (>1MB)", path, src)
 	}
-	// yaml.v3 strict mode: rejects unknown top-level fields per Q8 翻盘 ★B
-	// philosophy (strict-unknown protects users from typos / forward-incompat
-	// configs).
+	if depth := yamlMaxDepth(raw); depth >= 32 {
+		return fmt.Errorf("%s (%s source): YAML nesting depth %d ≥ 32 (rejected per spec § 3.2 anti-bomb)", path, src, depth)
+	}
+
+	// First pass: parse into yaml.Node to discover which top-level keys
+	// the file contains. This drives section-level provenance tracking
+	// (cfg.SetSource(<top-level key name>, src)).
+	var rootNode yaml.Node
 	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
 	dec.KnownFields(true)
-
-	var overlay Config
-	if err := dec.Decode(&overlay); err != nil {
+	if err := dec.Decode(&rootNode); err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		return fmt.Errorf("parse %s (%s source): %w", path, src, err)
 	}
-	mergeOverlay(cfg, &overlay, src)
+
+	// Second pass: decode INTO cfg directly so untouched fields keep their
+	// pre-existing values (Default or higher-priority overlay).
+	dec2 := yaml.NewDecoder(strings.NewReader(string(raw)))
+	dec2.KnownFields(true)
+	if err := dec2.Decode(cfg); err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("parse %s (%s source): %w", path, src, err)
+	}
+
+	for _, key := range topLevelYAMLKeys(&rootNode) {
+		section, ok := yamlKeyToSection(key)
+		if !ok {
+			continue // unknown keys are caught by KnownFields(true) above
+		}
+		cfg.SetSource(section, src)
+	}
 	return nil
 }
 
-// mergeOverlay assigns non-zero sub-structs from `overlay` to `cfg` and
-// marks the source. Inline collections (Connections / Models) are
-// REPLACED by overlay (not merged element-wise) when overlay's slice is
-// non-nil.
-func mergeOverlay(cfg, overlay *Config, src SettingSource) {
-	// Each sub-struct: assign overlay's whole struct only if it differs from
-	// the zero-value (i.e. yaml decoder wrote something). yaml.v3 leaves
-	// untouched fields at zero-value.
-	if (overlay.Security != SecurityConfig{}) {
-		cfg.Security = overlay.Security
-		cfg.SetSource("Security", src)
+// topLevelYAMLKeys returns the top-level scalar keys of the YAML document.
+func topLevelYAMLKeys(root *yaml.Node) []string {
+	if root == nil || len(root.Content) == 0 {
+		return nil
 	}
-	if (overlay.Output != OutputConfig{}) {
-		cfg.Output = overlay.Output
-		cfg.SetSource("Output", src)
+	doc := root.Content[0]
+	if doc.Kind != yaml.MappingNode {
+		return nil
 	}
-	if (overlay.LLM != LLMConfig{}) {
-		cfg.LLM = overlay.LLM
-		cfg.SetSource("LLM", src)
+	out := make([]string, 0, len(doc.Content)/2)
+	for i := 0; i < len(doc.Content); i += 2 {
+		if doc.Content[i].Kind == yaml.ScalarNode {
+			out = append(out, doc.Content[i].Value)
+		}
 	}
-	if (overlay.Session != SessionConfig{}) {
-		cfg.Session = overlay.Session
-		cfg.SetSource("Session", src)
-	}
-	// Sentinel / Trace contain non-comparable slices in some configs; compare
-	// via JSON-equivalent zero-check.
-	if !sentinelIsZero(overlay.Sentinel) {
-		cfg.Sentinel = overlay.Sentinel
-		cfg.SetSource("Sentinel", src)
-	}
-	if (overlay.Trace != TraceConfig{}) {
-		cfg.Trace = overlay.Trace
-		cfg.SetSource("Trace", src)
-	}
-	if (overlay.Scheduler != SchedulerConfig{}) {
-		cfg.Scheduler = overlay.Scheduler
-		cfg.SetSource("Scheduler", src)
-	}
-	if overlay.Connections != nil {
-		cfg.Connections = overlay.Connections
-		cfg.SetSource("Connections", src)
-	}
-	if overlay.Models != nil {
-		cfg.Models = overlay.Models
-		cfg.SetSource("Models", src)
-	}
+	return out
 }
 
-func sentinelIsZero(s SentinelConfig) bool {
-	return !s.Enabled && s.PollInterval == 0 && s.WarmupSeconds == 0 &&
-		s.NotifyChannels == nil && s.HardCeilingFactor == 0
+// yamlKeyToSection maps a YAML top-level key (lowercase) to its Config
+// struct field name (PascalCase). E.g. "security" → "Security".
+func yamlKeyToSection(yamlKey string) (string, bool) {
+	t := reflect.TypeOf(Config{})
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		tag := f.Tag.Get("yaml")
+		// strip ",omitempty" and similar trailers
+		if comma := strings.IndexByte(tag, ','); comma >= 0 {
+			tag = tag[:comma]
+		}
+		if tag == yamlKey {
+			return f.Name, true
+		}
+	}
+	return "", false
+}
+
+// yamlMaxDepth scans `raw` and returns the maximum indentation-step depth
+// observed. Used by mergeFile to enforce the spec § 3.2 anti-bomb depth ≥ 32
+// rejection. Heuristic: count the maximum number of leading-space increments
+// in the file. Cheap and good enough for the spec requirement.
+func yamlMaxDepth(raw []byte) int {
+	max := 0
+	for _, line := range strings.Split(string(raw), "\n") {
+		// Skip blank / pure-comment lines.
+		trim := strings.TrimSpace(line)
+		if trim == "" || strings.HasPrefix(trim, "#") {
+			continue
+		}
+		spaces := 0
+		for _, ch := range line {
+			if ch == ' ' {
+				spaces++
+			} else {
+				break
+			}
+		}
+		// 2-space indent convention; depth = spaces/2.
+		depth := spaces / 2
+		if depth > max {
+			max = depth
+		}
+	}
+	return max
 }
 
 // markAllAsSource marks every top-level field as having `src` provenance.

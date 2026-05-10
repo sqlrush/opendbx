@@ -1,1 +1,2 @@
-Error: invalid --output-format "yaml" (must be one of: text, json, stream-json)
+Error: config validation failed:
+  - Output.Format: oneof violation (expected oneof=text json stream-json, got yaml, source=cli)

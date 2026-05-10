@@ -43,12 +43,13 @@ const (
 	// (gitignored — personal overrides per checkout).
 	SourceLocalSettings
 
-	// SourceFlagSettings — settings supplied via `--settings <file-or-json>`
-	// CLI flag.
-	SourceFlagSettings
-
-	// SourceENV — opendbx-specific. OPENDBX_* environment variables.
+	// SourceENV — opendbx-specific. OPENDBX_* environment variables. Per spec
+	// § 1.1 D-2 override chain: Local < ENV < --settings < CLI.
 	SourceENV
+
+	// SourceFlagSettings — settings supplied via `--settings <file-or-json>`
+	// CLI flag. Beats ENV per spec.
+	SourceFlagSettings
 
 	// SourceCLIFlag — opendbx-specific. Other CLI flags from cmd/opendbx
 	// (e.g. --output-format / --debug / --model). Highest priority.
@@ -87,8 +88,8 @@ func AllSources() []SettingSource {
 		SourceUserSettings,
 		SourceProjectSettings,
 		SourceLocalSettings,
-		SourceFlagSettings,
 		SourceENV,
+		SourceFlagSettings,
 		SourceCLIFlag,
 	}
 }

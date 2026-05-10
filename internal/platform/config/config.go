@@ -56,8 +56,8 @@ type SecurityConfig struct {
 
 // OutputConfig — terminal output formatting.
 type OutputConfig struct {
-	Format       string `yaml:"format" json:"format" env:"OPENDBX_OUTPUT_FORMAT" validate:"oneof=text json stream-json"`
-	Color        string `yaml:"color" json:"color" env:"OPENDBX_OUTPUT_COLOR" validate:"oneof=auto always never"`
+	Format       string `yaml:"format" json:"format" env:"OPENDBX_OUTPUT_FORMAT" validate:"required,oneof=text json stream-json"`
+	Color        string `yaml:"color" json:"color" env:"OPENDBX_OUTPUT_COLOR" validate:"required,oneof=auto always never"`
 	WrapWidth    int    `yaml:"wrap_width" json:"wrap_width" env:"OPENDBX_OUTPUT_WRAP_WIDTH" validate:"min=0,max=500"`
 	IncludeStats bool   `yaml:"include_stats" json:"include_stats" env:"OPENDBX_OUTPUT_INCLUDE_STATS"`
 }
@@ -65,13 +65,13 @@ type OutputConfig struct {
 // LLMConfig — LLM provider configuration. Full provider list in spec-1.20.
 type LLMConfig struct {
 	ActiveModel    string        `yaml:"active_model" json:"active_model" env:"OPENDBX_LLM_ACTIVE_MODEL"`
-	Tier           string        `yaml:"tier" json:"tier" env:"OPENDBX_LLM_TIER" validate:"oneof=tier-1 tier-2 tier-3 tier-4"`
+	Tier           string        `yaml:"tier" json:"tier" env:"OPENDBX_LLM_TIER" validate:"required,oneof=tier-1 tier-2 tier-3 tier-4"`
 	APIKey         string        `yaml:"api_key,omitempty" json:"api_key,omitempty" env:"OPENDBX_LLM_API_KEY" redact:"true"`
 	BaseURL        string        `yaml:"base_url,omitempty" json:"base_url,omitempty" env:"OPENDBX_LLM_BASE_URL"`
-	RequestTimeout time.Duration `yaml:"request_timeout" json:"request_timeout" env:"OPENDBX_LLM_REQUEST_TIMEOUT"`
+	RequestTimeout time.Duration `yaml:"request_timeout" json:"request_timeout" env:"OPENDBX_LLM_REQUEST_TIMEOUT" validate:"min=1"`
 	MaxRetries     int           `yaml:"max_retries" json:"max_retries" env:"OPENDBX_LLM_MAX_RETRIES" validate:"min=0,max=10"`
 	StripThink     bool          `yaml:"strip_think" json:"strip_think" env:"OPENDBX_LLM_STRIP_THINK"`
-	ThinkingMode   string        `yaml:"thinking_mode" json:"thinking_mode" env:"OPENDBX_LLM_THINKING_MODE" validate:"oneof=enabled disabled adaptive"`
+	ThinkingMode   string        `yaml:"thinking_mode" json:"thinking_mode" env:"OPENDBX_LLM_THINKING_MODE" validate:"required,oneof=enabled disabled adaptive"`
 }
 
 // SessionConfig — session lifecycle + memory bounds.
@@ -86,7 +86,7 @@ type SessionConfig struct {
 // SentinelConfig — DB metric probe defaults. Full 48-metric thresholds in spec-3.6.
 type SentinelConfig struct {
 	Enabled           bool          `yaml:"enabled" json:"enabled" env:"OPENDBX_SENTINEL_ENABLED"`
-	PollInterval      time.Duration `yaml:"poll_interval" json:"poll_interval" env:"OPENDBX_SENTINEL_POLL_INTERVAL"`
+	PollInterval      time.Duration `yaml:"poll_interval" json:"poll_interval" env:"OPENDBX_SENTINEL_POLL_INTERVAL" validate:"min=1"`
 	WarmupSeconds     int           `yaml:"warmup_seconds" json:"warmup_seconds" env:"OPENDBX_SENTINEL_WARMUP_SECONDS" validate:"min=0,max=600"`
 	NotifyChannels    []string      `yaml:"notify_channels,omitempty" json:"notify_channels,omitempty" env:"OPENDBX_SENTINEL_NOTIFY_CHANNELS"`
 	HardCeilingFactor float64       `yaml:"hard_ceiling_factor" json:"hard_ceiling_factor" env:"OPENDBX_SENTINEL_HARD_CEILING_FACTOR" validate:"min=1,max=100"`
@@ -102,7 +102,7 @@ type TraceConfig struct {
 // SchedulerConfig — render/IO scheduler tuning (spec-1.4 firms up).
 type SchedulerConfig struct {
 	WorkerPoolSize  int           `yaml:"worker_pool_size" json:"worker_pool_size" env:"OPENDBX_SCHEDULER_WORKER_POOL_SIZE" validate:"min=1,max=128"`
-	FrameBudget     time.Duration `yaml:"frame_budget" json:"frame_budget" env:"OPENDBX_SCHEDULER_FRAME_BUDGET"`
+	FrameBudget     time.Duration `yaml:"frame_budget" json:"frame_budget" env:"OPENDBX_SCHEDULER_FRAME_BUDGET" validate:"min=1"`
 	MaxQueuedFrames int           `yaml:"max_queued_frames" json:"max_queued_frames" env:"OPENDBX_SCHEDULER_MAX_QUEUED_FRAMES" validate:"min=1,max=1024"`
 }
 

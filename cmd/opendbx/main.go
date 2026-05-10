@@ -15,13 +15,12 @@
 // internal/platform/version. Config + profile checkpoints route through
 // internal/entrypoints to preserve that invariant.
 //
-// spec-0.4 D-9: cobra.Execute is preceded by config.Load (via entrypoints
-// relay). Load failure exits 1 with the validation error written to stderr
-// — fail-fast per spec § 3.1.
+// spec-0.4 D-9: actual config.Load runs in root command's
+// PersistentPreRunE (after cobra parses --settings + other flags). main()
+// only sets up the root command + checkpoints.
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/sqlrush/opendbx/internal/entrypoints"
@@ -29,17 +28,6 @@ import (
 
 func main() {
 	entrypoints.Checkpoint("main_entry")
-
-	// spec-0.4 D-9: load config before cobra dispatches, so subcommands can
-	// observe the resolved tree via entrypoints.LoadConfigDefault. Failure
-	// here is reported and exits 1; cobra never gets called.
-	entrypoints.Checkpoint("config_load_start")
-	if _, err := entrypoints.LoadConfigDefault(); err != nil {
-		fmt.Fprintf(os.Stderr, "opendbx: config load failed:\n%v\n", err)
-		os.Exit(1)
-	}
-	entrypoints.Checkpoint("config_loaded")
-
 	rootCmd := newRootCommand()
 	if err := rootCmd.Execute(); err != nil {
 		// cobra already prints the user-facing error; we just propagate exit.
