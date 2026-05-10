@@ -18,6 +18,7 @@
 //   - terminal (0) imports width (9):     OK (0 < 9; long jump is fine, still downward)
 //   - block (7) imports scheduler (4):    FAIL (7 >= 4, upward in list)
 //   - buffer (1) imports buffer (1):      FAIL (Go disallows self-import anyway, but rule says i < j)
+
 package rules
 
 import (
