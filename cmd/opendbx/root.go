@@ -20,9 +20,11 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/sqlrush/opendbx/internal/entrypoints"
 	"github.com/sqlrush/opendbx/internal/platform/version"
 )
 
@@ -40,21 +42,31 @@ func newRootCommand() *cobra.Command {
 		Use:   "opendbx [prompt]",
 		Short: "DB-focused Claude-Code-style agent platform",
 		Long:  "opendbx - starts an interactive session by default, use -p/--print for non-interactive output",
-		// no-args + [prompt] both go through RunE → interact stub
-		Args:          cobra.MaximumNArgs(1),
+		// CC parity: `opendbx hello world` joins args as a single prompt,
+		// matching `claude hello world`. Arbitrary args allowed; bare
+		// non-subcommand tokens become [prompt].
+		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true, // suppress "Usage: ..." dump on RunE-returned errors
 		SilenceErrors: false,
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			return validateChoiceFlags(cmd, opts)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Manual --version handling (cobra's built-in only supports --version,
 			// no -v shorthand; we emulate CC commander's `-v, --version` shape).
 			if v, _ := cmd.Flags().GetBool("version"); v {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s (opendbx)\n", version.String())
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s (opendbx)\n", version.String())
 				return nil
 			}
 			if len(args) > 0 {
-				opts.Session.Prompt = args[0]
+				opts.Session.Prompt = strings.Join(args, " ")
 			}
-			return runInteractRoot(cmd, opts)
+			err := runInteractRoot(cmd, opts)
+			// spec § 7 DoD D-9: --debug=profile triggers profile report on stderr.
+			if strings.Contains(opts.Debug.Debug, "profile") {
+				entrypoints.ReportProfile(cmd.ErrOrStderr())
+			}
+			return err
 		},
 	}
 
@@ -91,12 +103,44 @@ func newRootCommand() *cobra.Command {
 // stage-0 stub; spec-1.16-input-three-modes wires up the real REPL.
 func runInteractRoot(cmd *cobra.Command, opts *Options) error {
 	if opts.Session.Prompt != "" {
-		fmt.Fprintf(cmd.OutOrStdout(),
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 			"interact mode not yet implemented (spec-1.16); received prompt: %q\n",
 			opts.Session.Prompt)
 	} else {
-		fmt.Fprintln(cmd.OutOrStdout(),
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(),
 			"interact mode not yet implemented (spec-1.16). Run with -h for help.")
 	}
 	return nil
+}
+
+// validateChoiceFlags enforces enum-typed flags (spec § 3.1: invalid choice
+// → exit 1). cobra/pflag has no native choice constraint for vanilla string
+// vars (cobra v1.x's `RegisterFlagCompletionFunc` is for completion, not
+// validation), so we check after-the-fact in PreRunE.
+func validateChoiceFlags(_ *cobra.Command, opts *Options) error {
+	if opts.Print.OutputFormat != "" && !contains(validOutputFormats, opts.Print.OutputFormat) {
+		return fmt.Errorf("invalid --output-format %q (must be one of: %s)",
+			opts.Print.OutputFormat, strings.Join(validOutputFormats, ", "))
+	}
+	if opts.Print.InputFormat != "" && !contains(validInputFormats, opts.Print.InputFormat) {
+		return fmt.Errorf("invalid --input-format %q (must be one of: %s)",
+			opts.Print.InputFormat, strings.Join(validInputFormats, ", "))
+	}
+	if opts.IO.PermissionMode != "" && !contains(validPermissionModes, opts.IO.PermissionMode) {
+		return fmt.Errorf("invalid --permission-mode %q (must be one of: %s)",
+			opts.IO.PermissionMode, strings.Join(validPermissionModes, ", "))
+	}
+	if opts.Print.MaxBudgetUSD < 0 {
+		return fmt.Errorf("--max-budget-usd must be ≥ 0 (got %.2f)", opts.Print.MaxBudgetUSD)
+	}
+	return nil
+}
+
+func contains(haystack []string, needle string) bool {
+	for _, h := range haystack {
+		if h == needle {
+			return true
+		}
+	}
+	return false
 }

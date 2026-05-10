@@ -13,19 +13,18 @@
 //
 // Per spec § 2.2 the only platform package main may import is
 // internal/platform/version (the unique cmd → platform exception).
-// internal/platform/profileutil is *also* permitted because spec-0.3 D-9 lifts
-// it to the unique exception list — that change is being co-staged with
-// spec-0.3 implementation. (TODO: verify spec § 2.2 update in PR review.)
+// Profile checkpoints route through internal/entrypoints.Checkpoint to
+// preserve that invariant (spec-0.3 R2 fixup per codex H-6).
 package main
 
 import (
 	"os"
 
-	"github.com/sqlrush/opendbx/internal/platform/profileutil"
+	"github.com/sqlrush/opendbx/internal/entrypoints"
 )
 
 func main() {
-	profileutil.Checkpoint("main_entry")
+	entrypoints.Checkpoint("main_entry")
 	rootCmd := newRootCommand()
 	if err := rootCmd.Execute(); err != nil {
 		// cobra already prints the user-facing error; we just propagate exit.

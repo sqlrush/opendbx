@@ -28,16 +28,17 @@ import (
 // to a real React/Ink-equivalent UI.
 var ErrLauncherNotImplemented = errors.New("dialog launcher not implemented in stage 0 (lands in spec-1.15-tui)")
 
-// SetupDialogProps parallels CC `<SnapshotUpdateDialog>` props.
-type SetupDialogProps struct {
+// SnapshotUpdateProps parallels CC `<SnapshotUpdateDialog>` props.
+type SnapshotUpdateProps struct {
 	AgentType         string
 	Scope             string // "global" / "project" / "local" (mirrors CC AgentMemoryScope)
 	SnapshotTimestamp string
 }
 
-// LaunchSetupDialog parallels CC dialogLaunchers.tsx::launchSnapshotUpdateDialog
-// (site ~3173). Returns one of "merge" / "keep" / "replace".
-func LaunchSetupDialog(_ context.Context, _ SetupDialogProps) (string, error) {
+// LaunchSnapshotUpdateDialog parallels CC
+// dialogLaunchers.tsx::launchSnapshotUpdateDialog (site ~3173). Returns one
+// of "merge" / "keep" / "replace".
+func LaunchSnapshotUpdateDialog(_ context.Context, _ SnapshotUpdateProps) (string, error) {
 	return "", ErrLauncherNotImplemented
 }
 
@@ -87,13 +88,28 @@ func LaunchTeleportResumeWrapper(_ context.Context) (TeleportRemoteResponse, err
 }
 
 // TeleportRepoMismatchProps parallels CC `<TeleportRepoMismatchDialog>` props.
+//
+// Field names follow CC props (`targetRepo` / `initialPaths`) capitalized
+// per Go convention (codex M-4 fix).
 type TeleportRepoMismatchProps struct {
-	ExpectedRepo string
-	LocalPaths   []string
+	TargetRepo   string
+	InitialPaths []string
 }
 
 // LaunchTeleportRepoMismatchDialog parallels CC site ~4597. Returns the
 // chosen local path or "" if cancelled.
 func LaunchTeleportRepoMismatchDialog(_ context.Context, _ TeleportRepoMismatchProps) (string, error) {
+	return "", ErrLauncherNotImplemented
+}
+
+// ResumeChooserProps parallels CC `<ResumeChooser>` props.
+type ResumeChooserProps struct {
+	SearchTerm string
+}
+
+// LaunchResumeChooser parallels CC dialogLaunchers.tsx::launchResumeChooser
+// (the 7th launcher; codex M-4 + claude M-3 — added in R2 fixup).
+// Returns the chosen session ID or "" if cancelled.
+func LaunchResumeChooser(_ context.Context, _ ResumeChooserProps) (string, error) {
 	return "", ErrLauncherNotImplemented
 }

@@ -88,7 +88,7 @@ func TestReport_OrderIsDeterministic(t *testing.T) {
 	idxA := strings.Index(out, "alpha")
 	idxB := strings.Index(out, "beta")
 	idxG := strings.Index(out, "gamma")
-	if !(idxA < idxB && idxB < idxG) {
+	if idxA >= idxB || idxB >= idxG {
 		t.Errorf("expected order alpha < beta < gamma in output:\n%s", out)
 	}
 }

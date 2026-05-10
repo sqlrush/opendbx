@@ -103,8 +103,17 @@ func registerFlags(cmd *cobra.Command, opts *Options) {
 	// Tools
 	cmd.Flags().StringSliceVar(&opts.Tools.AllowedTools, "allowed-tools", nil,
 		"Comma or space-separated list of tool names to allow (e.g. \"Bash(psql:*) Query\")")
+	// CC camelCase alias for parity (hidden to avoid duplicating in --help).
+	cmd.Flags().StringSliceVar(&opts.Tools.AllowedTools, "allowedTools", nil, "")
+	if err := cmd.Flags().MarkHidden("allowedTools"); err != nil {
+		panic(err)
+	}
 	cmd.Flags().StringSliceVar(&opts.Tools.DisallowedTools, "disallowed-tools", nil,
 		"Comma or space-separated list of tool names to deny (e.g. \"Bash(psql:*) Query\")")
+	cmd.Flags().StringSliceVar(&opts.Tools.DisallowedTools, "disallowedTools", nil, "")
+	if err := cmd.Flags().MarkHidden("disallowedTools"); err != nil {
+		panic(err)
+	}
 	cmd.Flags().StringSliceVar(&opts.Tools.Tools, "tools", nil,
 		"Specify the list of available tools from the built-in set. Use \"\" to disable all tools, \"default\" for all, or specify names.")
 	cmd.Flags().BoolVar(&opts.Tools.DisableSlash, "disable-slash-commands", false,
@@ -121,6 +130,17 @@ func registerFlags(cmd *cobra.Command, opts *Options) {
 		"System prompt to use for the session")
 	cmd.Flags().StringVar(&opts.IO.AppendSystem, "append-system-prompt", "",
 		"Append a system prompt to the default system prompt")
+	// Hidden file variants of the system prompt (per spec § 2.3 Class D).
+	var sysPromptFile, appendSysPromptFile string
+	cmd.Flags().StringVar(&sysPromptFile, "system-prompt-file", "",
+		"Read system prompt from a file")
+	cmd.Flags().StringVar(&appendSysPromptFile, "append-system-prompt-file", "",
+		"Read system prompt from a file and append to the default system prompt")
+	for _, name := range []string{"system-prompt-file", "append-system-prompt-file"} {
+		if err := cmd.Flags().MarkHidden(name); err != nil {
+			panic(err)
+		}
+	}
 	cmd.Flags().StringVar(&opts.IO.SettingSources, "setting-sources", "",
 		"Comma-separated list of setting sources to load (user, project, local).")
 	cmd.Flags().StringSliceVar(&opts.IO.PluginDir, "plugin-dir", nil,
@@ -177,14 +197,80 @@ func registerFlags(cmd *cobra.Command, opts *Options) {
 	}
 }
 
-// optionSpec records the adaptation table for documentation/audit.
-//
-// Source row example for class A:
-//
-//	{Name: "verbose", CCFile: "main.tsx", CCLine: 1010, Class: classA,
-//	 CCDesc:  "Override verbose mode setting from config",
-//	 OdxDesc: "Override verbose mode setting from config",
-//	 Reason:  "1:1 — opendbx config has same verbose semantic"}
-//
-// (The full table lives in main_test.go's TestOptionSpec table-driven test
-// to keep this file focused on cobra wiring.)
+// optionSpecRow records one CLI flag's adaptation decision (spec-0.3 D-7).
+type optionSpecRow struct {
+	Name   string     // pflag long name (no leading --)
+	Short  string     // shorthand (single letter, "" if none)
+	Class  adaptClass // A/B/C/D
+	Hidden bool       // true if MarkHidden in registerFlags
+}
+
+// optionSpecs is the curated adaptation table. Validated by
+// TestOptionSpecMatchesFlags in main_test.go: every row resolves via
+// cmd.Flags().Lookup(); no flag exists outside the table.
+var optionSpecs = []optionSpecRow{
+	// === --version + -v handled separately (manual) ===
+	{Name: "version", Short: "v", Class: classA},
+
+	// === Class A: direct 1:1 ===
+	{Name: "debug", Short: "d", Class: classA},
+	{Name: "debug-to-stderr", Class: classA, Hidden: true},
+	{Name: "debug-file", Class: classA},
+	{Name: "verbose", Class: classA},
+	{Name: "continue", Short: "c", Class: classA},
+	{Name: "resume", Short: "r", Class: classA},
+	{Name: "fork-session", Class: classA},
+	{Name: "from-pr", Class: classA},
+	{Name: "no-session-persistence", Class: classA},
+	{Name: "session-id", Class: classA},
+	{Name: "name", Short: "n", Class: classA},
+	{Name: "prefill", Class: classA, Hidden: true},
+	{Name: "print", Short: "p", Class: classA},
+	{Name: "output-format", Class: classA},
+	{Name: "input-format", Class: classA},
+	{Name: "include-hook-events", Class: classA},
+	{Name: "include-partial-messages", Class: classA},
+	{Name: "json-schema", Class: classA},
+	{Name: "replay-user-messages", Class: classA},
+	{Name: "max-budget-usd", Class: classA},
+	{Name: "allowed-tools", Class: classA},
+	{Name: "allowedTools", Class: classA, Hidden: true}, // CC camelCase alias
+	{Name: "disallowed-tools", Class: classA},
+	{Name: "disallowedTools", Class: classA, Hidden: true}, // CC camelCase alias
+	{Name: "tools", Class: classA},
+	{Name: "disable-slash-commands", Class: classA},
+	{Name: "settings", Class: classA},
+	{Name: "add-dir", Class: classA},
+	{Name: "ide", Class: classA},
+	{Name: "system-prompt", Class: classA},
+	{Name: "append-system-prompt", Class: classA},
+	{Name: "system-prompt-file", Class: classA, Hidden: true},
+	{Name: "append-system-prompt-file", Class: classA, Hidden: true},
+	{Name: "setting-sources", Class: classA},
+	{Name: "plugin-dir", Class: classA},
+	{Name: "file", Class: classA},
+	{Name: "bare", Class: classA},
+	{Name: "permission-mode", Class: classA},
+	{Name: "dangerously-skip-permissions", Class: classA},
+	{Name: "allow-dangerously-skip-permissions", Class: classA},
+
+	// === Class B: CC name kept, DB-flavored description ===
+	{Name: "model", Class: classB},
+	{Name: "agent", Class: classB},
+	{Name: "fallback-model", Class: classB},
+	{Name: "effort", Class: classB},
+	{Name: "mcp-config", Class: classB},
+	{Name: "strict-mcp-config", Class: classB},
+
+	// === Class C: opendbx-specific NEW ===
+	{Name: "db", Class: classC},
+	{Name: "connection", Class: classC},
+	{Name: "connection-alias", Class: classC},
+	{Name: "llm-tier", Class: classC},
+
+	// === Class D: hidden ===
+	{Name: "init", Class: classD, Hidden: true},
+	{Name: "init-only", Class: classD, Hidden: true},
+	{Name: "maintenance", Class: classD, Hidden: true},
+	{Name: "thinking", Class: classD, Hidden: true},
+}

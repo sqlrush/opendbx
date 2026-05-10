@@ -130,6 +130,16 @@ type HiddenOptions struct {
 	Thinking    string // --thinking <mode>
 }
 
+// validOutputFormats / validInputFormats / validPermissionModes are the
+// allowed enum values for the corresponding flags. spec § 3.1 requires
+// invalid values to exit 1; flags.go validateOptions enforces this in
+// PreRunE.
+var (
+	validOutputFormats   = []string{"text", "json", "stream-json"}
+	validInputFormats    = []string{"text", "stream-json"}
+	validPermissionModes = []string{"acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"}
+)
+
 // newOptions returns a zero-valued Options struct. Used by root.go to
 // share a single Options instance across the root command and all
 // subcommands (each subcommand reads from `opts` after cobra has parsed).

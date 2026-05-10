@@ -87,6 +87,11 @@ func TestGolden(t *testing.T) {
 		{"db_help", []string{"db", "--help"}, "stdout", false, "testdata/golden/db-help.txt"},
 		{"sentinel_help", []string{"sentinel", "--help"}, "stdout", false, "testdata/golden/sentinel-help.txt"},
 		{"diag_help", []string{"diag", "--help"}, "stdout", false, "testdata/golden/diag-help.txt"},
+		// nested subcommand --help
+		{"mcp_serve_help", []string{"mcp", "serve", "--help"}, "stdout", false, "testdata/golden/mcp-serve-help.txt"},
+		{"setup_token_help", []string{"setup-token", "--help"}, "stdout", false, "testdata/golden/setup-token-help.txt"},
+		// invalid argument golden (spec § 3.1)
+		{"invalid_output_format", []string{"--output-format", "yaml"}, "stderr", true, "testdata/golden/invalid-output-format.txt"},
 	}
 
 	for _, tc := range cases {
@@ -175,12 +180,94 @@ func TestSubcommandStubs(t *testing.T) {
 }
 
 func TestRoot_PromptArgument(t *testing.T) {
-	stdout, _, err := runCmd(t, "hello world")
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
+	t.Run("single_token", func(t *testing.T) {
+		stdout, _, err := runCmd(t, "hello")
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if !strings.Contains(stdout, "received prompt: \"hello\"") {
+			t.Errorf("[prompt] positional not captured. stdout: %q", stdout)
+		}
+	})
+	t.Run("multi_token_joined", func(t *testing.T) {
+		// CC parity: `claude hello world` joins as "hello world".
+		stdout, _, err := runCmd(t, "hello", "world")
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if !strings.Contains(stdout, "received prompt: \"hello world\"") {
+			t.Errorf("multi-token prompt not joined. stdout: %q", stdout)
+		}
+	})
+}
+
+// TestOptionSpecMatchesFlags ensures every entry in optionSpecs (the spec D-7
+// adaptation table) resolves via cmd.Flags().Lookup() (or PersistentFlags).
+// Catches drift if a flag is removed without updating optionSpecs.
+func TestOptionSpecMatchesFlags(t *testing.T) {
+	cmd := newRootCommand()
+
+	for _, row := range optionSpecs {
+		t.Run(row.Name, func(t *testing.T) {
+			f := cmd.Flags().Lookup(row.Name)
+			if f == nil {
+				f = cmd.PersistentFlags().Lookup(row.Name)
+			}
+			if f == nil {
+				t.Errorf("optionSpecs row %q has no matching cobra flag", row.Name)
+				return
+			}
+			if row.Short != "" && f.Shorthand != row.Short {
+				t.Errorf("optionSpecs row %q expects shorthand %q, cobra has %q",
+					row.Name, row.Short, f.Shorthand)
+			}
+			if row.Hidden && !f.Hidden {
+				t.Errorf("optionSpecs row %q expects Hidden=true but cobra flag is visible", row.Name)
+			}
+		})
 	}
-	if !strings.Contains(stdout, "received prompt: \"hello world\"") {
-		t.Errorf("[prompt] positional not captured. stdout: %q", stdout)
+}
+
+// TestSubcommandsRegistered ensures all 13 spec-0.3 § 2.1 subcommands are
+// attached to the root command.
+func TestSubcommandsRegistered(t *testing.T) {
+	cmd := newRootCommand()
+	expected := []string{
+		"interact", "agent", "cluster", "admin",
+		"mcp", "plugin", "auth", "agents", "doctor", "update", "install",
+		"setup-token", "completion", "open",
+		"db", "sentinel", "diag",
+		"version",
+	}
+	got := make(map[string]bool)
+	for _, sub := range cmd.Commands() {
+		got[sub.Name()] = true
+	}
+	for _, name := range expected {
+		if !got[name] {
+			t.Errorf("subcommand %q not registered on root", name)
+		}
+	}
+}
+
+// TestChoiceValidation enforces spec § 3.1 invalid-choice → exit 1.
+func TestChoiceValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"output_format_invalid", []string{"--output-format", "yaml"}},
+		{"input_format_invalid", []string{"--input-format", "yaml"}},
+		{"permission_mode_invalid", []string{"--permission-mode", "yolo"}},
+		{"max_budget_negative", []string{"--max-budget-usd", "-1"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := runCmd(t, tc.args...)
+			if err == nil {
+				t.Errorf("expected error for %v, got nil", tc.args)
+			}
+		})
 	}
 }
 

@@ -111,23 +111,12 @@ func PathToLayer(importPath string) Layer {
 // is permitted to import. Exact-match only — sub-packages like
 // `internal/platform/version/build` do NOT satisfy an exception.
 //
-// Per spec § 2.2 + spec-0.3 § 1.4 + D-9, the allow list is intentionally
-// small. Adding a new exception requires its own spec section.
-//
-//   - internal/platform/version (spec-0.2 § 2.2): main.go embeds the build
-//     version string set via linker flag.
-//   - internal/platform/profileutil (spec-0.3 D-9): main.go records a
-//     startup checkpoint before any other code can run, parallel to CC
-//     main.tsx L1 `profileCheckpoint('main_tsx_entry')`.
+// Per spec-0.2 § 2.2 the only exception is internal/platform/version.
+// spec-0.3 D-9 routes profile checkpoints via internal/entrypoints to
+// preserve this invariant (R2 fixup per codex H-6).
 var CmdPlatformExceptionPaths = []string{
 	ModulePrefix + "internal/platform/version",
-	ModulePrefix + "internal/platform/profileutil",
 }
-
-// CmdPlatformVersionExceptionPath retained for back-compat (deprecated).
-//
-// Deprecated: use CmdPlatformExceptionPaths.
-const CmdPlatformVersionExceptionPath = ModulePrefix + "internal/platform/version"
 
 // MigrationsPath is the platform/migrations path; only bootstrap may
 // import it (spec-0.2 § 2.2 重要细则 #1). Path-boundary safe: matches the

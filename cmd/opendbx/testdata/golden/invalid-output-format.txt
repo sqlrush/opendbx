@@ -1,0 +1,1 @@
+Error: invalid --output-format "yaml" (must be one of: text, json, stream-json)

@@ -14,8 +14,18 @@ import (
 func TestLaunchers_AllReturnNotImplemented(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("LaunchSetupDialog", func(t *testing.T) {
-		s, err := LaunchSetupDialog(ctx, SetupDialogProps{})
+	t.Run("LaunchSnapshotUpdateDialog", func(t *testing.T) {
+		s, err := LaunchSnapshotUpdateDialog(ctx, SnapshotUpdateProps{})
+		if !errors.Is(err, ErrLauncherNotImplemented) {
+			t.Errorf("expected ErrLauncherNotImplemented, got %v", err)
+		}
+		if s != "" {
+			t.Errorf("expected empty string, got %q", s)
+		}
+	})
+
+	t.Run("LaunchResumeChooser", func(t *testing.T) {
+		s, err := LaunchResumeChooser(ctx, ResumeChooserProps{})
 		if !errors.Is(err, ErrLauncherNotImplemented) {
 			t.Errorf("expected ErrLauncherNotImplemented, got %v", err)
 		}

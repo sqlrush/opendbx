@@ -75,10 +75,10 @@ func Report(w io.Writer) {
 
 	for _, e := range cp {
 		dt := e.at.Sub(start).Seconds() * 1000
-		fmt.Fprintf(w, "[profile] %7.1fms  %s\n", dt, e.name)
+		_, _ = fmt.Fprintf(w, "[profile] %7.1fms  %s\n", dt, e.name)
 	}
 	if last := cp[len(cp)-1]; len(cp) > 0 {
-		fmt.Fprintf(w, "[profile] N=%d total=%.1fms\n",
+		_, _ = fmt.Fprintf(w, "[profile] N=%d total=%.1fms\n",
 			len(cp), last.at.Sub(start).Seconds()*1000)
 	}
 }
