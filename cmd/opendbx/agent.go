@@ -12,7 +12,7 @@ import (
 )
 
 func runAgent(_ []string, stdout, _ io.Writer) int {
-	fmt.Fprintf(stdout, stage0StubFmt,
+	_, _ = fmt.Fprintf(stdout, stage0StubFmt,
 		"agent",
 		"agent",
 		"Stage 9+ autopilot specs (cerebrate / overlord / drone)")

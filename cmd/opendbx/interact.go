@@ -13,7 +13,7 @@ import (
 )
 
 func runInteract(_ []string, stdout, _ io.Writer) int {
-	fmt.Fprintf(stdout, stage0StubFmt,
+	_, _ = fmt.Fprintf(stdout, stage0StubFmt,
 		"interact",
 		"interact",
 		"spec-0.3-cmd-entrypoints + spec-1.15-tui + spec-1.16-input-three-modes")

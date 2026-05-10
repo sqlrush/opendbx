@@ -19,7 +19,7 @@ import (
 )
 
 func runAdmin(_ []string, stdout, _ io.Writer) int {
-	fmt.Fprintf(stdout, stage0StubFmt,
+	_, _ = fmt.Fprintf(stdout, stage0StubFmt,
 		"admin",
 		"admin",
 		"spec-4.8-version-migrations (admin migrate) + Stage 4+ admin specs")

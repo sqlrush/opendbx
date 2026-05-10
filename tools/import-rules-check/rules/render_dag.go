@@ -1,5 +1,7 @@
 // Copyright 2026 opendbx contributors. See LICENSE.
 //
+// Author: sqlrush
+
 // Render subpackage strict DAG (spec-0.2 § 2.2 重要细则 #3, CLAUDE.md § 3.1).
 //
 // Order:
@@ -16,8 +18,6 @@
 //   - terminal (0) imports width (9):     OK (0 < 9; long jump is fine, still downward)
 //   - block (7) imports scheduler (4):    FAIL (7 >= 4, upward in list)
 //   - buffer (1) imports buffer (1):      FAIL (Go disallows self-import anyway, but rule says i < j)
-//
-// Author: sqlrush
 package rules
 
 import (

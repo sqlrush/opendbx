@@ -1,9 +1,9 @@
 // Copyright 2026 opendbx contributors. See LICENSE.
 //
+// Author: sqlrush
+
 // Package rules implements opendbx's layered import-direction rules
 // (spec-0.2 § 2.2). Pure data + pure functions; no side effects.
-//
-// Author: sqlrush
 package rules
 
 import (
@@ -17,6 +17,8 @@ const ModulePrefix = "github.com/sqlrush/opendbx/"
 // Layer enumerates the dependency layers tracked by spec-0.2.
 type Layer int
 
+// Layer values: order is internal; only equality and the LayerMatrix
+// lookups are observable.
 const (
 	LayerStdlib Layer = iota
 	LayerExternal

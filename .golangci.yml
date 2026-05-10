@@ -40,12 +40,24 @@ linters:
       - linters: [errorlint]
         text: "error strings should not be capitalized"
       - path: _test\.go
-        linters: [goconst]
+        linters: [goconst, gosec]
       # Stage-0 scaffolding: stub doc.go files contain only a package
       # comment + design ref; revive's "exported" rule complains about
       # packages with no exported identifiers, which is intentional here.
       - path: internal/.*/doc\.go
         linters: [revive]
+      # tools/dep-allowlist-check intentionally takes a user-supplied path
+      # to allowlist.yml; gosec G304 (potential file inclusion via variable)
+      # is the intended interface here.
+      - path: tools/dep-allowlist-check/.*\.go
+        text: "G304:"
+        linters: [gosec]
+      # cmd/opendbx subcommand stubs are stage-0 placeholders; they
+      # legitimately ignore writer error returns (writer is bytes.Buffer
+      # in tests, os.Stdout in prod — neither fails). Will become real
+      # error-aware code in spec-0.3.
+      - path: cmd/opendbx/.*\.go
+        linters: [errcheck]
 
 formatters:
   enable:

@@ -67,17 +67,17 @@ func main() {
 // Returns the process exit code.
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprint(stdout, helpText)
+		_, _ = fmt.Fprint(stdout, helpText)
 		return 0
 	}
 
 	switch args[0] {
 	case "-v", "--version", "version":
-		fmt.Fprintf(stdout, "opendbx %s\n", version.String())
+		_, _ = fmt.Fprintf(stdout, "opendbx %s\n", version.String())
 		return 0
 
 	case "-h", "--help", "help":
-		fmt.Fprint(stdout, helpText)
+		_, _ = fmt.Fprint(stdout, helpText)
 		return 0
 
 	case "interact":
@@ -93,8 +93,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runAdmin(args[1:], stdout, stderr)
 
 	default:
-		fmt.Fprintf(stderr, "Unknown subcommand: %q\n\n", args[0])
-		fmt.Fprint(stderr, helpText)
+		_, _ = fmt.Fprintf(stderr, "Unknown subcommand: %q\n\n", args[0])
+		_, _ = fmt.Fprint(stderr, helpText)
 		return 1
 	}
 }

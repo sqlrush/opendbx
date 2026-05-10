@@ -24,6 +24,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -254,8 +255,8 @@ func goListModules(root string) ([]goModule, error) {
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
-		// Surface stderr if available
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			return nil, fmt.Errorf("%w: %s", err, string(exitErr.Stderr))
 		}
 		return nil, err

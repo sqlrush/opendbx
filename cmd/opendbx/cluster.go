@@ -12,7 +12,7 @@ import (
 )
 
 func runCluster(_ []string, stdout, _ io.Writer) int {
-	fmt.Fprintf(stdout, stage0StubFmt,
+	_, _ = fmt.Fprintf(stdout, stage0StubFmt,
 		"cluster",
 		"cluster",
 		"Stage 9+ cluster specs")

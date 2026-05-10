@@ -3,6 +3,7 @@
 // Filesystem-pass checks (spec § 3.2): doc.go presence + pkg/ empty.
 //
 // Author: sqlrush
+
 package rules
 
 import (
