@@ -41,9 +41,10 @@ type FlagOverride struct {
 
 // CLILoadInputs is the cmd/opendbx → entrypoints → config.Load bridge.
 type CLILoadInputs struct {
-	CWD          string
-	SettingsPath string
-	Overrides    []FlagOverride
+	CWD            string
+	SettingsPath   string
+	SettingSources string
+	Overrides      []FlagOverride
 }
 
 // LoadConfigFromCLI builds config.LoadOptions from cmd-side inputs and
@@ -56,6 +57,7 @@ func LoadConfigFromCLI(in CLILoadInputs) (*config.Config, error) {
 	return config.Load(config.LoadOptions{
 		CWD:              in.CWD,
 		FlagSettingsPath: in.SettingsPath,
+		SettingSources:   in.SettingSources,
 		FlagOverrides:    overrides,
 	})
 }

@@ -107,13 +107,25 @@ func TestWriteSources_AllTopLevel(t *testing.T) {
 
 func TestWriteSources_SingleField(t *testing.T) {
 	cfg := Default()
-	cfg.SetSource("LLM", SourceENV)
+	cfg.SetSource("LLM.RequestTimeout", SourceENV)
 	var buf bytes.Buffer
 	if err := WriteSources(&buf, cfg, "LLM.RequestTimeout"); err != nil {
 		t.Fatalf("WriteSources: %v", err)
 	}
 	if !strings.Contains(buf.String(), "env") {
 		t.Errorf("WriteSources should report 'env' source: got %q", buf.String())
+	}
+}
+
+func TestWriteSources_UnknownFieldFails(t *testing.T) {
+	cfg := Default()
+	var buf bytes.Buffer
+	err := WriteSources(&buf, cfg, "NoSuch.Field")
+	if err == nil {
+		t.Fatal("expected unknown field to fail")
+	}
+	if !strings.Contains(err.Error(), "NoSuch.Field") {
+		t.Errorf("error should mention field name: %v", err)
 	}
 }
 
