@@ -75,6 +75,7 @@ func walkENVTags(v reflect.Value, parentPath string, cfg *Config) error {
 		if section != "" {
 			cfg.SetSource(section, SourceENV)
 		}
+		cfg.SetSource(path, SourceENV)
 	}
 	return nil
 }
@@ -215,6 +216,7 @@ func applyFlagOverrides(cfg *Config, overrides []FieldOverride) error {
 		if section != "" {
 			cfg.SetSource(section, SourceCLIFlag)
 		}
+		cfg.SetSource(ov.Path, SourceCLIFlag)
 	}
 	return nil
 }

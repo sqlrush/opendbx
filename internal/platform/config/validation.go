@@ -77,10 +77,13 @@ func walkValidate(v reflect.Value, parentPath string, cfg *Config, errs *Validat
 
 		rules := ft.Tag.Get("validate")
 		if rules != "" {
-			source := topSection(path)
 			srcLabel := SourceDefault.String()
 			if cfg != nil {
-				srcLabel = cfg.Source(source).String()
+				src := cfg.Source(path)
+				if src == SourceDefault {
+					src = cfg.Source(topSection(path))
+				}
+				srcLabel = src.String()
 			}
 			redacted := ft.Tag.Get("redact") == "true"
 			actual := stringifyValue(fv, redacted)

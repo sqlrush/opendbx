@@ -56,6 +56,9 @@ func newRootCommand() *cobra.Command {
 		//   2. Stash the resolved *Config in the cobra context for any
 		//      subcommand that wants it (admin config sources, etc.).
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if shouldSkipConfigLoad(cmd) {
+				return validateChoiceFlags(cmd, opts)
+			}
 			entrypoints.Checkpoint("config_load_start")
 			cfg, err := entrypoints.LoadConfigFromCLI(buildCLIInputs(opts))
 			if err != nil {
@@ -128,8 +131,9 @@ func newRootCommand() *cobra.Command {
 func buildCLIInputs(opts *Options) entrypoints.CLILoadInputs {
 	cwd, _ := os.Getwd()
 	in := entrypoints.CLILoadInputs{
-		CWD:          cwd,
-		SettingsPath: opts.IO.Settings,
+		CWD:            cwd,
+		SettingsPath:   opts.IO.Settings,
+		SettingSources: opts.IO.SettingSources,
 	}
 	if opts.Print.OutputFormat != "" {
 		in.Overrides = append(in.Overrides,
@@ -144,6 +148,26 @@ func buildCLIInputs(opts *Options) entrypoints.CLILoadInputs {
 			entrypoints.FlagOverride{Path: "LLM.Tier", Value: opts.Model.LLMTier})
 	}
 	return in
+}
+
+func shouldSkipConfigLoad(cmd *cobra.Command) bool {
+	if cmd.Name() == "version" {
+		return true
+	}
+	if cmd == cmd.Root() {
+		if v, _ := cmd.Flags().GetBool("version"); v {
+			return true
+		}
+	}
+	switch cmd.CommandPath() {
+	case "opendbx admin config validate",
+		"opendbx admin config dump-defaults",
+		"opendbx admin config dump-schema",
+		"opendbx admin config dump-env-map":
+		return true
+	default:
+		return false
+	}
 }
 
 // runInteractRoot is shared between the root command (no subcommand) and the

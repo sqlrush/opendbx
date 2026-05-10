@@ -32,6 +32,10 @@ type LoadOptions struct {
 	// from cmd/opendbx CLI flags (highest priority — SourceCLIFlag).
 	// Caller (cmd/opendbx) builds this from Options struct.
 	FlagOverrides []FieldOverride
+
+	// SettingSources optionally restricts user/project/local settings layers.
+	// Empty means all three, matching CC's default behavior.
+	SettingSources string
 }
 
 // FieldOverride represents a single CLI-flag → Config-field write.
@@ -43,7 +47,7 @@ type FieldOverride struct {
 // Load builds the final *Config by walking the override chain:
 //
 //	Default() → policy yaml → user yaml → project yaml → local yaml →
-//	  flag-settings yaml → ENV vars → CLI flag overrides
+//	  ENV vars → flag-settings yaml/JSON string → CLI flag overrides
 //
 // Returns the final Config + first parse/validation error (if any).
 func Load(opts LoadOptions) (*Config, error) {
@@ -57,18 +61,28 @@ func Load(opts LoadOptions) (*Config, error) {
 	if opts.FlagSettingsPath != "" {
 		paths.FlagPath = opts.FlagSettingsPath
 	}
+	selectedSources, err := parseSettingSources(opts.SettingSources)
+	if err != nil {
+		return nil, err
+	}
 
 	if err := mergeFile(cfg, paths.PolicyPath, SourcePolicySettings); err != nil {
 		return nil, err
 	}
-	if err := mergeFile(cfg, paths.UserPath, SourceUserSettings); err != nil {
-		return nil, err
+	if selectedSources["user"] {
+		if err := mergeFile(cfg, paths.UserPath, SourceUserSettings); err != nil {
+			return nil, err
+		}
 	}
-	if err := mergeFile(cfg, paths.ProjectPath, SourceProjectSettings); err != nil {
-		return nil, err
+	if selectedSources["project"] {
+		if err := mergeFile(cfg, paths.ProjectPath, SourceProjectSettings); err != nil {
+			return nil, err
+		}
 	}
-	if err := mergeFile(cfg, paths.LocalPath, SourceLocalSettings); err != nil {
-		return nil, err
+	if selectedSources["local"] {
+		if err := mergeFile(cfg, paths.LocalPath, SourceLocalSettings); err != nil {
+			return nil, err
+		}
 	}
 
 	// Per spec § 1.1 D-2 override chain: ... → Local → ENV → --settings → CLI flag.
@@ -77,11 +91,7 @@ func Load(opts LoadOptions) (*Config, error) {
 		return nil, err
 	}
 	if paths.FlagPath != "" {
-		// --settings <path>: file MUST exist (per spec § 3.1 fail-fast).
-		if !fileExists(paths.FlagPath) {
-			return nil, fmt.Errorf("settings file not found: %s", paths.FlagPath)
-		}
-		if err := mergeFile(cfg, paths.FlagPath, SourceFlagSettings); err != nil {
+		if err := mergeFlagSettings(cfg, paths.FlagPath); err != nil {
 			return nil, err
 		}
 	}
@@ -93,6 +103,38 @@ func Load(opts LoadOptions) (*Config, error) {
 		return nil, fmt.Errorf("config validation failed:\n%w", err)
 	}
 	return cfg, nil
+}
+
+func parseSettingSources(raw string) (map[string]bool, error) {
+	selected := map[string]bool{"user": true, "project": true, "local": true}
+	if strings.TrimSpace(raw) == "" {
+		return selected, nil
+	}
+	selected = map[string]bool{"user": false, "project": false, "local": false}
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	})
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		if _, ok := selected[part]; !ok {
+			return nil, fmt.Errorf("invalid --setting-sources value %q (allowed: user, project, local)", part)
+		}
+		selected[part] = true
+	}
+	return selected, nil
+}
+
+func mergeFlagSettings(cfg *Config, arg string) error {
+	trimmed := strings.TrimSpace(arg)
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		return mergeBytes(cfg, "<--settings>", []byte(trimmed), SourceFlagSettings)
+	}
+	if !fileExists(arg) {
+		return fmt.Errorf("settings file not found: %s", arg)
+	}
+	return mergeFile(cfg, arg, SourceFlagSettings)
 }
 
 // mergeFile reads `path` (if it exists) and merges it into cfg field-by-field
@@ -113,11 +155,15 @@ func mergeFile(cfg *Config, path string, src SettingSource) error {
 	if err != nil {
 		return fmt.Errorf("read %s (%s source): %w", path, src, err)
 	}
+	return mergeBytes(cfg, path, raw, src)
+}
+
+func mergeBytes(cfg *Config, label string, raw []byte, src SettingSource) error {
 	if len(raw) > 1<<20 {
-		return fmt.Errorf("%s (%s source): file too large (>1MB)", path, src)
+		return fmt.Errorf("%s (%s source): file too large (>1MB)", label, src)
 	}
 	if depth := yamlMaxDepth(raw); depth >= 32 {
-		return fmt.Errorf("%s (%s source): YAML nesting depth %d ≥ 32 (rejected per spec § 3.2 anti-bomb)", path, src, depth)
+		return fmt.Errorf("%s (%s source): YAML nesting depth %d ≥ 32 (rejected per spec § 3.2 anti-bomb)", label, src, depth)
 	}
 
 	// First pass: parse into yaml.Node to discover which top-level keys
@@ -130,7 +176,7 @@ func mergeFile(cfg *Config, path string, src SettingSource) error {
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
-		return fmt.Errorf("parse %s (%s source): %w", path, src, err)
+		return fmt.Errorf("parse %s (%s source): %w", label, src, err)
 	}
 
 	// Second pass: decode INTO cfg directly so untouched fields keep their
@@ -138,7 +184,7 @@ func mergeFile(cfg *Config, path string, src SettingSource) error {
 	dec2 := yaml.NewDecoder(strings.NewReader(string(raw)))
 	dec2.KnownFields(true)
 	if err := dec2.Decode(cfg); err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("parse %s (%s source): %w", path, src, err)
+		return fmt.Errorf("parse %s (%s source): %w", label, src, err)
 	}
 
 	for _, key := range topLevelYAMLKeys(&rootNode) {
@@ -147,6 +193,9 @@ func mergeFile(cfg *Config, path string, src SettingSource) error {
 			continue // unknown keys are caught by KnownFields(true) above
 		}
 		cfg.SetSource(section, src)
+	}
+	for _, fieldPath := range yamlFieldPaths(&rootNode, reflect.TypeOf(Config{}), "") {
+		cfg.SetSource(fieldPath, src)
 	}
 	return nil
 }
@@ -187,6 +236,85 @@ func yamlKeyToSection(yamlKey string) (string, bool) {
 	return "", false
 }
 
+func yamlFieldPaths(root *yaml.Node, t reflect.Type, parent string) []string {
+	if root == nil || len(root.Content) == 0 {
+		return nil
+	}
+	node := root
+	if root.Kind == yaml.DocumentNode {
+		node = root.Content[0]
+	}
+	return yamlFieldPathsFromMapping(node, t, parent)
+}
+
+func yamlFieldPathsFromMapping(node *yaml.Node, t reflect.Type, parent string) []string {
+	if node == nil || node.Kind != yaml.MappingNode || t.Kind() != reflect.Struct {
+		return nil
+	}
+	var paths []string
+	for i := 0; i < len(node.Content); i += 2 {
+		keyNode := node.Content[i]
+		valueNode := node.Content[i+1]
+		if keyNode.Kind != yaml.ScalarNode {
+			continue
+		}
+		ft, ok := fieldByYAMLName(t, keyNode.Value)
+		if !ok {
+			continue
+		}
+		path := joinPath(parent, ft.Name)
+		if ft.Type.Kind() == reflect.Struct && valueNode.Kind == yaml.MappingNode {
+			children := yamlFieldPathsFromMapping(valueNode, ft.Type, path)
+			if len(children) > 0 {
+				paths = append(paths, children...)
+				continue
+			}
+		}
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+func fieldByYAMLName(t reflect.Type, name string) (reflect.StructField, bool) {
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		tag := f.Tag.Get("yaml")
+		if comma := strings.IndexByte(tag, ','); comma >= 0 {
+			tag = tag[:comma]
+		}
+		if tag == name {
+			return f, true
+		}
+	}
+	return reflect.StructField{}, false
+}
+
+func configSourcePaths(t reflect.Type, parent string) []string {
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
+	var paths []string
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() || f.Tag.Get("yaml") == "-" {
+			continue
+		}
+		path := joinPath(parent, f.Name)
+		if f.Type.Kind() == reflect.Struct {
+			children := configSourcePaths(f.Type, path)
+			if len(children) > 0 {
+				paths = append(paths, children...)
+				continue
+			}
+		}
+		paths = append(paths, path)
+	}
+	return paths
+}
+
 // yamlMaxDepth scans `raw` and returns the maximum indentation-step depth
 // observed. Used by mergeFile to enforce the spec § 3.2 anti-bomb depth ≥ 32
 // rejection. Heuristic: count the maximum number of leading-space increments
@@ -221,5 +349,8 @@ func yamlMaxDepth(raw []byte) int {
 func markAllAsSource(cfg *Config, src SettingSource) {
 	for _, name := range []string{"Security", "Output", "LLM", "Session", "Sentinel", "Trace", "Scheduler", "Connections", "Models"} {
 		cfg.SetSource(name, src)
+	}
+	for _, path := range configSourcePaths(reflect.TypeOf(Config{}), "") {
+		cfg.SetSource(path, src)
 	}
 }

@@ -64,27 +64,24 @@ func WriteEnvMap(w io.Writer) error {
 
 // WriteSources writes per-field source provenance.
 //
-// If field == "", lists all top-level Config sections + their source.
+// If field == "", lists all leaf Config fields + their source.
 // Otherwise resolves the dotted field path and prints just that one row.
 func WriteSources(w io.Writer, cfg *Config, field string) error {
 	if cfg == nil {
 		return fmt.Errorf("config is nil")
 	}
 	if field != "" {
-		section := topSection(field)
-		src := cfg.Source(section)
+		if _, err := resolveDottedField(reflect.ValueOf(cfg).Elem(), field); err != nil {
+			return fmt.Errorf("unknown config field %q: %w", field, err)
+		}
+		src := cfg.Source(field)
 		_, err := fmt.Fprintf(w, "%-30s %s\n", field, src.String())
 		return err
 	}
-	// All top-level sections.
-	t := reflect.TypeOf(*cfg)
-	for i := 0; i < t.NumField(); i++ {
-		ft := t.Field(i)
-		if !ft.IsExported() {
-			continue
-		}
-		src := cfg.Source(ft.Name)
-		if _, err := fmt.Fprintf(w, "%-30s %s\n", ft.Name, src.String()); err != nil {
+	paths := configSourcePaths(reflect.TypeOf(Config{}), "")
+	sort.Strings(paths)
+	for _, path := range paths {
+		if _, err := fmt.Fprintf(w, "%-30s %s\n", path, cfg.Source(path).String()); err != nil {
 			return err
 		}
 	}
@@ -109,6 +106,9 @@ func ValidateFile(path string) error {
 	}
 	if len(raw) > 1<<20 {
 		return fmt.Errorf("%s: file too large (>1MB)", path)
+	}
+	if depth := yamlMaxDepth(raw); depth >= 32 {
+		return fmt.Errorf("%s: YAML nesting depth %d ≥ 32 (rejected per spec § 3.2 anti-bomb)", path, depth)
 	}
 	cfg := Default()
 	dec := yaml.NewDecoder(strings.NewReader(string(raw)))

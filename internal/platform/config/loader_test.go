@@ -110,6 +110,23 @@ output:
 	}
 }
 
+func TestLoad_InlineJSONSettings(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg, err := Load(LoadOptions{
+		CWD:              t.TempDir(),
+		FlagSettingsPath: `{"output":{"format":"json"}}`,
+	})
+	if err != nil {
+		t.Fatalf("Load inline settings: %v", err)
+	}
+	if cfg.Output.Format != "json" {
+		t.Errorf("inline --settings JSON did not apply; got %q", cfg.Output.Format)
+	}
+	if cfg.Source("Output.Format") != SourceFlagSettings {
+		t.Errorf("Source(Output.Format) = %v, want SourceFlagSettings", cfg.Source("Output.Format"))
+	}
+}
+
 func TestLoad_FlagSettingsMissingFails(t *testing.T) {
 	cfg, err := Load(LoadOptions{FlagSettingsPath: "/nonexistent/foo.yaml"})
 	if err == nil {
@@ -188,6 +205,55 @@ func TestLoad_LargeFileRejected(t *testing.T) {
 	_, err := Load(LoadOptions{CWD: cwd})
 	if err == nil {
 		t.Fatal("Load should reject >1MB yaml")
+	}
+}
+
+func TestLoad_FieldLevelSourcesDoNotBleedAcrossSiblings(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cwd := t.TempDir()
+	mustMkdir(t, filepath.Join(cwd, ".opendbx"))
+	mustWrite(t, filepath.Join(cwd, ".opendbx", "config.yaml"), `
+output:
+  format: json
+`)
+	t.Setenv("OPENDBX_OUTPUT_COLOR", "never")
+	cfg, err := Load(LoadOptions{CWD: cwd})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Source("Output.Format") != SourceProjectSettings {
+		t.Errorf("Source(Output.Format) = %v, want SourceProjectSettings", cfg.Source("Output.Format"))
+	}
+	if cfg.Source("Output.Color") != SourceENV {
+		t.Errorf("Source(Output.Color) = %v, want SourceENV", cfg.Source("Output.Color"))
+	}
+}
+
+func TestLoad_SettingSourcesRestrictsUserProjectLocal(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cwd := t.TempDir()
+	mustMkdir(t, filepath.Join(cwd, ".opendbx"))
+	mustWrite(t, filepath.Join(cwd, ".opendbx", "config.yaml"), `
+output:
+  format: json
+`)
+	cfg, err := Load(LoadOptions{CWD: cwd, SettingSources: "user"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Output.Format != "text" {
+		t.Errorf("project settings should be skipped; got output.format=%q", cfg.Output.Format)
+	}
+}
+
+func TestLoad_SettingSourcesInvalidFails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	_, err := Load(LoadOptions{CWD: t.TempDir(), SettingSources: "user,banana"})
+	if err == nil {
+		t.Fatal("expected invalid --setting-sources to fail")
+	}
+	if !strings.Contains(err.Error(), "banana") {
+		t.Errorf("error should mention invalid token: %v", err)
 	}
 }
 

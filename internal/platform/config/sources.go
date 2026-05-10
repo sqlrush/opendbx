@@ -11,8 +11,8 @@
 // Override chain (low → high priority; later overrides earlier):
 //
 //	SourceDefault → SourcePolicySettings → SourceUserSettings →
-//	SourceProjectSettings → SourceLocalSettings → SourceFlagSettings →
-//	SourceENV → SourceCLIFlag
+//	SourceProjectSettings → SourceLocalSettings → SourceENV →
+//	SourceFlagSettings → SourceCLIFlag
 
 package config
 

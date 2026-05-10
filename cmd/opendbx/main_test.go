@@ -319,6 +319,92 @@ func TestChoiceValidation(t *testing.T) {
 	}
 }
 
+func TestConfigUtilityCommandsBypassBrokenProjectConfig(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	chdir(t, tmp)
+	mustWriteFile(t, filepath.Join(tmp, ".opendbx", "config.yaml"), "output:\n  format: yaml\n")
+	good := filepath.Join(tmp, "good.yaml")
+	mustWriteFile(t, good, "output:\n  format: text\n")
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"version_flag", []string{"--version"}},
+		{"version_subcommand", []string{"version"}},
+		{"config_validate", []string{"admin", "config", "validate", good}},
+		{"dump_defaults", []string{"admin", "config", "dump-defaults"}},
+		{"dump_schema", []string{"admin", "config", "dump-schema"}},
+		{"dump_env_map", []string{"admin", "config", "dump-env-map"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := runCmd(t, tc.args...)
+			if err != nil {
+				t.Fatalf("%v should bypass broken project config: %v", tc.args, err)
+			}
+		})
+	}
+}
+
+func TestInlineSettingsJSONFlag(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	chdir(t, tmp)
+
+	stdout, _, err := runCmd(t,
+		"--settings", `{"output":{"format":"json"}}`,
+		"admin", "config", "sources", "Output.Format",
+	)
+	if err != nil {
+		t.Fatalf("inline --settings JSON should load: %v", err)
+	}
+	if !strings.Contains(stdout, "flag-settings") {
+		t.Fatalf("expected flag-settings source, got %q", stdout)
+	}
+}
+
+func TestSettingSourcesFlagRestrictsConfigLayers(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	chdir(t, tmp)
+	mustWriteFile(t, filepath.Join(tmp, ".opendbx", "config.yaml"), "output:\n  format: json\n")
+
+	stdout, _, err := runCmd(t, "--setting-sources", "user", "admin", "config", "sources", "Output.Format")
+	if err != nil {
+		t.Fatalf("--setting-sources should be accepted: %v", err)
+	}
+	if !strings.Contains(stdout, "default") {
+		t.Fatalf("project layer should be skipped, got %q", stdout)
+	}
+}
+
+func mustWriteFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func chdir(t *testing.T, path string) {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(path); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+}
+
 func firstDiff(a, b string) int {
 	n := len(a)
 	if len(b) < n {
