@@ -1,0 +1,15 @@
+Check for updates and install if available
+
+Usage:
+  opendbx update [flags]
+
+Aliases:
+  update, upgrade
+
+Flags:
+  -h, --help   help for update
+
+Global Flags:
+  -d, --debug string        Enable debug mode with optional category filtering (e.g., "api,hooks" or "!1p,!file")
+      --debug-file string   Write debug logs to a specific file path (implicitly enables debug mode)
+      --verbose             Override verbose mode setting from config

@@ -2,7 +2,7 @@
 //
 // Author: sqlrush
 
-// Cluster subcommand stub. Stage-9+ cluster mode.
+// Doctor subcommand stub.
 
 package main
 
@@ -12,13 +12,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newClusterCommand(_ *Options) *cobra.Command {
+func newDoctorCommand(_ *Options) *cobra.Command {
 	return &cobra.Command{
-		Use:   "cluster",
-		Short: "Cluster mode commands (Stage 9+)",
+		Use:   "doctor",
+		Short: "Check the health of opendbx (config + connectivity + auto-updater)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			_, err := fmt.Fprintln(cmd.OutOrStdout(),
-				"cluster mode not yet implemented in spec-9.X (cluster protocol + multi-node coordination).")
+				"doctor not yet implemented in Stage 4+ (config + connectivity + auto-updater health).")
 			return err
 		},
 	}

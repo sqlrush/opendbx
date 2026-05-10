@@ -1,20 +1,25 @@
 // Copyright 2026 opendbx contributors. See LICENSE.
 //
-// Stage 0 stub: autopilot agent mode. Lands in Stage 9+.
-//
-// Design: opendbrb/specs/stage-0/spec-0.2-go-module-layout.md D-2.
 // Author: sqlrush
+
+// Agent subcommand stub. Stage-9+ autopilot mode.
+
 package main
 
 import (
 	"fmt"
-	"io"
+
+	"github.com/spf13/cobra"
 )
 
-func runAgent(_ []string, stdout, _ io.Writer) int {
-	_, _ = fmt.Fprintf(stdout, stage0StubFmt,
-		"agent",
-		"agent",
-		"Stage 9+ autopilot specs (cerebrate / overlord / drone)")
-	return 0
+func newAgentCommand(_ *Options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "agent",
+		Short: "Run as autopilot agent (Stage 9+)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := fmt.Fprintln(cmd.OutOrStdout(),
+				"agent mode not yet implemented in spec-9.X (cerebrate / overlord / drone autopilot tiers).")
+			return err
+		},
+	}
 }

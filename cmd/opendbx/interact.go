@@ -1,21 +1,27 @@
 // Copyright 2026 opendbx contributors. See LICENSE.
 //
-// Stage 0 stub: prints "not yet implemented" message.
-// Real interactive TUI dispatch lands via internal/entrypoints in spec-0.3.
-//
-// Design: opendbrb/specs/stage-0/spec-0.2-go-module-layout.md D-2.
 // Author: sqlrush
+
+// Interact subcommand (spec-0.3 D-4 + D-10).
+// Stage-0 stub; real REPL lands in spec-1.16-input-three-modes.
+//
+// Behaviour parity: `opendbx` (no subcommand) and `opendbx interact` produce
+// identical output. Both go through runInteractRoot in root.go.
+
 package main
 
-import (
-	"fmt"
-	"io"
-)
+import "github.com/spf13/cobra"
 
-func runInteract(_ []string, stdout, _ io.Writer) int {
-	_, _ = fmt.Fprintf(stdout, stage0StubFmt,
-		"interact",
-		"interact",
-		"spec-0.3-cmd-entrypoints + spec-1.15-tui + spec-1.16-input-three-modes")
-	return 0
+func newInteractCommand(opts *Options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "interact [prompt]",
+		Short: "Start an interactive diagnosis session (default mode)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				opts.Session.Prompt = args[0]
+			}
+			return runInteractRoot(cmd, opts)
+		},
+	}
 }

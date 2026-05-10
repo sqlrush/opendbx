@@ -1,0 +1,18 @@
+Run one-shot DB diagnoses (opendbx-specific)
+
+Usage:
+  opendbx diag [command]
+
+Available Commands:
+  lock-wait   Diagnose lock waits
+  slow-sql    Diagnose slow SQL
+
+Flags:
+  -h, --help   help for diag
+
+Global Flags:
+  -d, --debug string        Enable debug mode with optional category filtering (e.g., "api,hooks" or "!1p,!file")
+      --debug-file string   Write debug logs to a specific file path (implicitly enables debug mode)
+      --verbose             Override verbose mode setting from config
+
+Use "opendbx diag [command] --help" for more information about a command.

@@ -107,12 +107,26 @@ func PathToLayer(importPath string) Layer {
 	}
 }
 
-// CmdPlatformVersionExceptionPath is the unique platform subpackage that
-// `cmd/...` is permitted to import (spec-0.2 § 2.2). Everything else under
-// internal/platform/* is off-limits to cmd; cmd must route through
-// entrypoints → bootstrap. Exception applies to the exact package path
-// only — sub-packages like `internal/platform/version/build` do NOT
-// satisfy the exception.
+// CmdPlatformExceptionPaths lists every platform subpackage that `cmd/...`
+// is permitted to import. Exact-match only — sub-packages like
+// `internal/platform/version/build` do NOT satisfy an exception.
+//
+// Per spec § 2.2 + spec-0.3 § 1.4 + D-9, the allow list is intentionally
+// small. Adding a new exception requires its own spec section.
+//
+//   - internal/platform/version (spec-0.2 § 2.2): main.go embeds the build
+//     version string set via linker flag.
+//   - internal/platform/profileutil (spec-0.3 D-9): main.go records a
+//     startup checkpoint before any other code can run, parallel to CC
+//     main.tsx L1 `profileCheckpoint('main_tsx_entry')`.
+var CmdPlatformExceptionPaths = []string{
+	ModulePrefix + "internal/platform/version",
+	ModulePrefix + "internal/platform/profileutil",
+}
+
+// CmdPlatformVersionExceptionPath retained for back-compat (deprecated).
+//
+// Deprecated: use CmdPlatformExceptionPaths.
 const CmdPlatformVersionExceptionPath = ModulePrefix + "internal/platform/version"
 
 // MigrationsPath is the platform/migrations path; only bootstrap may
@@ -217,13 +231,15 @@ func CheckEdge(from, to string) string {
 		return fmt.Sprintf("internal/platform/migrations may only be imported by internal/bootstrap (got %s)", layerOrPath(fromLayer, from))
 	}
 
-	// cmd → platform: only platform/version is allowed (exact match — sub
-	// paths like platform/version/build do NOT qualify).
+	// cmd → platform: only the exact paths in CmdPlatformExceptionPaths
+	// are allowed (sub-paths do NOT qualify).
 	if fromLayer == LayerCmd && toLayer == LayerPlatform {
-		if to == CmdPlatformVersionExceptionPath {
-			return ""
+		for _, allowed := range CmdPlatformExceptionPaths {
+			if to == allowed {
+				return ""
+			}
 		}
-		return fmt.Sprintf("cmd may import only %s (got %s)", CmdPlatformVersionExceptionPath, to)
+		return fmt.Sprintf("cmd may import only %v (got %s)", CmdPlatformExceptionPaths, to)
 	}
 
 	if !LayerMatrix[fromLayer][toLayer] {

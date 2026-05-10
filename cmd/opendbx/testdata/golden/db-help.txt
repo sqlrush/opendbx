@@ -1,0 +1,20 @@
+Manage database connection aliases (opendbx-specific)
+
+Usage:
+  opendbx db [command]
+
+Available Commands:
+  add         Save a connection alias
+  list        List saved connection aliases
+  remove      Remove a connection alias
+  test        Test a saved connection
+
+Flags:
+  -h, --help   help for db
+
+Global Flags:
+  -d, --debug string        Enable debug mode with optional category filtering (e.g., "api,hooks" or "!1p,!file")
+      --debug-file string   Write debug logs to a specific file path (implicitly enables debug mode)
+      --verbose             Override verbose mode setting from config
+
+Use "opendbx db [command] --help" for more information about a command.

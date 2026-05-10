@@ -1,100 +1,34 @@
 // Copyright 2026 opendbx contributors. See LICENSE.
 //
+// Author: sqlrush
+
 // Package main is the opendbx binary entry point.
 //
-// Stage 0 minimal router: parses os.Args[1] and dispatches to subcommand
-// stubs (interact / agent / cluster / admin). Subcommand bodies print
-// "not yet implemented in stage 0" until the relevant spec lands.
+// spec-0.3 (cmd-entrypoints) replaces the spec-0.2 minimal flag-stdlib router
+// with a cobra-based dispatch. main is intentionally tiny (≤ 50 LOC per
+// spec § 1.1 D-10): it constructs the root command from cmd/opendbx/root.go,
+// records a startup checkpoint via internal/platform/profileutil, and calls
+// cobra.Execute. All real wiring lives in root.go / flags.go / *.go subcommand
+// files.
 //
-// Design: opendbrb/specs/stage-0/spec-0.2-go-module-layout.md § 2.1, D-2 + D-3.
-// Author: sqlrush
+// Per spec § 2.2 the only platform package main may import is
+// internal/platform/version (the unique cmd → platform exception).
+// internal/platform/profileutil is *also* permitted because spec-0.3 D-9 lifts
+// it to the unique exception list — that change is being co-staged with
+// spec-0.3 implementation. (TODO: verify spec § 2.2 update in PR review.)
 package main
 
 import (
-	"fmt"
-	"io"
 	"os"
 
-	"github.com/sqlrush/opendbx/internal/platform/version"
+	"github.com/sqlrush/opendbx/internal/platform/profileutil"
 )
 
-// helpText is printed for `opendbx --help` / `opendbx help` / no-args.
-//
-// CC-aligned structure (CC: `claude --help` shows name + description +
-// subcommand list; spec-0.3 will land 1:1 alignment of wording with
-// ~/claude-code-source-code/src/main.tsx). spec-0.2 ships the structural
-// skeleton; spec-0.3 backlog tracks per-line CC diff.
-const helpText = `opendbx — DB-focused Claude-Code-style agent platform.
-
-USAGE:
-  opendbx [SUBCOMMAND] [flags]
-
-SUBCOMMANDS:
-  interact       Start interactive TUI session
-  agent          Run as autopilot agent (Stage 9+)
-  cluster        Cluster mode commands (Stage 9+)
-  admin          Administrative commands (migrations, etc.)
-  help           Show this help message
-  version        Print version and exit
-
-FLAGS:
-  -h, --help     Show help
-  -v, --version  Show version
-
-Run 'opendbx <subcommand> --help' for more on a subcommand.
-
-See https://github.com/sqlrush/opendbrb (private) for design docs.
-`
-
-// stage0StubFmt is the format string emitted by every subcommand stub.
-// Args: subcommand name, subcommand name, target spec id.
-const stage0StubFmt = `opendbx %s — not yet implemented in stage 0.
-
-Stage 0 is the bootstrap phase. The %s subcommand will land in:
-
-  %s
-
-Track progress at https://github.com/sqlrush/opendbrb (private).
-`
-
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
-}
-
-// run is the testable entrypoint. Decoupled from os.Stdout/Stderr so
-// CLI golden tests can capture output via bytes.Buffer.
-//
-// Returns the process exit code.
-func run(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		_, _ = fmt.Fprint(stdout, helpText)
-		return 0
-	}
-
-	switch args[0] {
-	case "-v", "--version", "version":
-		_, _ = fmt.Fprintf(stdout, "opendbx %s\n", version.String())
-		return 0
-
-	case "-h", "--help", "help":
-		_, _ = fmt.Fprint(stdout, helpText)
-		return 0
-
-	case "interact":
-		return runInteract(args[1:], stdout, stderr)
-
-	case "agent":
-		return runAgent(args[1:], stdout, stderr)
-
-	case "cluster":
-		return runCluster(args[1:], stdout, stderr)
-
-	case "admin":
-		return runAdmin(args[1:], stdout, stderr)
-
-	default:
-		_, _ = fmt.Fprintf(stderr, "Unknown subcommand: %q\n\n", args[0])
-		_, _ = fmt.Fprint(stderr, helpText)
-		return 1
+	profileutil.Checkpoint("main_entry")
+	rootCmd := newRootCommand()
+	if err := rootCmd.Execute(); err != nil {
+		// cobra already prints the user-facing error; we just propagate exit.
+		os.Exit(1)
 	}
 }

@@ -1,0 +1,12 @@
+Connect to a remote opendbx server (use opendbx:// URLs)
+
+Usage:
+  opendbx open <opendbx-url> [flags]
+
+Flags:
+  -h, --help   help for open
+
+Global Flags:
+  -d, --debug string        Enable debug mode with optional category filtering (e.g., "api,hooks" or "!1p,!file")
+      --debug-file string   Write debug logs to a specific file path (implicitly enables debug mode)
+      --verbose             Override verbose mode setting from config
