@@ -61,12 +61,18 @@ func newRootCommand() *cobra.Command {
 			if len(args) > 0 {
 				opts.Session.Prompt = strings.Join(args, " ")
 			}
-			err := runInteractRoot(cmd, opts)
-			// spec § 7 DoD D-9: --debug=profile triggers profile report on stderr.
+			return runInteractRoot(cmd, opts)
+		},
+		// spec § 7 DoD D-9: --debug=profile triggers profile report on stderr.
+		// Hotfix (spec-0.3): moved from RunE to PersistentPostRunE so subcommand
+		// paths (mcp/db/admin/...) also surface profile output. Per cobra docs,
+		// PersistentPostRunE inherited by subcommands when their own *PostRunE
+		// is unset (which is the case for all stage-0 stubs).
+		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
 			if strings.Contains(opts.Debug.Debug, "profile") {
 				entrypoints.ReportProfile(cmd.ErrOrStderr())
 			}
-			return err
+			return nil
 		},
 	}
 
