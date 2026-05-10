@@ -83,7 +83,7 @@ func TestWriteEnvMap_SortedAndContainsAllSecrets(t *testing.T) {
 	// Sorted check: OPENDBX_LLM_* lines should appear before OPENDBX_OUTPUT_*.
 	lLLM := strings.Index(out, "OPENDBX_LLM_API_KEY")
 	lOutput := strings.Index(out, "OPENDBX_OUTPUT_FORMAT")
-	if !(lLLM < lOutput) {
+	if lLLM >= lOutput {
 		t.Error("WriteEnvMap output not sorted alphabetically")
 	}
 }
