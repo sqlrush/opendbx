@@ -44,6 +44,16 @@ func registerFlags(cmd *cobra.Command, opts *Options) {
 	// support shorthand). The flag is consumed in root.go RunE.
 	cmd.Flags().BoolP("version", "v", false, "Output the version number")
 
+	// --version-verbose (spec-0.7 D-4 / T-6) — opendbx-only multi-line
+	// diagnostic block (Version + Commit + BuildDate + workdir + Go +
+	// os/arch). Root-only Flag (not PersistentFlag) matching --version's
+	// scope. No shorthand by design — `-V` reserved for future use; users
+	// type the long form when they need the diagnostic detail. Precedence
+	// when both --version and --version-verbose set: verbose wins (more
+	// detailed; spec § 8 Q8 + § 1.1 D-4).
+	cmd.Flags().Bool("version-verbose", false,
+		"Output build version + commit + build date + Go runtime + os/arch (multi-line)")
+
 	// === Class A: direct 1:1 ===
 
 	// Debug
@@ -231,6 +241,11 @@ var optionSpecs = []optionSpecRow{
 	{Name: "version", Short: "v", Class: classA, CCRef: "main.tsx:L3808",
 		CCDesc: "Output the version number",
 		Reason: "1:1 — opendbx version semantic identical to CC",
+	},
+	{Name: "version-verbose", Class: classC, CCRef: "",
+		CCDesc: "",
+		Reason: "opendbx-only — CC has no equivalent; diagnostic block for issue reports " +
+			"(spec-0.7 D-4 T-6; cc-vs-opendbx-help-diff.md \"opendbx-only --version-verbose\")",
 	},
 
 	// === Class A: direct 1:1 ===

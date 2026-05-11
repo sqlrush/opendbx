@@ -72,5 +72,6 @@ Flags:
       --tools strings                        Specify the list of available tools from the built-in set. Use "" to disable all tools, "default" for all, or specify names.
       --verbose                              Override verbose mode setting from config
   -v, --version                              Output the version number
+      --version-verbose                      Output build version + commit + build date + Go runtime + os/arch (multi-line)
 
 Use "opendbx [command] --help" for more information about a command.
