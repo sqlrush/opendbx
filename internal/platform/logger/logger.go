@@ -1,7 +1,7 @@
 // Copyright 2026 opendbx contributors. See LICENSE.
 //
 // Author: sqlrush
-//
+
 // Package logger implements opendbx's debug logger.
 //
 // Design: spec-0.5-logger-trace.md
@@ -33,6 +33,7 @@ import (
 // LevelDebug (filter LevelVerbose).
 type Level int8
 
+// Level constants mirror Claude Code debug log levels.
 const (
 	LevelVerbose Level = iota // 0 — high-volume diagnostics (statusLine cmd, shell, cwd, stdout/stderr)
 	LevelDebug                // 1 — default min level
@@ -276,12 +277,12 @@ func SetHasFormattedOutput(v bool) {
 
 // isFormattedOutput returns the current flag value. Used by text_formatter
 // (T-4).
-func isFormattedOutput() bool { //nolint:unused // T-4 will consume
+func isFormattedOutput() bool {
 	return hasFormattedOutput.Load()
 }
 
 // isDebugRuntimeEnabled reports whether EnableDebugLogging has been called.
 // Called by paths.IsDebugMode (T-6).
-func isDebugRuntimeEnabled() bool { //nolint:unused // T-6 will consume
+func isDebugRuntimeEnabled() bool {
 	return runtimeDebugEnabled.Load()
 }

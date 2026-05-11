@@ -41,8 +41,8 @@ func TestLevelString(t *testing.T) {
 func TestLevelOrdering(t *testing.T) {
 	t.Parallel()
 	// Order is significant: lower value = higher verbosity. CC parity check.
-	if !(LevelVerbose < LevelDebug && LevelDebug < LevelInfo &&
-		LevelInfo < LevelWarn && LevelWarn < LevelError) {
+	if LevelVerbose >= LevelDebug || LevelDebug >= LevelInfo ||
+		LevelInfo >= LevelWarn || LevelWarn >= LevelError {
 		t.Fatalf("level ordering broken: verbose=%d debug=%d info=%d warn=%d error=%d",
 			LevelVerbose, LevelDebug, LevelInfo, LevelWarn, LevelError)
 	}
