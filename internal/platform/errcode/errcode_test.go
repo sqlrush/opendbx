@@ -125,7 +125,7 @@ func TestErrorsIsDifferentCodeNoMatch(t *testing.T) {
 
 func TestErrorsAsTypeAssert(t *testing.T) {
 	t.Parallel()
-	registerTest(t, "TEST.ASTYPE", "msg", "hint")
+	_ = registerTest(t, "TEST.ASTYPE", "msg", "hint")
 	err := Newf("TEST.ASTYPE", "x=%s", "y")
 	var ec Error
 	if !As(err, &ec) {
@@ -138,7 +138,7 @@ func TestErrorsAsTypeAssert(t *testing.T) {
 
 func TestErrorsAsWalksWrappedChain(t *testing.T) {
 	t.Parallel()
-	registerTest(t, "TEST.DEEPWRAP", "inner", "h")
+	_ = registerTest(t, "TEST.DEEPWRAP", "inner", "h")
 	deep := Newf("TEST.DEEPWRAP", "deep")
 	mid := fmt.Errorf("middle: %w", deep)
 	outer := fmt.Errorf("outer: %w", mid)
@@ -154,8 +154,8 @@ func TestErrorsAsWalksWrappedChain(t *testing.T) {
 
 func TestErrorsAsViaErrCodeWrap(t *testing.T) {
 	t.Parallel()
-	registerTest(t, "TEST.INNER", "inner msg", "inner hint")
-	registerTest(t, "TEST.OUTER", "outer msg", "outer hint")
+	_ = registerTest(t, "TEST.INNER", "inner msg", "inner hint")
+	_ = registerTest(t, "TEST.OUTER", "outer msg", "outer hint")
 	inner := New("TEST.INNER", "", "")
 	outer := Wrap("TEST.OUTER", inner, "", "")
 
@@ -214,14 +214,14 @@ func TestRegisterAcceptsValidNaming(t *testing.T) {
 		c := c
 		t.Run(c, func(t *testing.T) {
 			// Cannot t.Parallel + share unique codes; serial in subtest.
-			registerTest(t, c, "msg", "hint")
+			_ = registerTest(t, c, "msg", "hint")
 		})
 	}
 }
 
 func TestRegisterDuplicateConflictPanics(t *testing.T) {
 	t.Parallel()
-	registerTest(t, "TEST.DUPCONFLICT", "msg-A", "hint-A")
+	_ = registerTest(t, "TEST.DUPCONFLICT", "msg-A", "hint-A")
 	defer func() {
 		if r := recover(); r == nil {
 			t.Fatal("duplicate Register with different msg/hint should panic")
@@ -242,7 +242,7 @@ func TestRegisterDuplicateIdenticalNoOp(t *testing.T) {
 
 func TestLookup(t *testing.T) {
 	t.Parallel()
-	registerTest(t, "TEST.LOOKUP", "m", "h")
+	_ = registerTest(t, "TEST.LOOKUP", "m", "h")
 	def, ok := Lookup("TEST.LOOKUP")
 	if !ok {
 		t.Fatal("Lookup hit miss for registered code")
@@ -257,7 +257,7 @@ func TestLookup(t *testing.T) {
 
 func TestAllExcludesTestPrefix(t *testing.T) {
 	t.Parallel()
-	registerTest(t, "TEST.HIDDEN", "m", "h")
+	_ = registerTest(t, "TEST.HIDDEN", "m", "h")
 	for _, def := range All() {
 		if strings.HasPrefix(def.Code, testPrefix) {
 			t.Errorf("All() leaked TEST.* code: %s", def.Code)

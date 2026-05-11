@@ -131,8 +131,6 @@ func All() []Definition {
 // — not exported because production code should never deregister. Tests
 // pair Register / unregister inside t.Cleanup to keep the global registry
 // clean across subtests.
-//
-//nolint:unused // consumed by *_test.go in this package and downstream tests
 func unregisterForTesting(code string) {
 	mu.Lock()
 	defer mu.Unlock()
