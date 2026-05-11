@@ -82,6 +82,15 @@ func mainWriteFunc(logPath string, debugToStderr bool) writeFunc {
 			return err
 		}
 	}
+	// Per-writer sync.Once guards the latest-link creation so it runs exactly
+	// once per logger lifecycle, on the first successful write (claude HIGH-3
+	// lazy-memoize semantics — never eager at Init, never repeated).
+	//
+	// Q4 ★A R3 constraint #4: sidecar uses its own writeFunc (sidecarWriteFunc)
+	// and is intentionally NOT given a latest link. Only the main text path
+	// participates so a `--debug-file=<custom>` invocation keeps the latest
+	// link tracking the user-facing surface.
+	var linkOnce sync.Once
 	return func(content string) error {
 		if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 			return err
@@ -94,6 +103,10 @@ func mainWriteFunc(logPath string, debugToStderr bool) writeFunc {
 		closeErr := f.Close()
 		if writeErr != nil {
 			return writeErr
+		}
+		if closeErr == nil {
+			// Lazy-once: maintain latest only after the first successful write.
+			linkOnce.Do(func() { updateLatestLink(logPath) })
 		}
 		return closeErr
 	}
