@@ -265,6 +265,7 @@ func TestCloseBeforeInit(t *testing.T) {
 func TestLoggerWritesMainTextPath(t *testing.T) {
 	resetForTesting(t)
 	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
 	logPath := filepath.Join(tmp, "debug.log")
 	setArgvForTesting(t, "opendbx", "--debug-file", logPath)
 
@@ -289,6 +290,7 @@ func TestLoggerWritesMainTextPath(t *testing.T) {
 func TestLoggerDefaultMinLevelIsDebug(t *testing.T) {
 	resetForTesting(t)
 	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
 	logPath := filepath.Join(tmp, "debug.log")
 	setArgvForTesting(t, "opendbx", "--debug-file", logPath)
 	t.Setenv("OPENDBX_DEBUG_LOG_LEVEL", "")
@@ -318,6 +320,7 @@ func TestLoggerDefaultMinLevelIsDebug(t *testing.T) {
 func TestLoggerMinLevelEnvOverride(t *testing.T) {
 	resetForTesting(t)
 	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
 	logPath := filepath.Join(tmp, "debug.log")
 	setArgvForTesting(t, "opendbx", "--debug-file", logPath)
 	t.Setenv("OPENDBX_DEBUG_LOG_LEVEL", "info")
@@ -347,6 +350,7 @@ func TestLoggerMinLevelEnvOverride(t *testing.T) {
 func TestLoggerDebugFilterAppliesToModuleAndMessage(t *testing.T) {
 	resetForTesting(t)
 	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
 	logPath := filepath.Join(tmp, "debug.log")
 	setArgvForTesting(t, "opendbx", "--debug=api", "--debug-file", logPath)
 
@@ -370,6 +374,64 @@ func TestLoggerDebugFilterAppliesToModuleAndMessage(t *testing.T) {
 	}
 	if !strings.Contains(got, "api: shown") || !strings.Contains(got, "plain module message") {
 		t.Fatalf("--debug=api should include message and WithModule categories:\n%s", got)
+	}
+}
+
+func TestLoggerInitInputDebugEnabledWithoutArgv(t *testing.T) {
+	resetForTesting(t)
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	logPath := filepath.Join(tmp, "debug.log")
+	setArgvForTesting(t, "opendbx", "diag")
+
+	if err := Init(InitInput{SessionID: "cobra-debug", LogPath: logPath, DebugEnabled: true}); err != nil {
+		t.Fatalf("Init err = %v", err)
+	}
+	L().Info("api: enabled by parsed cobra flag")
+	if err := Close(); err != nil {
+		t.Fatalf("Close err = %v", err)
+	}
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read debug log: %v", err)
+	}
+	if !strings.Contains(string(raw), "enabled by parsed cobra flag") {
+		t.Fatalf("InitInput.DebugEnabled should enable writes without argv --debug:\n%s", raw)
+	}
+}
+
+func TestLoggerInitInputDebugFilterWithoutArgv(t *testing.T) {
+	resetForTesting(t)
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	logPath := filepath.Join(tmp, "debug.log")
+	setArgvForTesting(t, "opendbx", "diag")
+
+	if err := Init(InitInput{
+		SessionID:    "cobra-filter",
+		LogPath:      logPath,
+		DebugEnabled: true,
+		DebugFilter:  "api",
+	}); err != nil {
+		t.Fatalf("Init err = %v", err)
+	}
+	L().Info("other: hidden")
+	L().Info("api: shown from parsed cobra filter")
+	if err := Close(); err != nil {
+		t.Fatalf("Close err = %v", err)
+	}
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read debug log: %v", err)
+	}
+	got := string(raw)
+	if strings.Contains(got, "other: hidden") {
+		t.Fatalf("InitInput.DebugFilter should hide non-matching events:\n%s", got)
+	}
+	if !strings.Contains(got, "shown from parsed cobra filter") {
+		t.Fatalf("InitInput.DebugFilter should include matching events:\n%s", got)
 	}
 }
 

@@ -6,22 +6,50 @@ package entrypoints
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sqlrush/opendbx/internal/platform/logger"
 )
 
 func TestInitLoggerFromCLI(t *testing.T) {
-	if err := InitLoggerFromCLI(LoggerInitInputs{SessionID: "relay-test"}); err != nil {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	logPath := filepath.Join(tmp, "relay.log")
+
+	if err := InitLoggerFromCLI(LoggerInitInputs{
+		SessionID: "relay-test",
+		Debug:     "api",
+		DebugFile: logPath,
+	}); err != nil {
 		t.Fatalf("InitLoggerFromCLI err = %v", err)
 	}
 	// Second call must be idempotent.
 	if err := InitLoggerFromCLI(LoggerInitInputs{SessionID: "ignored-second"}); err != nil {
 		t.Errorf("second InitLoggerFromCLI err = %v, want nil", err)
 	}
-	// Reach through to verify logger initialised.
+	logger.L().WithModule("api").Info("relay logger event")
 	if err := CloseLogger(); err != nil && !errors.Is(err, logger.ErrNotInitialised) {
 		t.Errorf("CloseLogger err = %v", err)
+	}
+
+	mainRaw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read main debug log: %v", err)
+	}
+	if !strings.Contains(string(mainRaw), "relay logger event") {
+		t.Fatalf("main debug log missing relay event:\n%s", mainRaw)
+	}
+
+	sidecarPath := filepath.Join(tmp, ".opendbx", "debug", "relay-test.events.jsonl")
+	sidecarRaw, err := os.ReadFile(sidecarPath)
+	if err != nil {
+		t.Fatalf("read sidecar debug log: %v", err)
+	}
+	if !strings.Contains(string(sidecarRaw), `"session_id":"relay-test"`) {
+		t.Fatalf("sidecar did not use relay session id:\n%s", sidecarRaw)
 	}
 }
 

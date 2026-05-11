@@ -60,6 +60,8 @@ type OutputConfig struct {
 	Color        string `yaml:"color" json:"color" env:"OPENDBX_OUTPUT_COLOR" validate:"required,oneof=auto always never"`
 	WrapWidth    int    `yaml:"wrap_width" json:"wrap_width" env:"OPENDBX_OUTPUT_WRAP_WIDTH" validate:"min=0,max=500"`
 	IncludeStats bool   `yaml:"include_stats" json:"include_stats" env:"OPENDBX_OUTPUT_INCLUDE_STATS"`
+	LogLevel     string `yaml:"log_level" json:"log_level" env:"OPENDBX_OUTPUT_LOG_LEVEL" validate:"oneof=verbose debug info warn error"`
+	LogPath      string `yaml:"log_path,omitempty" json:"log_path,omitempty" env:"OPENDBX_OUTPUT_LOG_PATH"`
 }
 
 // LLMConfig — LLM provider configuration. Full provider list in spec-1.20.

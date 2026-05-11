@@ -68,11 +68,14 @@ func newRootCommand() *cobra.Command {
 			cmd.SetContext(entrypoints.WithConfig(cmd.Context(), cfg))
 
 			// spec-0.5 T-11 D-8: initialise the logger after config is in
-			// place so subsequent code paths can call entrypoints.L() or
-			// (after impl-side wiring) logger.L() without panicking.
+			// place so subsequent code paths can use the platform logger
+			// without panicking.
 			// Idempotent (logger.Init is sync.Once-guarded), so cobra
 			// inheritance into subcommands is safe.
-			if err := entrypoints.InitLoggerFromCLI(entrypoints.LoggerInitInputs{
+			if err := entrypoints.InitLoggerFromConfigAndCLI(cfg, entrypoints.LoggerInitInputs{
+				SessionID:     opts.Session.SessionID,
+				Debug:         opts.Debug.Debug,
+				DebugFile:     opts.Debug.DebugFile,
 				DebugToStderr: opts.Debug.DebugToStderr,
 			}); err != nil {
 				return err
