@@ -17,13 +17,12 @@ package logger
 
 import "github.com/sqlrush/opendbx/internal/platform/errcode"
 
-// nolint:gochecknoglobals // file-scope var = Register is the canonical
-// registration pattern (spec-0.6 § 2.2.1).
-//
 // Note: the existing var declarations of these sentinels in logger.go /
 // buffered_writer.go are removed in this commit and rewired to point at the
 // errcode.Register values defined here. Sentinel names + errors.Is usage
 // stay backward-compatible.
+
+//nolint:gochecknoglobals // spec-0.6 § 2.2.1 canonical Register pattern
 var (
 	// ErrInvalidLevel — ParseLevel rejected an unknown level name.
 	ErrInvalidLevel errcode.Sentinel = errcode.Register(

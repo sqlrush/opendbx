@@ -12,7 +12,7 @@ package config
 
 import "github.com/sqlrush/opendbx/internal/platform/errcode"
 
-// nolint:gochecknoglobals // file-scope var = Register per spec-0.6 § 2.2.1.
+//nolint:gochecknoglobals // file-scope var = Register per spec-0.6 § 2.2.1.
 var (
 	// ErrEnvParseFailed — OPENDBX_* env var value did not match the
 	// expected shape (e.g. non-integer for an int field).

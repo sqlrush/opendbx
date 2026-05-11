@@ -64,7 +64,7 @@ func TestNewRequiresRegisteredCode(t *testing.T) {
 
 func TestNewInheritsRegistryDefaults(t *testing.T) {
 	t.Parallel()
-	registerTest(t, "TEST.DEFAULTS", "default msg", "default hint")
+	_ = registerTest(t, "TEST.DEFAULTS", "default msg", "default hint")
 	e := New("TEST.DEFAULTS", "", "")
 	if e.Message() != "default msg" || e.Hint() != "default hint" {
 		t.Errorf("New empty overrides did not inherit defaults: %+v", e)
@@ -78,7 +78,7 @@ func TestNewInheritsRegistryDefaults(t *testing.T) {
 
 func TestNewf(t *testing.T) {
 	t.Parallel()
-	registerTest(t, "TEST.FORMAT", "x", "the hint")
+	_ = registerTest(t, "TEST.FORMAT", "x", "the hint")
 	e := Newf("TEST.FORMAT", "value=%d", 42)
 	if e.Message() != "value=42" {
 		t.Errorf("Newf Message() = %q, want value=42", e.Message())
@@ -91,12 +91,12 @@ func TestNewf(t *testing.T) {
 func TestWrapPreservesChain(t *testing.T) {
 	t.Parallel()
 	root := errors.New("root cause")
-	registerTest(t, "TEST.WRAPCHAIN", "outer", "hint")
+	_ = registerTest(t, "TEST.WRAPCHAIN", "outer", "hint")
 	wrap := Wrap("TEST.WRAPCHAIN", root, "outer msg", "")
 	if !errors.Is(wrap, root) {
 		t.Error("errors.Is(wrap, root) should be true via Unwrap chain")
 	}
-	if wrap.Unwrap() != root {
+	if !errors.Is(wrap.Unwrap(), root) {
 		t.Errorf("Unwrap = %v, want root", wrap.Unwrap())
 	}
 }

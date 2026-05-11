@@ -12,8 +12,7 @@ package entrypoints
 
 import "github.com/sqlrush/opendbx/internal/platform/errcode"
 
-// nolint:gochecknoglobals // file-scope var = Register is the canonical
-// registration pattern (spec-0.6 § 2.2.1).
+//nolint:gochecknoglobals // spec-0.6 § 2.2.1 canonical Register pattern
 var (
 	// ErrLauncherNotImplemented — dialog launchers (spec-1.15-tui target).
 	ErrLauncherNotImplemented errcode.Sentinel = errcode.Register(

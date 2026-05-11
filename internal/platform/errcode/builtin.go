@@ -5,10 +5,11 @@
 package errcode
 
 // Builtin codes shared across opendbx packages. Per-package codes live in
-// their own errors.go (e.g. internal/platform/logger/errors.go).
+// their own errors.go (e.g. internal/platform/logger/errors.go). file-scope
+// var = Register is the canonical registration pattern (spec § 2.2.1, codex
+// MED-1 R2 alignment).
 
-// nolint:gochecknoglobals // file-scope var = Register is the canonical
-// registration pattern (spec § 2.2.1, codex MED-1 R2 alignment).
+//nolint:gochecknoglobals // spec-0.6 § 2.2.1 canonical Register pattern
 var (
 	// ErrInvalidArgument signals that a caller passed an argument that
 	// failed validation outside the scope of more specific codes.
