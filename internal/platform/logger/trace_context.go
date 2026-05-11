@@ -200,9 +200,15 @@ func emitSpanEnd(traceID, spanID, parentSpanID, verb string, start, end time.Tim
 		merged = append(merged, Attr{Key: k, Value: v})
 	}
 
-	line, err := marshalSidecarEvent(end, LevelInfo, impl.module, verb+" span ended", impl.sessionID, merged, traceID, spanID)
+	// codex CRIT-2 integration: redact span attrs BEFORE JSON serialisation.
+	// The post-format `redactString` cannot detect secrets inside JSON-encoded
+	// values (e.g. `"password":"hunter2"` does not match the key=value regex).
+	// The pre-format pass on attrs is the only reliable secret defence here.
+	merged = redactAttrs(merged)
+
+	line, err := marshalSidecarEvent(end, LevelInfo, impl.module, redactString(verb+" span ended"), impl.sessionID, merged, traceID, spanID)
 	if err != nil {
-		warnSidecar("marshal-span", impl.sessionID, err)
+		warnSidecar("marshal-span", getSidecarPath(impl.sessionID), err)
 		return
 	}
 	// Attach error info if RecordError was called. The error message is

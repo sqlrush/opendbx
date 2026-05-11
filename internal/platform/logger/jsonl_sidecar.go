@@ -94,28 +94,36 @@ func newSidecarWriter(path string) *bufferedWriter {
 
 // sidecarWriteFunc returns a writeFunc that appends content to path.
 //
-// best-effort contract (spec § 3 + codex MED-3):
-//   - mkdir / open / write / close failures are reported to os.Stderr only.
-//   - we DO NOT call back into the logger (would recurse via Dispose → another sidecar write → ...).
-//   - return value is always nil so the BufferedWriter does not pin error state.
+// best-effort contract (spec § 3 + codex MED-3): mkdir / open / write /
+// close failures are reported to os.Stderr immediately (so the operator
+// sees them) AND surfaced via the writeFunc return value so that
+// `BufferedWriter.Dispose()` can join them into the errors.Join result —
+// closing codex HIGH-2 ("sidecar errors swallowed before dispose can join
+// them"). We still do NOT call back into the logger (would recurse via
+// Dispose → another sidecar write).
 func sidecarWriteFunc(path string) writeFunc {
 	return func(content string) error {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			warnSidecar("mkdir", path, err)
-			return nil
+			return err
 		}
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // path resolved from session id under config home
 		if err != nil {
 			warnSidecar("open", path, err)
-			return nil
+			return err
 		}
+		var firstErr error
 		if _, werr := f.WriteString(content); werr != nil {
 			warnSidecar("write", path, werr)
+			firstErr = werr
 		}
 		if cerr := f.Close(); cerr != nil {
 			warnSidecar("close", path, cerr)
+			if firstErr == nil {
+				firstErr = cerr
+			}
 		}
-		return nil
+		return firstErr
 	}
 }
 

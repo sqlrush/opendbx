@@ -202,18 +202,44 @@ func (b *bufferedWriter) flushDeferredLocked() {
 	go b.drainPendingOverflow()
 }
 
-// drainPendingOverflow runs in its own goroutine. It atomically captures
-// pendingOverflow under the lock (any later Writes that coalesced into the
-// slice are picked up here), then performs the actual writeFn outside the
-// lock so writeFn can block on slow file I/O without stalling Write callers.
+// drainPendingOverflow runs in its own goroutine and loops until no more
+// overflow batches arrive. Inside the loop we:
+//
+//  1. Capture pendingOverflow under the lock (any later Writes that
+//     coalesced into the slice are picked up).
+//  2. Release the lock and perform the actual writeFn (slow file I/O).
+//  3. Re-acquire and check whether another overflow accumulated WHILE we
+//     were writing. If so, keep draining.
+//
+// This loop closes a race window where a second overflow could otherwise
+// observe pendingOverflow==nil and spawn a new goroutine — breaking
+// ordering and CC parity (codex HIGH-1).
 func (b *bufferedWriter) drainPendingOverflow() {
 	defer b.overflowWG.Done()
-	b.mu.Lock()
-	toWrite := b.pendingOverflow
-	b.pendingOverflow = nil
-	b.mu.Unlock()
-	if len(toWrite) > 0 {
+	for {
+		b.mu.Lock()
+		toWrite := b.pendingOverflow
+		if len(toWrite) == 0 {
+			// Don't nil-out until we know no more work arrived — but also
+			// don't leave the slice live, or other paths assume a drain is
+			// already scheduled and never queue a new one. The "owner" of
+			// pendingOverflow is whoever holds the goroutine slot via
+			// overflowWG; we relinquish it here.
+			b.pendingOverflow = nil
+			b.mu.Unlock()
+			return
+		}
+		// Keep pendingOverflow set to a non-nil sentinel so concurrent
+		// flushDeferredLocked() callers see "drain in flight" and coalesce
+		// rather than launching another goroutine. We swap to an empty
+		// slice (still non-nil) and write the captured batch.
+		b.pendingOverflow = make([]string, 0, 4)
+		b.mu.Unlock()
+
 		_ = b.cfg.writeFn(strings.Join(toWrite, ""))
+		// Loop back: if other writes coalesced into pendingOverflow while
+		// writeFn was running, drain them in this same goroutine to
+		// preserve order.
 	}
 }
 

@@ -104,15 +104,17 @@ func TestLBeforeInitReturnsNoop(t *testing.T) {
 
 // TestInitIdempotent — Init must be idempotent via sync.Once.
 //
-// Second + third calls return nil without re-running doInit. claude LOW-2
-// integration; rule 9 race-clean (validated under -race).
+// First call returns nil. Subsequent calls return ErrAlreadyInitialised so
+// callers (e.g. cobra inheritance chains) can detect "no-op success" vs
+// "fresh init". claude LOW-2 + go-reviewer HIGH-2 integration; rule 9
+// race-clean (validated under -race).
 func TestInitIdempotent(t *testing.T) {
 	resetForTesting(t)
 	if err := Init(InitInput{MinLevel: LevelDebug, SessionID: "test-1"}); err != nil {
 		t.Fatalf("first Init err = %v", err)
 	}
-	if err := Init(InitInput{MinLevel: LevelError, SessionID: "test-2"}); err != nil {
-		t.Fatalf("second Init err = %v, want nil (idempotent)", err)
+	if err := Init(InitInput{MinLevel: LevelError, SessionID: "test-2"}); !errors.Is(err, ErrAlreadyInitialised) {
+		t.Fatalf("second Init err = %v, want ErrAlreadyInitialised", err)
 	}
 	// First-call values should win — second call's MinLevel/SessionID ignored.
 	impl := current.Load()

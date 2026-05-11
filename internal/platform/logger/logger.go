@@ -154,8 +154,13 @@ type InitInput struct {
 
 // Errors returned by package-level functions.
 var (
-	// ErrAlreadyInitialised is returned by Init on a second call. Init is
-	// idempotent via sync.Once; the first successful call wins.
+	// ErrAlreadyInitialised is returned by Init when called a second time
+	// AFTER the first call already established the global logger. The
+	// sync.Once contract gives the first call's result; this sentinel lets
+	// later callers detect "no-op success" distinctly from a fresh init
+	// (e.g. for diagnostics inside cobra inheritance chains).
+	//
+	// Resolves go-reviewer HIGH-2 — sentinel is now actually returned.
 	ErrAlreadyInitialised = errors.New("logger: already initialised")
 
 	// ErrNotInitialised is returned by Close when called before Init.
@@ -187,16 +192,24 @@ var (
 // To reset for tests, use the unexported resetForTesting helper from the
 // _test.go files (T-12 will introduce it).
 func Init(in InitInput) error {
+	fired := false
 	initOnce.Do(func() {
 		initErr = doInit(in)
 		initDone.Store(true)
+		fired = true
 	})
-	if initDone.Load() && initErr == nil {
-		// sync.Once already fired with a successful first call; later calls
-		// are idempotent successes.
-		return nil
+	// Distinct return values for the three outcomes:
+	//   1. This call's once.Do actually ran → return initErr (nil on success).
+	//   2. Earlier call already ran successfully → return ErrAlreadyInitialised
+	//      so callers can detect "no-op success" vs "fresh init".
+	//   3. Earlier call failed → return the same initErr (best-effort).
+	if fired {
+		return initErr
 	}
-	return initErr
+	if initErr != nil {
+		return initErr
+	}
+	return ErrAlreadyInitialised
 }
 
 // doInit performs the actual initialisation; called exactly once via initOnce.

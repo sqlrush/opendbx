@@ -11,6 +11,8 @@
 package entrypoints
 
 import (
+	"errors"
+
 	"github.com/sqlrush/opendbx/internal/platform/logger"
 )
 
@@ -40,12 +42,20 @@ type LoggerInitInputs struct {
 // resolves level via OPENDBX_DEBUG_LOG_LEVEL env and path via --debug-file
 // / OPENDBX_DEBUG_LOGS_DIR — all already wired in paths.go (T-6).
 func InitLoggerFromCLI(in LoggerInitInputs) error {
-	return logger.Init(logger.InitInput{
+	err := logger.Init(logger.InitInput{
 		SessionID:      in.SessionID,
 		LogPath:        in.LogPath,
 		DebugToStderr:  in.DebugToStderr,
 		DisableSidecar: in.DisableSidecar,
 	})
+	// ErrAlreadyInitialised is a benign no-op for cobra inheritance chains
+	// (PersistentPreRunE inherits into subcommands; each invocation hits this
+	// relay once). Callers that need to distinguish "fresh init" can check
+	// for it directly.
+	if errors.Is(err, logger.ErrAlreadyInitialised) {
+		return nil
+	}
+	return err
 }
 
 // RegisterLoggerSignalCleanup arms SIGINT / SIGTERM handlers so the logger

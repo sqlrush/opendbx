@@ -150,14 +150,44 @@ func redactValue(v any, keyIsSecret bool) any {
 }
 
 // redactReflect handles non-trivial kinds via reflection. Returns a new
-// reflect.Value (not modifying the input). For unsupported kinds it
-// returns the input unchanged.
+// reflect.Value (not modifying the input) whose dynamic type matches the
+// input. For unsupported kinds it returns the input unchanged.
+//
+// Type-preserving contract (codex CRIT-3 + claude HIGH-1 + go-reviewer MED-1
+// integration): pointer fields stay pointers, fixed-size arrays stay arrays,
+// slices stay slices. This is critical for redact-tag fields whose target
+// type must match the source — earlier versions of this function unwrapped
+// pointers and built mismatched slices, causing the assignability check to
+// fail and silently copy the ORIGINAL (un-redacted) value back into the
+// output struct.
 func redactReflect(rv reflect.Value, keyIsSecret bool) reflect.Value {
 	if !rv.IsValid() {
 		return rv
 	}
 	switch rv.Kind() {
-	case reflect.Pointer, reflect.Interface:
+	case reflect.Pointer:
+		if rv.IsNil() {
+			return rv
+		}
+		// Recurse on the element, then re-wrap in a fresh pointer of the
+		// same type so the redacted value lands back behind the original
+		// pointer shape. Without this, `*string redact:"true"` leaks (the
+		// caller's pointer field gets the original *string back).
+		inner := redactReflect(rv.Elem(), keyIsSecret)
+		if !inner.IsValid() {
+			return rv
+		}
+		ptr := reflect.New(rv.Type().Elem())
+		if inner.Type().AssignableTo(ptr.Elem().Type()) {
+			ptr.Elem().Set(inner)
+		} else {
+			// Type drift (e.g. inner unwrapped through interface): fall back
+			// to a copy of the original. This branch should not fire under
+			// the new pointer-preserving rule but keeps the function safe.
+			ptr.Elem().Set(rv.Elem())
+		}
+		return ptr
+	case reflect.Interface:
 		if rv.IsNil() {
 			return rv
 		}
@@ -176,6 +206,18 @@ func redactReflect(rv reflect.Value, keyIsSecret bool) reflect.Value {
 				outPtr.Field(i).SetString(redactionToken)
 				continue
 			}
+			// Pointer-to-string redact-tag escape: when the field is `*string`
+			// and the tag flags it for redaction, replace the pointee with
+			// the token directly rather than recursing (avoids the type
+			// drift dance for the most common secret-field case).
+			if fieldRedact && fieldVal.Kind() == reflect.Pointer &&
+				fieldVal.Type().Elem().Kind() == reflect.String && !fieldVal.IsNil() {
+				masked := redactionToken
+				ptr := reflect.New(fieldVal.Type().Elem())
+				ptr.Elem().SetString(masked)
+				outPtr.Field(i).Set(ptr)
+				continue
+			}
 			rec := redactReflect(fieldVal, fieldRedact)
 			if rec.IsValid() && outPtr.Field(i).CanSet() && rec.Type().AssignableTo(outPtr.Field(i).Type()) {
 				outPtr.Field(i).Set(rec)
@@ -192,20 +234,45 @@ func redactReflect(rv reflect.Value, keyIsSecret bool) reflect.Value {
 		for it := rv.MapRange(); it.Next(); {
 			key := it.Key()
 			val := it.Value()
-			// Map keys are typically strings; treat the string key like an
-			// attr name for the per-key secret hint.
 			subSecret := keyIsSecret
 			if key.Kind() == reflect.String {
 				subSecret = subSecret || secretKeyHint(key.String())
 			}
 			redacted := redactValueReflect(val, subSecret)
-			out.SetMapIndex(key, redacted)
+			// Coerce redacted to the map's element type so SetMapIndex does
+			// not panic on assignability mismatch.
+			if redacted.IsValid() && redacted.Type().AssignableTo(rv.Type().Elem()) {
+				out.SetMapIndex(key, redacted)
+			} else {
+				out.SetMapIndex(key, val)
+			}
 		}
 		return out
-	case reflect.Slice, reflect.Array:
-		out := reflect.MakeSlice(reflect.SliceOf(rv.Type().Elem()), rv.Len(), rv.Len())
+	case reflect.Slice:
+		if rv.IsNil() {
+			return rv
+		}
+		out := reflect.MakeSlice(rv.Type(), rv.Len(), rv.Len())
 		for i := 0; i < rv.Len(); i++ {
-			out.Index(i).Set(redactValueReflect(rv.Index(i), keyIsSecret))
+			redacted := redactValueReflect(rv.Index(i), keyIsSecret)
+			if redacted.IsValid() && redacted.Type().AssignableTo(rv.Type().Elem()) {
+				out.Index(i).Set(redacted)
+			} else {
+				out.Index(i).Set(rv.Index(i))
+			}
+		}
+		return out
+	case reflect.Array:
+		// Fixed-size arrays: type-preserving requires reflect.New(arrayType)
+		// rather than MakeSlice. claude HIGH-1 + go-reviewer MED-1.
+		out := reflect.New(rv.Type()).Elem()
+		for i := 0; i < rv.Len(); i++ {
+			redacted := redactValueReflect(rv.Index(i), keyIsSecret)
+			if redacted.IsValid() && redacted.Type().AssignableTo(rv.Type().Elem()) {
+				out.Index(i).Set(redacted)
+			} else {
+				out.Index(i).Set(rv.Index(i))
+			}
 		}
 		return out
 	case reflect.String:

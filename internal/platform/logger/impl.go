@@ -189,7 +189,8 @@ func (l *loggerImpl) log(level Level, msg string, attrs []Attr) {
 		ctxTraceID, ctxSpanID := traceIDsFromContext(l.ctx)
 		line, err := marshalSidecarEvent(now, level, l.module, redactedMsg, l.sessionID, merged, ctxTraceID, ctxSpanID)
 		if err != nil {
-			warnSidecar("marshal", l.sessionID, err)
+			// go-reviewer HIGH-1: pass the actual file path, not the session id.
+			warnSidecar("marshal", getSidecarPath(l.sessionID), err)
 		} else {
 			// Post-format pass for sidecar as well — protects against attr
 			// values that JSON-encode in a way the pre-format pass missed.
