@@ -63,10 +63,10 @@ func getDebugFilePath() (string, bool) {
 // getDebugLogPath resolves the active debug log file path using the CC 1:1
 // priority chain (debug.ts:231-235):
 //
-//	1. --debug-file=<path> / --debug-file <path>   (highest)
-//	2. OPENDBX_DEBUG_LOGS_DIR env var               (treated as FULL path; CC
-//	   parity per Q11 1A — name has _DIR suffix but behaviour is full path)
-//	3. <configHome>/debug/<sessionId>.txt           (default)
+//  1. --debug-file=<path> / --debug-file <path>   (highest)
+//  2. OPENDBX_DEBUG_LOGS_DIR env var               (treated as FULL path; CC
+//     parity per Q11 1A — name has _DIR suffix but behaviour is full path)
+//  3. <configHome>/debug/<sessionId>.txt           (default)
 //
 // sessionID parameter is plumbed in by Init (T-3) so tests can pin a
 // deterministic id. Empty sessionID falls back to "session" placeholder
@@ -146,13 +146,13 @@ func getDebugFilter() *debugFilter {
 //
 // Returns true if ANY of these conditions hold (CC parity, debug.ts:44-57):
 //
-//	1. runtimeDebugEnabled atomic.Bool set (EnableDebugLogging called)
-//	2. ENV DEBUG / DEBUG_SDK truthy (CC heritage; shared name)
-//	3. ENV OPENDBX_DEBUG truthy (opendbx-only extension, § 2.5)
-//	4. argv contains "--debug" or "-d"
-//	5. argv contains "--debug-to-stderr" or "-d2e"
-//	6. argv contains "--debug=<pattern>"
-//	7. argv contains "--debug-file=<path>" or "--debug-file <path>" (implicit)
+//  1. runtimeDebugEnabled atomic.Bool set (EnableDebugLogging called)
+//  2. ENV DEBUG / DEBUG_SDK truthy (CC heritage; shared name)
+//  3. ENV OPENDBX_DEBUG truthy (opendbx-only extension, § 2.5)
+//  4. argv contains "--debug" or "-d"
+//  5. argv contains "--debug-to-stderr" or "-d2e"
+//  6. argv contains "--debug=<pattern>"
+//  7. argv contains "--debug-file=<path>" or "--debug-file <path>" (implicit)
 //
 // **Not memoised**. claude HIGH-2 contract: EnableDebugLogging must be
 // observed immediately by the next IsDebugMode call. Argv-derived predicates
