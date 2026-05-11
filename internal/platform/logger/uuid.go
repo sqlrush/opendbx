@@ -81,8 +81,8 @@ func uuid7() string {
 	b[4] = byte(ms >> 8)
 	b[5] = byte(ms)
 	// rand_a (12 bits): version nibble (7) + 12-bit seq packed into b[6]:b[7].
-	b[6] = 0x70 | byte(seq>>8) // 0111 (version 7) | seq high 4 bits
-	b[7] = byte(seq)           // seq low 8 bits (overwrites randomised b[7])
+	b[6] = 0x70 | byte(seq>>8)  // 0111 (version 7) | seq high 4 bits
+	b[7] = byte(seq)            // seq low 8 bits (overwrites randomised b[7])
 	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
 	return formatUUID(b)
 }
