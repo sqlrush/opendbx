@@ -131,12 +131,12 @@ func (l *loggerImpl) close() error {
 }
 
 // log is the central event emission funnel. Pipeline:
-//   1. level check (vs configured minLevel)
-//   2. debug-mode gate (IsDebugMode or debugToStderr; mirrors CC's "no
-//      writes outside debug mode" contract)
-//   3. filter check (D-3)
-//   4. text formatter → main BufferedWriter (D-2)
-//   5. sidecar JSONL marshal → independent BufferedWriter (D-5)
+//  1. level check (vs configured minLevel)
+//  2. debug-mode gate (IsDebugMode or debugToStderr; mirrors CC's "no
+//     writes outside debug mode" contract)
+//  3. filter check (D-3)
+//  4. text formatter → main BufferedWriter (D-2)
+//  5. sidecar JSONL marshal → independent BufferedWriter (D-5)
 //
 // Redaction (D-9) and trace_context (D-6) hook into steps 4/5 via T-8 / T-10
 // follow-ups; T-7 plumbs in the schema fields with empty trace_id/span_id
