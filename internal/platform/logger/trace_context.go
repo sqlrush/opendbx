@@ -5,6 +5,7 @@
 package logger
 
 import (
+	"bytes"
 	"context"
 	"sync/atomic"
 	"time"
@@ -234,9 +235,14 @@ func injectSpanError(line []byte, code, msg, hint string) ([]byte, error) {
 	if idx < 0 {
 		return line, nil
 	}
+	// claude MED-2 R2 alignment: redact hint symmetrically with msg so the
+	// pre-format pass catches the rare case where a developer accidentally
+	// embeds a secret in a Hint string (e.g. interpolating an API key
+	// example). The outer post-format pass at line 225 covers most cases
+	// but the contract is cleaner if every field is pre-pass'd.
 	replacement := []byte(`"error":{"code":` + jsonString(code) +
 		`,"message":` + jsonString(redactString(msg)) +
-		`,"hint":` + jsonString(hint) + `}`)
+		`,"hint":` + jsonString(redactString(hint)) + `}`)
 	out := make([]byte, 0, len(line)-len(needle)+len(replacement))
 	out = append(out, line[:idx]...)
 	out = append(out, replacement...)
@@ -244,33 +250,12 @@ func injectSpanError(line []byte, code, msg, hint string) ([]byte, error) {
 	return out, nil
 }
 
-// indexOfLastBytes returns the index of the last occurrence of needle in src,
-// or -1 if absent. Plain byte scan; the JSON line is short.
+// indexOfLastBytes returns the index of the last occurrence of needle in
+// src, or -1 if absent. Thin wrapper around bytes.LastIndex (go-reviewer
+// M-3 R2 alignment — bytes is already a transitive import of
+// encoding/json so the package boundary cost is zero).
 func indexOfLastBytes(src []byte, needle string) int {
-	if len(needle) == 0 || len(src) < len(needle) {
-		return -1
-	}
-	n := []byte(needle)
-	for i := len(src) - len(n); i >= 0; i-- {
-		if bytesEqual(src[i:i+len(n)], n) {
-			return i
-		}
-	}
-	return -1
-}
-
-// bytesEqual is a small helper kept package-local to avoid importing "bytes"
-// solely for this purpose.
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return bytes.LastIndex(src, []byte(needle))
 }
 
 // jsonString escapes s as a JSON string literal (including surrounding

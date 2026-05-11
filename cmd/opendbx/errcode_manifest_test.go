@@ -68,10 +68,15 @@ func TestCodesFrozenManifest(t *testing.T) {
 		}
 	}
 
+	// NB (claude LOW-1 R2 alignment): a code rename shows up here as ONE
+	// entry in removed and ONE in added. If you're seeing both errors after
+	// a deliberate rename — that's expected; commit both the manifest update
+	// and the rename together.
 	if len(removed) > 0 {
 		t.Errorf(
 			"codes deleted vs frozen manifest (NOT ALLOWED — spec-0.6 § 3.2 stability):\n  %s\n"+
-				"  if intentional deprecation: mark with // Deprecated: comment instead of removing",
+				"  if intentional deprecation: mark with // Deprecated: comment instead of removing\n"+
+				"  (renames appear in both removed AND added lists; expected if you renamed)",
 			strings.Join(removed, "\n  "),
 		)
 	}
@@ -87,7 +92,14 @@ func TestCodesFrozenManifest(t *testing.T) {
 
 func readManifest(t *testing.T, relPath string) ([]string, error) {
 	t.Helper()
-	abs := filepath.Clean(relPath)
+	// go-reviewer M-4 R2 alignment: filepath.Clean does NOT make the path
+	// absolute, only normalises ".." / "./". Use filepath.Abs so the test
+	// works regardless of the cwd the test binary runs from (CI, IDE,
+	// `cd ../.. && go test ./cmd/opendbx/...` etc.).
+	abs, err := filepath.Abs(relPath)
+	if err != nil {
+		return nil, err
+	}
 	f, err := os.Open(abs)
 	if err != nil {
 		return nil, err

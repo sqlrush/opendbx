@@ -293,17 +293,26 @@ func TestBuiltinCodesPresent(t *testing.T) {
 
 func TestRegisterConcurrent(t *testing.T) {
 	// Hammer Register from many goroutines with distinct codes — must not
-	// race under -race.
+	// race under -race. claude HIGH-1 + go-reviewer H-2 R2 alignment:
+	// t.Cleanup MUST be registered from the test's own goroutine, not from
+	// the spawned ones (testing package contract). Pre-collect codes here.
 	const n = 32
+	codes := make([]string, n)
+	for i := 0; i < n; i++ {
+		codes[i] = fmt.Sprintf("TEST.CONCURRENT_%02d", i)
+	}
+	for _, code := range codes {
+		code := code
+		t.Cleanup(func() { unregisterForTesting(code) })
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(n)
-	for i := 0; i < n; i++ {
-		i := i
+	for _, code := range codes {
+		code := code
 		go func() {
 			defer wg.Done()
-			code := fmt.Sprintf("TEST.CONCURRENT_%02d", i)
 			Register(code, "msg", "hint")
-			t.Cleanup(func() { unregisterForTesting(code) })
 		}()
 	}
 	wg.Wait()

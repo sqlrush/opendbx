@@ -79,13 +79,14 @@ func (e *structuredErr) Unwrap() error {
 }
 
 // Is implements the errors.Is hook (spec § 1.3 errors.Is semantics).
-// Matches when target is any Error with the same Code. This makes
-// `errors.Is(err, ErrSentinel)` work for both:
+// Matches when target is any errcode.Error with the same Code.
 //
-//   - err = structuredErr from New/Newf/Wrap (constructor path)
-//   - err = Sentinel from Register (declaration path)
-//
-// symmetrically — both sides only need Code() to participate.
+// Symmetry (claude MED-1 clarification): works bidirectionally when at
+// least one side is a *structuredErr (constructor / Register path) —
+// stdlib errors.Is walks both ends, and this method handles either side.
+// Third-party types that implement errcode.Error must also provide their
+// own Is(target error) bool with the same Code-matching logic to
+// participate fully — stdlib doesn't synthesise that automatically.
 func (e *structuredErr) Is(target error) bool {
 	if e == nil || target == nil {
 		return false

@@ -64,30 +64,50 @@
 - **external**: ~2 (yaml.Decode wrap sites)
 - **already-wrapped**: 0 at audit time (no preexisting `errcode.Wrap` in spec-0.5 codebase)
 
-## spec-0.6 T-8 actually-migrated subset
+## spec-0.6 T-8 actual state (R2 honesty pass — codex post-impl finding)
 
-To demonstrate the pattern + close the most visible CLI errors, this commit
-migrates **5 exemplar sites** spanning the 3 main packages:
+**Migration status**: 6 public sentinel migrations (logger 4 + entrypoints 2)
+**are** complete and exercised by `errors.go` + `migration_test.go`. The 40
+inline `fmt.Errorf` sites are **NOT** migrated in this PR — only their
+target boundary codes are registered as the Stage-0 foundation.
 
-1. `config/env.go` — `OPENDBX_OUTPUT_FORMAT` parse error (one of 14 ENV sites)
-2. `config/validation.go` — required-field check (one of 7 validation sites)
-3. `config/loader.go` — yaml decode wrap at `Load()` exit (one of 7 loader sites)
-4. `config/admin.go` — `admin config sources NoSuch.Field` error (one of 7 admin sites)
-5. `cmd/opendbx/root.go` — choice validation failure (one of 4 cmd sites)
+### What landed in this PR
 
-The remaining 35 `fmt.Errorf` sites are **knowingly deferred** to the
-spec-0.10 lint enforcement wave: when the custom golangci-lint rule lands,
-it will flag all remaining public-boundary callers and force a sweep. This
-honours user Q11 B+ scope decision ("public boundary 强制 / private 自由 /
-45 处分类 / spec-0.10 lint enforcement").
+1. **6 public sentinel migrations** (D-4): `logger.ErrInvalidLevel` /
+   `ErrAlreadyInitialised` / `ErrNotInitialised` / `ErrWriterClosed` +
+   `entrypoints.ErrLauncherNotImplemented` /
+   `ErrInteractiveHelperNotImplemented` now backed by `errcode.Register`
+   with `errors.Is` backward-compat preserved.
+2. **4 CONFIG.* boundary codes** registered in `config/errors.go`. These
+   are **ready to use** but call sites in `config/{env,validation,loader,
+   admin}.go` still use `fmt.Errorf` — leaves the codes as Stage-0 contract
+   without churning the diff.
+3. **Audit classification** (boundary / private / external / already-wrapped)
+   for all 40 sites in this document so the spec-0.10 lint pass has a
+   ground-truth reference.
 
-## New error codes added in this commit
+### Deferred to spec-0.10 lint wave
+
+All 40 `fmt.Errorf` inline-new-error sites stay as-is in this PR. The
+spec-0.10 custom golangci-lint rule will:
+
+- Scan every package's public boundary surface for `fmt.Errorf` returns
+- Flag any boundary error that does not pass through `errcode.Newf` /
+  `errcode.Wrap`
+- Auto-suggest the right `CONFIG.*` / `CMD.*` code based on this audit
+  document's classification
+
+This split honours user Q11 B+ scope decision: **codes registered (this PR)
++ public boundary use enforced (spec-0.10 lint)**. The codes are not dead
+weight — they're the canonical Code values the lint rule will recommend.
+
+### New error codes registered in this PR
 
 - `CONFIG.ENV_PARSE_FAILED` — env var value did not match expected shape
 - `CONFIG.VALIDATION_FAILED` — schema validation rule violation
 - `CONFIG.LOAD_FAILED` — yaml decode / source resolution failed
 - `CONFIG.ADMIN_FIELD_NOT_FOUND` — admin config sources field unknown
-- `CMD.FLAG_INVALID` — cobra flag value rejected by choice validator
 
-All registered in `internal/platform/config/errors.go` and (for CMD)
-`cmd/opendbx/errors.go`.
+All registered in `internal/platform/config/errors.go` with full
+Message + Hint text. No `CMD.*` codes registered yet — those land with
+the corresponding cmd/opendbx migration in a follow-up.

@@ -51,12 +51,12 @@ var codeRE = regexp.MustCompile(`^[A-Z][A-Z0-9]+(?:\.[A-Z][A-Z0-9_]+)+$`)
 // Tests that need to Register codes should use this prefix.
 const testPrefix = "TEST."
 
-// registry holds all definitions keyed by Code. Protected by mu so that
-// tests calling Register from parallel goroutines stay race-clean (file-
-// scope var = Register is sequential at package init, but t.Parallel
-// subtests calling Register concurrently are a real scenario).
+// registry holds all definitions keyed by Code. Protected by an RWMutex so
+// the read-heavy hot path (Lookup called on every New/Newf/Wrap call;
+// All called by docs_gen + manifest test) does not serialise behind
+// the write-only Register/unregister paths. go-reviewer H-1 R2 alignment.
 var (
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	registry = map[string]Definition{}
 )
 
@@ -104,8 +104,8 @@ func Register(code, msg, hint string) Sentinel {
 // Lookup returns the Definition for a code, or (zero, false) if unknown.
 // Used internally by New/Newf/Wrap; exported for diagnostic tooling.
 func Lookup(code string) (Definition, bool) {
-	mu.Lock()
-	defer mu.Unlock()
+	mu.RLock()
+	defer mu.RUnlock()
 	def, ok := registry[code]
 	return def, ok
 }
@@ -114,8 +114,8 @@ func Lookup(code string) (Definition, bool) {
 // TEST.* prefix (reserved for test fixtures; spec § 2.2 + R-9 mitigation).
 // Used by the docs_gen tool to produce docs/error-codes.md.
 func All() []Definition {
-	mu.Lock()
-	defer mu.Unlock()
+	mu.RLock()
+	defer mu.RUnlock()
 	out := make([]Definition, 0, len(registry))
 	for _, def := range registry {
 		if strings.HasPrefix(def.Code, testPrefix) {
