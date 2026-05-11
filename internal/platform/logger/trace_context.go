@@ -205,13 +205,15 @@ func emitSpanEnd(traceID, spanID, parentSpanID, verb string, start, end time.Tim
 		warnSidecar("marshal-span", impl.sessionID, err)
 		return
 	}
-	// Attach error info if RecordError was called.
+	// Attach error info if RecordError was called. The error message is
+	// redacted before embedding so the sidecar never carries a raw secret
+	// even when callers do `RecordError(fmt.Errorf("auth failed: token=%s", t))`.
 	if recErr != nil {
-		// We rebuild the JSON to insert error{code,message,hint} — cheap path
-		// because span.end events are infrequent compared with regular log calls.
-		line, _ = injectSpanError(line, recErr)
+		line, _ = injectSpanError(line, redactedError{msg: redactString(recErr.Error())})
 	}
-	_ = impl.sidecarWriter.Write(string(line))
+	// Post-format redaction (spec § 2.6 fail-safe layer): also catches
+	// secrets that leaked through attrs.
+	_ = impl.sidecarWriter.Write(redactString(string(line)))
 }
 
 // injectSpanError rewrites a sidecar JSON line to populate the `error` field

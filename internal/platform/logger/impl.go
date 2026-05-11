@@ -165,24 +165,35 @@ func (l *loggerImpl) log(level Level, msg string, attrs []Attr) {
 		return
 	}
 	now := time.Now()
-	merged := mergeAttrs(l.attrs, attrs)
 
-	// Main text path. Best-effort: write errors are swallowed (the BufferedWriter
-	// itself propagates them to its caller, but logger.Error()-style recursion
-	// would deadlock on the same goroutine — keep it simple).
+	// Pre-format redaction (spec § 2.6 first layer): walks each Attr value
+	// recursively, honours `redact:"true"` struct tags from spec-0.4 D-6,
+	// applies the secret-pattern heuristic on string values, masks errors.
+	// We also redact the msg itself in case the caller smuggled a secret
+	// into the free-form text.
+	redactedMsg := redactString(msg)
+	merged := redactAttrs(mergeAttrs(l.attrs, attrs))
+
+	// Main text path. Post-format pass (spec § 2.6 second layer): the
+	// formatted line is fed through redactString once more before hitting
+	// the BufferedWriter — belt-and-braces against attr serialisation
+	// quirks that re-introduce a secret string.
 	if l.mainWriter != nil {
-		_ = l.mainWriter.Write(formatEvent(now, level, msg))
+		line := redactString(formatEvent(now, level, redactedMsg))
+		_ = l.mainWriter.Write(line)
 	}
 
 	// Sidecar JSONL path (independent file handle / buffer; failures do NOT
 	// affect the main path per spec § 3 guarantee).
 	if l.sidecarEnabled && l.sidecarWriter != nil {
 		ctxTraceID, ctxSpanID := traceIDsFromContext(l.ctx)
-		line, err := marshalSidecarEvent(now, level, l.module, msg, l.sessionID, merged, ctxTraceID, ctxSpanID)
+		line, err := marshalSidecarEvent(now, level, l.module, redactedMsg, l.sessionID, merged, ctxTraceID, ctxSpanID)
 		if err != nil {
 			warnSidecar("marshal", l.sessionID, err)
 		} else {
-			_ = l.sidecarWriter.Write(string(line))
+			// Post-format pass for sidecar as well — protects against attr
+			// values that JSON-encode in a way the pre-format pass missed.
+			_ = l.sidecarWriter.Write(redactString(string(line)))
 		}
 	}
 }
