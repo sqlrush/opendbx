@@ -31,8 +31,8 @@ import (
 //     auto-link the sidecar path. spec § 1.3 § 2.2 contract.
 //  5. Warning template (Q4 R3 spec):
 //     "opendbx: warning: latest debug log link unavailable (<reason>);
-//      use 'opendbx --debug-file=<path>' to specify explicit log path or
-//      look in <target>"
+//     use 'opendbx --debug-file=<path>' to specify explicit log path or
+//     look in <target>"
 //
 // claude HIGH-3 (lazy-once memoize): callers wrap this in sync.Once so the
 // link is created on the first successful write rather than eagerly at
