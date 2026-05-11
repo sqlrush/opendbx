@@ -144,18 +144,16 @@ func TestLoggerWritesCreatesLatestLink(t *testing.T) {
 }
 
 func TestWarnLatestLinkFormat(t *testing.T) {
-	t.Parallel()
-	// We can't easily intercept os.Stderr without redirecting fd 2; instead
-	// verify the helper does not panic on a representative input. The actual
-	// message format is exercised via grep against a captured stream in the
-	// chaos suite (T-12).
+	// NOT t.Parallel: warnLatestLink reads os.Stderr; TestWarnLatestLinkContainsHint
+	// mutates os.Stderr via redirection. Running both in parallel triggers a
+	// data race on the os.Stderr global (规则 9 race 0 tolerance).
 	warnLatestLink("create", "/tmp/latest", os.ErrPermission, "/tmp/session.txt")
 	// No assertion — coverage + non-panic.
 }
 
 // Test the warning text contains the Q4 R3 template fields.
 func TestWarnLatestLinkContainsHint(t *testing.T) {
-	t.Parallel()
+	// NOT t.Parallel: see TestWarnLatestLinkFormat — both touch os.Stderr.
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Skipf("pipe unavailable: %v", err)
