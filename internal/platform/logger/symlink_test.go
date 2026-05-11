@@ -160,8 +160,8 @@ func TestWarnLatestLinkContainsHint(t *testing.T) {
 	if err != nil {
 		t.Skipf("pipe unavailable: %v", err)
 	}
-	defer r.Close()
-	defer w.Close()
+	defer func() { _ = r.Close() }()
+	defer func() { _ = w.Close() }()
 
 	prev := os.Stderr
 	os.Stderr = w

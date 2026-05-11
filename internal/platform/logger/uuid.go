@@ -154,7 +154,7 @@ func formatUUID(b [16]byte) string {
 // "all-zero random tail" pattern.
 func degradedUUID(version int) string {
 	var b [16]byte
-	b[6] = byte(version&0x0f)<<4 | 0x00 //nolint:gocritic // version nibble for visibility in degraded UUIDs
+	b[6] = byte(version&0x0f) << 4 // version nibble for visibility in degraded UUIDs
 	b[8] = 0x80
 	return formatUUID(b)
 }

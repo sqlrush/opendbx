@@ -17,7 +17,8 @@ import (
 
 func TestStartSpanNilCtx(t *testing.T) {
 	t.Parallel()
-	ctx, sp := StartSpan(nil, "boot.init") //nolint:staticcheck // SA1012 intentional: contract is nil-tolerant
+	//nolint:staticcheck // SA1012 intentional: StartSpan contract is nil-tolerant
+	ctx, sp := StartSpan(nil, "boot.init")
 	if ctx == nil {
 		t.Fatal("StartSpan(nil) returned nil ctx")
 	}
