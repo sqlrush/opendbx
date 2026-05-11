@@ -3,7 +3,30 @@
 BIN_DIR := bin
 BIN_NAME := opendbx
 GO := go
-GO_BUILD_FLAGS := -trimpath -ldflags="-s -w -X github.com/sqlrush/opendbx/internal/platform/version.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
+
+# spec-0.7 D-3 / T-5: linker -X 注入 4 字段构建元数据 (Version / Commit /
+# BuildDate / Dirty). Supported platforms: linux, darwin (POSIX shell + git +
+# date -u). Windows not a target for ldflag metadata injection.
+#
+# Key decisions (claude MED-3 + codex MED 整合):
+# - VERSION: `git describe --tags --always` -- 去掉 --dirty 后缀, 让 Version
+#   保持 Parse-able tag 字符串; dirty 状态由 DIRTY 独立变量携带 (MED-3).
+# - COMMIT: `git rev-parse --short=12 HEAD` -- 显式 12-char short hash.
+# - BUILD_DATE: ISO8601 UTC (matches spec-0.5 logger sidecar timestamp 风格).
+# - DIRTY: `git status --porcelain` -- 捕获 tracked + untracked changes
+#   (diff-index 漏 untracked, codex MED).
+VERSION    := $(shell git describe --tags --always 2>/dev/null || echo 'dev')
+COMMIT     := $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo 'unknown')
+BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+DIRTY      := $(shell git status --porcelain 2>/dev/null | awk 'END { if (NR>0) print "dirty"; else print "" }')
+
+VERSION_PKG := github.com/sqlrush/opendbx/internal/platform/version
+LDFLAGS := -s -w \
+    -X $(VERSION_PKG).Version=$(VERSION) \
+    -X $(VERSION_PKG).Commit=$(COMMIT) \
+    -X $(VERSION_PKG).BuildDate=$(BUILD_DATE) \
+    -X $(VERSION_PKG).Dirty=$(DIRTY)
+GO_BUILD_FLAGS := -trimpath -ldflags="$(LDFLAGS)"
 
 all: build
 
