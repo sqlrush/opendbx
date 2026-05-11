@@ -12,8 +12,9 @@ import (
 
 // fakeRegistry mimics the production spec-registry lookup (D-7) for unit
 // tests. The data here mirrors spec-0.7 § 2.6 sample table — Stage 0 has
-// 19 ordinals (16 main + 1 sub + 3 survey + acceptance overlay); Stage 1
-// starts at ordinal 20.
+// 19 ordinals total: 16 main (0.1-0.11, 0.12-0.15, 0.16) + 1 sub (0.11.5) +
+// 3 survey (0.15a/b/c). The acceptance role is carried by spec-0.16 (the
+// last main row), not a separate row. Stage 1 starts at ordinal 20.
 //
 // Map shape: (stage, specN) → ordinal.
 var fakeRegistry = map[[2]int]int{
@@ -113,8 +114,20 @@ func TestInfoStringRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Parse(%q): %v", tag, err)
 			}
+			// Layer 1: string-canonical round-trip.
 			if got := info.String(); got != tag {
-				t.Errorf("round-trip: Parse(%q).String() = %q, want %q", tag, got, tag)
+				t.Errorf("string round-trip: Parse(%q).String() = %q, want %q", tag, got, tag)
+			}
+			// Layer 2: Info-canonical round-trip (codex LOW). Re-parse the
+			// stringified form; the resulting Info must equal the original
+			// modulo Raw (Raw carries the original literal which is
+			// diagnostic-only and naturally identical here).
+			info2, err := Parse(info.String(), fakeLookup)
+			if err != nil {
+				t.Fatalf("re-Parse(%q): %v", info.String(), err)
+			}
+			if info != info2 {
+				t.Errorf("info round-trip: %+v != %+v", info, info2)
 			}
 		})
 	}
@@ -157,6 +170,10 @@ func TestParseInvalidFixtures(t *testing.T) {
 		{"unknown-spec", "v0.99.0-stage0.99", "not in spec-registry"},
 		// 12. MINOR != registry ordinal (e.g. typo: spec-0.7 → MINOR=8)
 		{"minor-not-ordinal", "v0.8.0-stage0.7", "must equal spec-registry ordinal"},
+		// 13. codex MED: strconv.Atoi overflow on a regex-valid huge number.
+		//     Triggers the "not integer" error path in Parse (defensive guard
+		//     for the case where the regex matches but Atoi exceeds int range).
+		{"int-overflow-minor", "v0.99999999999999999999.0-stage0.7", "not integer"},
 	}
 	for _, c := range cases {
 		c := c
@@ -173,6 +190,38 @@ func TestParseInvalidFixtures(t *testing.T) {
 				t.Errorf("Parse(%q) error message %q does not contain %q", c.tag, err.Error(), c.wantMsg)
 			}
 		})
+	}
+}
+
+// --- SpecN != ordinal branch (codex MED) -------------------------------
+//
+// fakeLookup happens to map (stage, specN) → ordinal=specN for every row in
+// fakeRegistry, which means the "MINOR == ordinal" check catches all
+// mismatches and the secondary "SpecN == ordinal" guard at grammar.go:131
+// never trips through normal fixtures. This test injects a pathological
+// lookup that returns an ordinal differing from SpecN — exercising the
+// otherwise-unreachable code path.
+
+func TestParseSpecNDiffersFromOrdinal(t *testing.T) {
+	t.Parallel()
+	// Pathological lookup: claims (0, 6) maps to ordinal=7. MINOR=7 in the
+	// tag matches the ordinal so the MINOR check passes, but SpecN=6 then
+	// trips the SpecN==ordinal guard.
+	badLookup := func(stage, specN int) (int, bool) {
+		if stage == 0 && specN == 6 {
+			return 7, true
+		}
+		return 0, false
+	}
+	_, err := Parse("v0.7.0-stage0.6", badLookup)
+	if err == nil {
+		t.Fatal("Parse with SpecN != ordinal should fail")
+	}
+	if !errors.Is(err, ErrTagInvalid) {
+		t.Errorf("error not errors.Is(ErrTagInvalid): %v", err)
+	}
+	if !strings.Contains(err.Error(), "SpecN") {
+		t.Errorf("error should mention SpecN: %v", err)
 	}
 }
 
