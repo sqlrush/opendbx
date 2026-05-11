@@ -66,6 +66,19 @@ func newRootCommand() *cobra.Command {
 			}
 			entrypoints.Checkpoint("config_loaded")
 			cmd.SetContext(entrypoints.WithConfig(cmd.Context(), cfg))
+
+			// spec-0.5 T-11 D-8: initialise the logger after config is in
+			// place so subsequent code paths can call entrypoints.L() or
+			// (after impl-side wiring) logger.L() without panicking.
+			// Idempotent (logger.Init is sync.Once-guarded), so cobra
+			// inheritance into subcommands is safe.
+			if err := entrypoints.InitLoggerFromCLI(entrypoints.LoggerInitInputs{
+				DebugToStderr: opts.Debug.DebugToStderr,
+			}); err != nil {
+				return err
+			}
+			entrypoints.RegisterLoggerSignalCleanup()
+			entrypoints.Checkpoint("logger_initialised")
 			return validateChoiceFlags(cmd, opts)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {

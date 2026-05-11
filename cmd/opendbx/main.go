@@ -28,9 +28,54 @@ import (
 
 func main() {
 	entrypoints.Checkpoint("main_entry")
+
+	// spec-0.5 claude HIGH-2 + CC parity: pre-process argv so `-d2e` is
+	// expanded to `--debug-to-stderr` before cobra sees it. Without this,
+	// pflag parses `-d2e` as `-d=2e` (because `-d` is the shorthand for
+	// `--debug` registered as a string flag) — sets Debug filter to "2e"
+	// and never toggles DebugToStderr. CC does the equivalent expansion in
+	// main.tsx before commander.parse.
+	os.Args = preprocessShortFlags(os.Args)
+
 	rootCmd := newRootCommand()
-	if err := rootCmd.Execute(); err != nil {
-		// cobra already prints the user-facing error; we just propagate exit.
-		os.Exit(1)
+
+	// spec-0.5 codex CRIT-1: ensure logger flushes on every exit path —
+	// normal, error, panic. RegisterSignalCleanup (called in PersistentPreRunE)
+	// only covers SIGINT/SIGTERM; we still need an explicit Close before
+	// os.Exit and a GuardPanic around Execute so buffered JSONL events
+	// don't get dropped on the common exit paths.
+	var exitCode int
+	entrypoints.GuardLoggerPanic(func() {
+		if err := rootCmd.Execute(); err != nil {
+			// cobra already printed the user-facing error.
+			exitCode = 1
+		}
+	})
+	_ = entrypoints.CloseLogger()
+	if exitCode != 0 {
+		os.Exit(exitCode)
 	}
+}
+
+// preprocessShortFlags rewrites compact-form shortflags that pflag would
+// otherwise mis-parse. Currently handles:
+//
+//	-d2e   →   --debug-to-stderr
+//
+// (CC parity — `-d2e` is documented as the short form of `--debug-to-stderr`.
+// Because `-d` is already the registered shorthand for `--debug` (a string
+// flag), pflag's default tokenisation reads `-d2e` as `-d=2e` and sets the
+// debug FILTER to "2e" rather than enabling stderr output. The rewrite
+// happens once at program entry; argv ordering is preserved.)
+func preprocessShortFlags(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, a := range args {
+		switch a {
+		case "-d2e":
+			out = append(out, "--debug-to-stderr")
+		default:
+			out = append(out, a)
+		}
+	}
+	return out
 }
