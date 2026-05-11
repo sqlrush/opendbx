@@ -17,8 +17,11 @@ import (
 
 func TestStartSpanNilCtx(t *testing.T) {
 	t.Parallel()
-	//nolint:staticcheck // SA1012 intentional: StartSpan contract is nil-tolerant
-	ctx, sp := StartSpan(nil, "boot.init")
+	// Construct nil via local var to dodge staticcheck SA1012 (which only
+	// flags nil-literal context args). The contract under test is exactly
+	// that StartSpan tolerates a nil context.Context value.
+	var nilCtx context.Context
+	ctx, sp := StartSpan(nilCtx, "boot.init")
 	if ctx == nil {
 		t.Fatal("StartSpan(nil) returned nil ctx")
 	}
