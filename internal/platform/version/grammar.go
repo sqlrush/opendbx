@@ -2,28 +2,8 @@
 //
 // Author: sqlrush
 
-// Version tag grammar + parser. spec-0.7 D-1.
-//
-// Grammar (CLAUDE.md 规则 15):
-//
-//		v<MAJOR>.<MINOR>.<PATCH>-stage<S>.<N>[-accepted]
-//
-//	  - MAJOR=0 until commercial 1.0
-//	  - MINOR = global cumulative spec ordinal (spec-registry SSOT — NOT a
-//	    formula from spec id; manifest authoritative; spec-0.7 R2.1 Q13 ★B')
-//	  - PATCH=0 for spec FROZEN tag; >0 for hotfix bump
-//	  - S = stage number (0~9 anticipated)
-//	  - N = spec ordinal within stage (matches spec-registry ordinal column)
-//	  - "-accepted" marks Stage acceptance tags
-//
-// Examples:
-//
-//	v0.1.0-stage0.1               spec-0.1-repo-bootstrap
-//	v0.7.0-stage0.7               spec-0.7-version-numbering (this spec)
-//	v0.19.0-stage0.19-accepted    spec-0.16-stage0-acceptance (Stage 0 验收;
-//	                              spec-0.16 ordinal=19 含子规格全计 Q13 ★B')
-//	v0.20.0-stage1.1              spec-1.1 (Stage 1 第一个; ordinal=20 =
-//	                              Stage 0 19 ordinal + 1)
+// Version tag grammar + parser (spec-0.7 D-1). Package overview lives in doc.go.
+
 package version
 
 import (

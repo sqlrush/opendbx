@@ -207,11 +207,15 @@ func TestParseNilLookupStillEnforcesStageBound(t *testing.T) {
 
 // --- VersionPattern exported as string constant (codex LOW) -------------
 
+// Compile-time guarantee that VersionPattern is a string constant (not a
+// *regexp.Regexp value that callers could mutate). Lives at package scope
+// rather than inside the test func so staticcheck's QF1011 (redundant
+// type in var decl) doesn't kick in — for a top-level const declaration
+// the type annotation is the actual contract.
+const _ string = VersionPattern
+
 func TestVersionPatternIsString(t *testing.T) {
 	t.Parallel()
-	// Compile-time guarantee: VersionPattern is a `const string`, not a
-	// *regexp.Regexp. Callers cannot mutate it.
-	var _ string = VersionPattern
 	if VersionPattern == "" {
 		t.Error("VersionPattern must not be empty")
 	}
