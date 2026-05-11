@@ -106,7 +106,8 @@ func TestTraceIDsFromContextNoSpan(t *testing.T) {
 	if tid != "" || sid != "" {
 		t.Errorf("traceIDsFromContext(no span) = (%q, %q), want empty (Q8 ★A)", tid, sid)
 	}
-	tid, sid = traceIDsFromContext(nil)
+	var nilCtx context.Context
+	tid, sid = traceIDsFromContext(nilCtx)
 	if tid != "" || sid != "" {
 		t.Errorf("traceIDsFromContext(nil) = (%q, %q), want empty", tid, sid)
 	}
