@@ -167,6 +167,12 @@ func marshalSidecarEvent(
 	}
 
 	for _, a := range merged {
+		if (a.Key == "err" || a.Key == "error") && a.Value != nil {
+			if err, ok := a.Value.(error); ok {
+				ev.Error = sidecarErrorFromErr(err)
+				continue
+			}
+		}
 		if _, reserved := reservedAttrKeys[a.Key]; reserved {
 			switch a.Key {
 			case "event":
@@ -194,6 +200,14 @@ func marshalSidecarEvent(
 		return nil, err
 	}
 	return append(line, '\n'), nil
+}
+
+func sidecarErrorFromErr(err error) *sidecarError {
+	if err == nil {
+		return nil
+	}
+	code, msg, hint := errcodeFromErr(err)
+	return &sidecarError{Code: code, Message: msg, Hint: hint}
 }
 
 // jsonMarshalString is a tiny wrapper around json.Marshal for a string

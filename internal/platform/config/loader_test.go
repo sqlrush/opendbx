@@ -5,10 +5,13 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sqlrush/opendbx/internal/platform/errcode"
 )
 
 // helpers used across loader/paths/env tests
@@ -132,6 +135,9 @@ func TestLoad_FlagSettingsMissingFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load should fail when --settings file missing")
 	}
+	if !errors.Is(err, ErrLoadFailed) {
+		t.Fatalf("Load missing --settings err = %v, want CONFIG.LOAD_FAILED", err)
+	}
 	if cfg != nil {
 		t.Error("Load returned non-nil cfg on error")
 	}
@@ -146,6 +152,9 @@ func TestLoad_BadYAMLFailsImmediately(t *testing.T) {
 	_, err := Load(LoadOptions{CWD: cwd})
 	if err == nil {
 		t.Fatal("Load should fail on bad YAML")
+	}
+	if !errors.Is(err, ErrLoadFailed) {
+		t.Fatalf("bad YAML err = %v, want CONFIG.LOAD_FAILED", err)
 	}
 }
 
@@ -162,6 +171,9 @@ func TestLoad_UnknownFieldFails(t *testing.T) {
 	if !strings.Contains(err.Error(), "unknown_section") {
 		t.Errorf("error should mention unknown_section: %v", err)
 	}
+	if !errors.Is(err, ErrLoadFailed) {
+		t.Fatalf("unknown field err = %v, want CONFIG.LOAD_FAILED", err)
+	}
 }
 
 func TestLoad_FailsValidation(t *testing.T) {
@@ -173,6 +185,9 @@ func TestLoad_FailsValidation(t *testing.T) {
 	_, err := Load(LoadOptions{CWD: cwd})
 	if err == nil {
 		t.Fatal("Load should fail validation on bad format")
+	}
+	if !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("validation err = %v, want CONFIG.VALIDATION_FAILED", err)
 	}
 }
 
@@ -205,6 +220,9 @@ func TestLoad_LargeFileRejected(t *testing.T) {
 	_, err := Load(LoadOptions{CWD: cwd})
 	if err == nil {
 		t.Fatal("Load should reject >1MB yaml")
+	}
+	if !errors.Is(err, ErrLoadFailed) {
+		t.Fatalf("large file err = %v, want CONFIG.LOAD_FAILED", err)
 	}
 }
 
@@ -254,6 +272,10 @@ func TestLoad_SettingSourcesInvalidFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "banana") {
 		t.Errorf("error should mention invalid token: %v", err)
+	}
+	var ec errcode.Error
+	if !errors.As(err, &ec) || ec.Code() != ErrLoadFailed.Code() {
+		t.Fatalf("invalid setting-sources errcode = %v / %q, want %s", err, ec.Code(), ErrLoadFailed.Code())
 	}
 }
 

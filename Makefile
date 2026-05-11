@@ -1,4 +1,4 @@
-.PHONY: all build test gate lint fmt clean help hooks-install hooks-status import-check dep-check golden golden-update cc-help-diff
+.PHONY: all build test gate lint fmt clean help hooks-install hooks-status import-check dep-check golden golden-update gen-docs cc-help-diff
 
 BIN_DIR := bin
 BIN_NAME := opendbx
@@ -56,6 +56,9 @@ golden: ## Run CLI text golden tests (spec-0.2 D-3)
 golden-update: ## Regenerate CLI golden files
 	TEST_UPDATE_GOLDEN=1 $(GO) test -run TestGolden ./cmd/opendbx/...
 	@echo "goldens updated. Review with 'git diff cmd/opendbx/testdata/golden/'"
+
+gen-docs: ## Regenerate opendbrb docs/error-codes.md from live errcode registry
+	$(GO) run cmd/tools/gen-error-codes/main.go --out=../opendbrb/docs/error-codes.md
 
 # spec-0.3 D-6: drift check vs CC v2.1.138 baseline. Doesn't fail; surfaces
 # a unified diff that humans review (ad hoc when CC upgrades) per user D8 +

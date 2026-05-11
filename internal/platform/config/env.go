@@ -67,7 +67,7 @@ func walkENVTags(v reflect.Value, parentPath string, cfg *Config) error {
 			continue
 		}
 		if err := assignFromString(fv, raw); err != nil {
-			return fmt.Errorf("ENV %s: %w", envName, err)
+			return fmt.Errorf("%w: ENV %s: %w", errENVParse, envName, err)
 		}
 		// Mark top-level section as ENV-sourced (parentPath empty path means
 		// scalar-on-Config; tag-bearing fields live inside sub-structs).

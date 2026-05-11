@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/sqlrush/opendbx/internal/platform/errcode"
 	yaml "go.yaml.in/yaml/v3"
 )
 
@@ -26,22 +27,25 @@ func WriteDefaultsYAML(w io.Writer) error {
 	enc := yaml.NewEncoder(w)
 	enc.SetIndent(2)
 	if err := enc.Encode(defaults); err != nil {
-		return fmt.Errorf("encode defaults: %w", err)
+		return errcode.Wrap(ErrLoadFailed.Code(), err, "encode default config failed", "")
 	}
-	return enc.Close()
+	if err := enc.Close(); err != nil {
+		return errcode.Wrap(ErrLoadFailed.Code(), err, "close default config encoder failed", "")
+	}
+	return nil
 }
 
 // WriteSchemaJSON writes the JSON Schema for Config to w.
 func WriteSchemaJSON(w io.Writer) error {
 	raw, err := SchemaJSON()
 	if err != nil {
-		return err
+		return errcode.Wrap(errcode.ErrInternal.Code(), err, "build config schema failed", "")
 	}
 	if _, err := w.Write(raw); err != nil {
-		return err
+		return errcode.Wrap(errcode.ErrInternal.Code(), err, "write config schema failed", "")
 	}
 	if _, err := w.Write([]byte("\n")); err != nil {
-		return err
+		return errcode.Wrap(errcode.ErrInternal.Code(), err, "write config schema newline failed", "")
 	}
 	return nil
 }
@@ -56,7 +60,7 @@ func WriteEnvMap(w io.Writer) error {
 	sort.Strings(keys)
 	for _, k := range keys {
 		if _, err := fmt.Fprintf(w, "%-50s %s\n", k, m[k]); err != nil {
-			return err
+			return errcode.Wrap(errcode.ErrInternal.Code(), err, "write config env map failed", "")
 		}
 	}
 	return nil
@@ -68,21 +72,23 @@ func WriteEnvMap(w io.Writer) error {
 // Otherwise resolves the dotted field path and prints just that one row.
 func WriteSources(w io.Writer, cfg *Config, field string) error {
 	if cfg == nil {
-		return fmt.Errorf("config is nil")
+		return errcode.Newf(errcode.ErrInvalidArgument.Code(), "config is nil")
 	}
 	if field != "" {
 		if _, err := resolveDottedField(reflect.ValueOf(cfg).Elem(), field); err != nil {
-			return fmt.Errorf("unknown config field %q: %w", field, err)
+			return errcode.Wrap(ErrAdminFieldNotFound.Code(), err, fmt.Sprintf("unknown config field %q", field), "")
 		}
 		src := cfg.Source(field)
-		_, err := fmt.Fprintf(w, "%-30s %s\n", field, src.String())
-		return err
+		if _, err := fmt.Fprintf(w, "%-30s %s\n", field, src.String()); err != nil {
+			return errcode.Wrap(errcode.ErrInternal.Code(), err, "write config source failed", "")
+		}
+		return nil
 	}
 	paths := configSourcePaths(reflect.TypeOf(Config{}), "")
 	sort.Strings(paths)
 	for _, path := range paths {
 		if _, err := fmt.Fprintf(w, "%-30s %s\n", path, cfg.Source(path).String()); err != nil {
-			return err
+			return errcode.Wrap(errcode.ErrInternal.Code(), err, "write config sources failed", "")
 		}
 	}
 	return nil
@@ -95,28 +101,28 @@ func WriteSources(w io.Writer, cfg *Config, field string) error {
 // as mergeFile.
 func ValidateFile(path string) error {
 	if path == "" {
-		return fmt.Errorf("validate: path is empty")
+		return errcode.Newf(ErrLoadFailed.Code(), "validate: path is empty")
 	}
 	if !fileExists(path) {
-		return fmt.Errorf("validate: file not found: %s", path)
+		return errcode.Newf(ErrLoadFailed.Code(), "validate: file not found: %s", path)
 	}
 	raw, err := os.ReadFile(path) //nolint:gosec // user-supplied admin tool path
 	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
+		return errcode.Wrap(ErrLoadFailed.Code(), err, fmt.Sprintf("read %s", path), "")
 	}
 	if len(raw) > 1<<20 {
-		return fmt.Errorf("%s: file too large (>1MB)", path)
+		return errcode.Newf(ErrLoadFailed.Code(), "%s: file too large (>1MB)", path)
 	}
 	if depth := yamlMaxDepth(raw); depth >= 32 {
-		return fmt.Errorf("%s: YAML nesting depth %d ≥ 32 (rejected per spec § 3.2 anti-bomb)", path, depth)
+		return errcode.Newf(ErrLoadFailed.Code(), "%s: YAML nesting depth %d ≥ 32 (rejected per spec § 3.2 anti-bomb)", path, depth)
 	}
 	cfg := Default()
 	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
 	dec.KnownFields(true)
 	if err := dec.Decode(cfg); err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("parse %s: %w", path, err)
+		return errcode.Wrap(ErrLoadFailed.Code(), err, fmt.Sprintf("parse %s", path), "")
 	}
-	return Validate(cfg)
+	return wrapValidationError(Validate(cfg))
 }
 
 // commonRedacted produces the conventional redaction-aware print of the

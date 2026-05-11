@@ -15,6 +15,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/spf13/pflag"
 
+	"github.com/sqlrush/opendbx/internal/platform/errcode"
 	"github.com/sqlrush/opendbx/internal/platform/version"
 )
 
@@ -314,6 +316,10 @@ func TestChoiceValidation(t *testing.T) {
 			_, _, err := runCmd(t, tc.args...)
 			if err == nil {
 				t.Errorf("expected error for %v, got nil", tc.args)
+				return
+			}
+			if !errors.Is(err, errcode.ErrFlagInvalid) {
+				t.Fatalf("err = %v, want CMD.FLAG_INVALID", err)
 			}
 		})
 	}

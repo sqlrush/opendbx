@@ -9,7 +9,7 @@
 //
 // Usage:
 //
-//	go run -tags=ignore cmd/tools/gen-error-codes/main.go --out=../opendbrb/docs/error-codes.md
+//	go run cmd/tools/gen-error-codes/main.go --out=../opendbrb/docs/error-codes.md
 //
 // This is intentionally NOT a `go test` target — go test should never write
 // to a sibling repo. The Makefile target `make gen-docs` invokes this tool.

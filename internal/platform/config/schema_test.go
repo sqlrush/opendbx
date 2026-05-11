@@ -7,8 +7,11 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/sqlrush/opendbx/internal/platform/errcode"
 )
 
 func TestSchemaJSON_ValidJSON(t *testing.T) {
@@ -127,6 +130,9 @@ func TestWriteSources_UnknownFieldFails(t *testing.T) {
 	if !strings.Contains(err.Error(), "NoSuch.Field") {
 		t.Errorf("error should mention field name: %v", err)
 	}
+	if !errors.Is(err, ErrAdminFieldNotFound) {
+		t.Fatalf("unknown field err = %v, want CONFIG.ADMIN_FIELD_NOT_FOUND", err)
+	}
 }
 
 func TestValidateFile_OK(t *testing.T) {
@@ -142,6 +148,8 @@ func TestValidateFile_OK(t *testing.T) {
 func TestValidateFile_MissingFails(t *testing.T) {
 	if err := ValidateFile("/nonexistent/foo.yaml"); err == nil {
 		t.Error("expected error on missing file")
+	} else if !errors.Is(err, ErrLoadFailed) {
+		t.Fatalf("missing file err = %v, want CONFIG.LOAD_FAILED", err)
 	}
 }
 
@@ -153,5 +161,10 @@ func TestValidateFile_TooLarge(t *testing.T) {
 	}
 	if err := ValidateFile(tmp); err == nil {
 		t.Error("expected error on >1MB file")
+	} else {
+		var ec errcode.Error
+		if !errors.As(err, &ec) || ec.Code() != ErrLoadFailed.Code() {
+			t.Fatalf("large file errcode = %v / %q, want %s", err, ec.Code(), ErrLoadFailed.Code())
+		}
 	}
 }
