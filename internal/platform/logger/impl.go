@@ -99,11 +99,11 @@ func mainWriteFunc(logPath string, debugToStderr bool) writeFunc {
 	}
 }
 
-// generateSessionID returns a UUID v4 (spec § 8 Q16: sessionId v4, trace_id
-// v7). T-8 fills in real RFC 4122 v4 generation; T-3 uses a placeholder so
-// the type compiles end-to-end.
+// generateSessionID returns a fresh UUID v4 (spec § 8 Q16: sessionId is v4;
+// trace_id is v7). Implemented from crypto/rand to keep the package
+// stdlib-only per spec § 5 contract.
 func generateSessionID() string {
-	return "00000000-0000-4000-8000-000000000000" // T-8 placeholder
+	return uuid4()
 }
 
 // close flushes and releases all writer resources.
@@ -174,11 +174,14 @@ func (l *loggerImpl) log(level Level, msg string, attrs []Attr) {
 	}
 }
 
-// traceIDsFromContext extracts the trace_id / span_id pair carried in ctx
-// via the trace_context package (T-8). T-7 returns ("", "") so events outside
-// an active span carry explicit empty strings per Q8 ★A.
-func traceIDsFromContext(_ context.Context) (traceID, spanID string) {
-	// T-8 will wire this to a real span lookup.
+// traceIDsFromContext extracts the trace_id / span_id pair carried by an
+// active span in ctx (via StartSpan). Returns ("", "") when no span is
+// active — Q8 ★A: events outside an active span emit explicit empty
+// strings rather than synthesising fake UUIDs.
+func traceIDsFromContext(ctx context.Context) (traceID, spanID string) {
+	if s := spanFromContext(ctx); s != nil {
+		return s.traceID, s.spanID
+	}
 	return "", ""
 }
 

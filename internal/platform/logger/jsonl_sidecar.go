@@ -188,6 +188,14 @@ func marshalSidecarEvent(
 	return append(line, '\n'), nil
 }
 
+// jsonMarshalString is a tiny wrapper around json.Marshal for a string
+// value. Exposed at package scope so trace_context.go can reuse it without
+// re-importing encoding/json (keeps the import graph minimal and the JSON
+// behaviour consistent between sidecar and span.end emission).
+func jsonMarshalString(s string) ([]byte, error) {
+	return json.Marshal(s)
+}
+
 // mergeAttrs returns the concatenation of a logger's pre-bound attrs (via
 // WithAttrs) and the per-call attrs slice. The result is a new slice; inputs
 // are not modified.
