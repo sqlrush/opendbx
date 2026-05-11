@@ -143,7 +143,10 @@ func redactValue(v any, keyIsSecret bool) any {
 		}
 		return redactString(x)
 	case error:
-		return redactedError{msg: redactString(x.Error())}
+		// Preserve the chain so spec-0.6 D-5 sidecar errors.As can still
+		// reach an embedded errcode.Error. spec-0.5 redactedError used to
+		// drop the wrapped value; spec-0.6 keeps it.
+		return redactedError{msg: redactString(x.Error()), wrapped: x}
 	}
 	rv := reflect.ValueOf(v)
 	return redactReflect(rv, keyIsSecret).Interface()
@@ -301,9 +304,20 @@ func redactValueReflect(rv reflect.Value, keyIsSecret bool) reflect.Value {
 	return reflect.ValueOf(rec)
 }
 
+// redactedError wraps a redacted error message. spec-0.6 D-5: gained an
+// Unwrap() method so errors.As can walk into a wrapped errcode.Error and
+// surface its Code/Message/Hint in the sidecar.
+//
 // redactedError wraps a redacted error message so logger error-emission
 // paths see a clean error type rather than the original (which might still
 // contain the secret if it's chained via fmt.Errorf %w).
-type redactedError struct{ msg string }
+type redactedError struct {
+	msg     string
+	wrapped error // optional original error, walked by errors.As (spec-0.6 D-5)
+}
 
 func (e redactedError) Error() string { return e.msg }
+
+// Unwrap returns the original error so errors.Is / errors.As can traverse
+// the chain. spec-0.6 D-5 claude MED-3 integration.
+func (e redactedError) Unwrap() error { return e.wrapped }

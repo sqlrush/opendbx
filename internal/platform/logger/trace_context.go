@@ -5,6 +5,7 @@
 package logger
 
 import (
+	"bytes"
 	"context"
 	"sync/atomic"
 	"time"
@@ -211,11 +212,14 @@ func emitSpanEnd(traceID, spanID, parentSpanID, verb string, start, end time.Tim
 		warnSidecar("marshal-span", getSidecarPath(impl.sessionID), err)
 		return
 	}
-	// Attach error info if RecordError was called. The error message is
-	// redacted before embedding so the sidecar never carries a raw secret
-	// even when callers do `RecordError(fmt.Errorf("auth failed: token=%s", t))`.
+	// Attach error info if RecordError was called. spec-0.6 D-5 wiring: use
+	// errors.As (via errcodeFromErr helper) so wrapped chains (fmt.Errorf %w,
+	// errcode.Wrap, redactedError) all surface the structured Code rather than
+	// degrading to plain text. Falls back to `code:""` + redacted message for
+	// non-errcode errors (spec § 2.4 Q9 ★A fallback).
 	if recErr != nil {
-		line, _ = injectSpanError(line, redactedError{msg: redactString(recErr.Error())})
+		code, msg, hint := errcodeFromErr(recErr)
+		line, _ = injectSpanError(line, code, msg, hint)
 	}
 	// Post-format redaction (spec § 2.6 fail-safe layer): also catches
 	// secrets that leaked through attrs.
@@ -223,15 +227,22 @@ func emitSpanEnd(traceID, spanID, parentSpanID, verb string, start, end time.Tim
 }
 
 // injectSpanError rewrites a sidecar JSON line to populate the `error` field
-// from a Go error. spec-0.6 will introduce a structured error type with
-// Code/Hint; for now we map .Error() into `error.message` only.
-func injectSpanError(line []byte, recErr error) ([]byte, error) {
+// with a structured triple. spec-0.6 D-5 — replaces the previous version
+// that only mapped .Error() into `message`.
+func injectSpanError(line []byte, code, msg, hint string) ([]byte, error) {
 	const needle = `"error":null`
 	idx := indexOfLastBytes(line, needle)
 	if idx < 0 {
 		return line, nil
 	}
-	replacement := []byte(`"error":{"code":"","message":` + jsonString(recErr.Error()) + `,"hint":""}`)
+	// claude MED-2 R2 alignment: redact hint symmetrically with msg so the
+	// pre-format pass catches the rare case where a developer accidentally
+	// embeds a secret in a Hint string (e.g. interpolating an API key
+	// example). The outer post-format pass at line 225 covers most cases
+	// but the contract is cleaner if every field is pre-pass'd.
+	replacement := []byte(`"error":{"code":` + jsonString(code) +
+		`,"message":` + jsonString(redactString(msg)) +
+		`,"hint":` + jsonString(redactString(hint)) + `}`)
 	out := make([]byte, 0, len(line)-len(needle)+len(replacement))
 	out = append(out, line[:idx]...)
 	out = append(out, replacement...)
@@ -239,33 +250,12 @@ func injectSpanError(line []byte, recErr error) ([]byte, error) {
 	return out, nil
 }
 
-// indexOfLastBytes returns the index of the last occurrence of needle in src,
-// or -1 if absent. Plain byte scan; the JSON line is short.
+// indexOfLastBytes returns the index of the last occurrence of needle in
+// src, or -1 if absent. Thin wrapper around bytes.LastIndex (go-reviewer
+// M-3 R2 alignment — bytes is already a transitive import of
+// encoding/json so the package boundary cost is zero).
 func indexOfLastBytes(src []byte, needle string) int {
-	if len(needle) == 0 || len(src) < len(needle) {
-		return -1
-	}
-	n := []byte(needle)
-	for i := len(src) - len(n); i >= 0; i-- {
-		if bytesEqual(src[i:i+len(n)], n) {
-			return i
-		}
-	}
-	return -1
-}
-
-// bytesEqual is a small helper kept package-local to avoid importing "bytes"
-// solely for this purpose.
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return bytes.LastIndex(src, []byte(needle))
 }
 
 // jsonString escapes s as a JSON string literal (including surrounding

@@ -14,13 +14,12 @@ package entrypoints
 
 import (
 	"context"
-	"errors"
 )
 
 // ErrInteractiveHelperNotImplemented signals an interactive helper has not
 // yet been wired to a real React/Ink-equivalent UI. Replaced in
-// spec-1.15-tui.
-var ErrInteractiveHelperNotImplemented = errors.New("interactive helper not implemented in stage 0 (lands in spec-1.15-tui)")
+// spec-1.15-tui. Moved to errors.go in spec-0.6 D-4 (now carries
+// Code/Message/Hint via errcode registry).
 
 // RenderAndRun parallels CC interactiveHelpers.ts::renderAndRun. Real
 // implementation drives the tcell event loop + render engine to produce a

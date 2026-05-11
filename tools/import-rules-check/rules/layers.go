@@ -116,6 +116,7 @@ func PathToLayer(importPath string) Layer {
 // preserve this invariant (R2 fixup per codex H-6).
 var CmdPlatformExceptionPaths = []string{
 	ModulePrefix + "internal/platform/version",
+	ModulePrefix + "internal/platform/errcode",
 }
 
 // MigrationsPath is the platform/migrations path; only bootstrap may
@@ -127,6 +128,16 @@ const MigrationsPath = ModulePrefix + "internal/platform/migrations"
 // SchemasPath is the domain/schemas path; spec § 2.2 重要细则 #2 declares
 // it global-read (any layer may import). Pure data, no behavior.
 const SchemasPath = ModulePrefix + "internal/domain/schemas"
+
+// ErrcodePath is the platform/errcode path; spec-0.6 § 5.2 declares it
+// a global-read leaf package (CLAUDE.md 规则 7 error-triple registry).
+// Any layer may import — including cmd and tools — because:
+//   - the registry is opendbx-wide normative contract (pure data + helpers)
+//   - the spec-0.6 frozen-manifest test must import every consumer to verify
+//     全集 stability (codex MED-4); requires cmd/tools→errcode permission
+//
+// Same allowance shape as SchemasPath.
+const ErrcodePath = ModulePrefix + "internal/platform/errcode"
 
 // pathHasBoundary returns true when target equals prefix exactly, or target
 // is a sub-path under prefix (boundary-safe; rejects sibling like
@@ -210,6 +221,14 @@ func CheckEdge(from, to string) string {
 	// schemas global-read exception (spec § 2.2 重要细则 #2): pure data
 	// package, any layer may import (including platform).
 	if pathHasBoundary(to, SchemasPath) {
+		return ""
+	}
+
+	// errcode global-read exception (spec-0.6 § 5.2): error-triple registry
+	// is opendbx-wide normative contract (CLAUDE.md 规则 7). Pure leaf
+	// package — no imports inward. Any layer may import, same shape as
+	// schemas. cmd is also allowed via CmdPlatformExceptionPaths.
+	if pathHasBoundary(to, ErrcodePath) {
 		return ""
 	}
 
