@@ -101,14 +101,16 @@ func newBufferedWriter(cfg bufferedWriterConfig) *bufferedWriter {
 // In immediateMode, Write invokes writeFn synchronously and bypasses every
 // buffer / timer / overflow path.
 func (b *bufferedWriter) Write(content string) error {
-	if b.cfg.immediateMode {
-		return b.cfg.writeFn(content)
-	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	if b.closed {
+		b.mu.Unlock()
 		return ErrWriterClosed
 	}
+	if b.cfg.immediateMode {
+		b.mu.Unlock()
+		return b.cfg.writeFn(content)
+	}
+	defer b.mu.Unlock()
 	b.buffer = append(b.buffer, content)
 	b.bufferBytes += len(content)
 	b.scheduleFlushLocked()

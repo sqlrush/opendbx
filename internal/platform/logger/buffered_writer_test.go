@@ -69,6 +69,23 @@ func TestBufferedWriterImmediateMode(t *testing.T) {
 	}
 }
 
+func TestBufferedWriterImmediateModeHonorsClosed(t *testing.T) {
+	t.Parallel()
+	r := &recorder{}
+	cfg := defaultBufferedWriterConfig(r.writeFn)
+	cfg.immediateMode = true
+	bw := newBufferedWriter(cfg)
+	if err := bw.Dispose(); err != nil {
+		t.Fatalf("Dispose err = %v", err)
+	}
+	if err := bw.Write("late"); !errors.Is(err, ErrWriterClosed) {
+		t.Fatalf("immediate Write after Dispose err = %v, want ErrWriterClosed", err)
+	}
+	if r.numBatches() != 0 {
+		t.Fatalf("late immediate write reached writeFn; batches=%d", r.numBatches())
+	}
+}
+
 func TestBufferedWriterFlushDrainsBuffer(t *testing.T) {
 	t.Parallel()
 	r := &recorder{}

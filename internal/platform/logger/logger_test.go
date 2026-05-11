@@ -7,6 +7,9 @@ package logger
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -254,6 +257,147 @@ func TestCloseBeforeInit(t *testing.T) {
 	resetForTesting(t)
 	if err := Close(); !errors.Is(err, ErrNotInitialised) {
 		t.Errorf("Close before Init = %v, want ErrNotInitialised", err)
+	}
+}
+
+func TestLoggerWritesMainTextPath(t *testing.T) {
+	resetForTesting(t)
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "debug.log")
+	setArgvForTesting(t, "opendbx", "--debug-file", logPath)
+
+	if err := Init(InitInput{SessionID: "main-text"}); err != nil {
+		t.Fatalf("Init err = %v", err)
+	}
+	L().Info("api: connected")
+	if err := Close(); err != nil {
+		t.Fatalf("Close err = %v", err)
+	}
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read debug log: %v", err)
+	}
+	got := string(raw)
+	if !strings.Contains(got, " [INFO] api: connected\n") {
+		t.Fatalf("debug log missing CC text event:\n%s", got)
+	}
+}
+
+func TestLoggerDefaultMinLevelIsDebug(t *testing.T) {
+	resetForTesting(t)
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "debug.log")
+	setArgvForTesting(t, "opendbx", "--debug-file", logPath)
+	t.Setenv("OPENDBX_DEBUG_LOG_LEVEL", "")
+
+	if err := Init(InitInput{SessionID: "default-level"}); err != nil {
+		t.Fatalf("Init err = %v", err)
+	}
+	L().Verbose("api: verbose hidden")
+	L().Debug("api: debug shown")
+	if err := Close(); err != nil {
+		t.Fatalf("Close err = %v", err)
+	}
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read debug log: %v", err)
+	}
+	got := string(raw)
+	if strings.Contains(got, "verbose hidden") {
+		t.Fatalf("default min level should filter verbose:\n%s", got)
+	}
+	if !strings.Contains(got, "debug shown") {
+		t.Fatalf("default min level should include debug:\n%s", got)
+	}
+}
+
+func TestLoggerMinLevelEnvOverride(t *testing.T) {
+	resetForTesting(t)
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "debug.log")
+	setArgvForTesting(t, "opendbx", "--debug-file", logPath)
+	t.Setenv("OPENDBX_DEBUG_LOG_LEVEL", "info")
+
+	if err := Init(InitInput{SessionID: "env-level"}); err != nil {
+		t.Fatalf("Init err = %v", err)
+	}
+	L().Debug("api: debug hidden")
+	L().Info("api: info shown")
+	if err := Close(); err != nil {
+		t.Fatalf("Close err = %v", err)
+	}
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read debug log: %v", err)
+	}
+	got := string(raw)
+	if strings.Contains(got, "debug hidden") {
+		t.Fatalf("OPENDBX_DEBUG_LOG_LEVEL=info should filter debug:\n%s", got)
+	}
+	if !strings.Contains(got, "info shown") {
+		t.Fatalf("OPENDBX_DEBUG_LOG_LEVEL=info should include info:\n%s", got)
+	}
+}
+
+func TestLoggerDebugFilterAppliesToModuleAndMessage(t *testing.T) {
+	resetForTesting(t)
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "debug.log")
+	setArgvForTesting(t, "opendbx", "--debug=api", "--debug-file", logPath)
+
+	if err := Init(InitInput{SessionID: "filter"}); err != nil {
+		t.Fatalf("Init err = %v", err)
+	}
+	L().Info("other: hidden")
+	L().Info("api: shown")
+	L().WithModule("api").Info("plain module message")
+	if err := Close(); err != nil {
+		t.Fatalf("Close err = %v", err)
+	}
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read debug log: %v", err)
+	}
+	got := string(raw)
+	if strings.Contains(got, "other: hidden") {
+		t.Fatalf("--debug=api should hide non-api messages:\n%s", got)
+	}
+	if !strings.Contains(got, "api: shown") || !strings.Contains(got, "plain module message") {
+		t.Fatalf("--debug=api should include message and WithModule categories:\n%s", got)
+	}
+}
+
+func TestLoggerRuntimeEnableStartsWriting(t *testing.T) {
+	resetForTesting(t)
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	setArgvForTesting(t, "opendbx", "interact")
+
+	if err := Init(InitInput{SessionID: "runtime"}); err != nil {
+		t.Fatalf("Init err = %v", err)
+	}
+	L().Info("api: before hidden")
+	EnableDebugLogging()
+	L().Info("api: after shown")
+	if err := Close(); err != nil {
+		t.Fatalf("Close err = %v", err)
+	}
+
+	logPath := filepath.Join(tmp, ".opendbx", "debug", "runtime.txt")
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read debug log: %v", err)
+	}
+	got := string(raw)
+	if strings.Contains(got, "before hidden") {
+		t.Fatalf("logger should not backfill events before EnableDebugLogging:\n%s", got)
+	}
+	if !strings.Contains(got, "after shown") {
+		t.Fatalf("EnableDebugLogging should make later events visible:\n%s", got)
 	}
 }
 

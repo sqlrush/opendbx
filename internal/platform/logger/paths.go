@@ -199,12 +199,12 @@ func getMinDebugLogLevel() Level {
 	return LevelDebug
 }
 
-// isEnvTruthy mirrors CC's envUtils.isEnvTruthy: "true" / "1" / "yes" all
-// truthy (case-insensitive); everything else (including "false", "0", "no",
-// "", whitespace) is falsy.
+// isEnvTruthy mirrors CC's envUtils.isEnvTruthy: "true" / "1" / "yes" /
+// "on" all truthy (case-insensitive); everything else (including "false",
+// "0", "no", "off", "", whitespace) is falsy.
 func isEnvTruthy(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "true", "1", "yes":
+	case "true", "1", "yes", "on":
 		return true
 	default:
 		return false

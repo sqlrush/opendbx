@@ -6,7 +6,10 @@ package logger
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
+	"time"
 )
 
 // loggerImpl is the concrete Logger implementation. T-3 establishes the
@@ -24,6 +27,8 @@ type loggerImpl struct {
 	logPath        string
 	sidecarEnabled bool
 	debugToStderr  bool
+	filter         *debugFilter
+	mainWriter     *bufferedWriter
 
 	// Per-call derived state (clones via With* methods).
 	module string
@@ -39,13 +44,46 @@ func newLoggerImpl(in InitInput) *loggerImpl {
 	if sid == "" {
 		sid = generateSessionID()
 	}
+	logPath := in.LogPath
+	if logPath == "" {
+		logPath = getDebugLogPath(sid)
+	}
+	debugToStderr := in.DebugToStderr || isDebugToStdErr()
+	cfg := defaultBufferedWriterConfig(mainWriteFunc(logPath, debugToStderr))
+	cfg.immediateMode = IsDebugMode() || debugToStderr
 	return &loggerImpl{
 		mu:             &sync.Mutex{},
 		minLevel:       in.MinLevel,
 		sessionID:      sid,
-		logPath:        in.LogPath,
-		sidecarEnabled: in.SidecarEnabled,
-		debugToStderr:  in.DebugToStderr,
+		logPath:        logPath,
+		sidecarEnabled: !in.DisableSidecar,
+		debugToStderr:  debugToStderr,
+		filter:         getDebugFilter(),
+		mainWriter:     newBufferedWriter(cfg),
+	}
+}
+
+func mainWriteFunc(logPath string, debugToStderr bool) writeFunc {
+	if debugToStderr {
+		return func(content string) error {
+			_, err := os.Stderr.WriteString(content)
+			return err
+		}
+	}
+	return func(content string) error {
+		if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
+			return err
+		}
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // debug path is operator-controlled
+		if err != nil {
+			return err
+		}
+		_, writeErr := f.WriteString(content)
+		closeErr := f.Close()
+		if writeErr != nil {
+			return writeErr
+		}
+		return closeErr
 	}
 }
 
@@ -61,11 +99,10 @@ func generateSessionID() string {
 func (l *loggerImpl) close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	// T-7 will:
-	//   mainErr := l.mainBW.Flush(); l.mainBW.Close()
-	//   sideErr := l.sidecarBW.Flush(); l.sidecarBW.Close()
-	//   return errors.Join(mainErr, sideErr)
-	return nil
+	if l.mainWriter == nil {
+		return nil
+	}
+	return l.mainWriter.Dispose()
 }
 
 // log is the central event emission funnel. T-4 onwards adds:
@@ -78,9 +115,28 @@ func (l *loggerImpl) log(level Level, msg string, attrs []Attr) {
 	if level < l.minLevel {
 		return
 	}
-	// T-4 onwards: real output. T-3 is a no-op so the interface compiles.
-	_ = msg
+	if !IsDebugMode() && !l.debugToStderr {
+		return
+	}
+	if !l.shouldShow(msg) {
+		return
+	}
+	if l.mainWriter == nil {
+		return
+	}
+	_ = l.mainWriter.Write(formatEvent(time.Now(), level, msg))
 	_ = attrs
+}
+
+func (l *loggerImpl) shouldShow(msg string) bool {
+	if l.filter == nil {
+		return true
+	}
+	categories := extractDebugCategories(msg)
+	if l.module != "" {
+		categories = append(categories, l.module)
+	}
+	return shouldShowDebugCategories(categories, l.filter)
 }
 
 // Verbose, Debug, Info, Warn, Error all funnel into log.

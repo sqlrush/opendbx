@@ -38,9 +38,12 @@ func TestIsEnvTruthy(t *testing.T) {
 		{"1", true},
 		{"yes", true},
 		{"YES", true},
+		{"on", true},
+		{"ON", true},
 		{"false", false},
 		{"0", false},
 		{"no", false},
+		{"off", false},
 		{"", false},
 		{"   ", false},
 		{"truthy", false}, // not exactly "true"

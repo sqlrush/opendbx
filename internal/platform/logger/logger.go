@@ -142,9 +142,9 @@ type InitInput struct {
 	// <configHome>/debug/<sessionId>.txt.
 	LogPath string
 
-	// SidecarEnabled controls JSONL sidecar emission. Defaults to true.
-	// Disabling is useful for tests that only assert main-path output.
-	SidecarEnabled bool
+	// DisableSidecar disables JSONL sidecar emission. The default is enabled
+	// (false) so a zero-value InitInput still matches the spec-0.5 contract.
+	DisableSidecar bool
 
 	// DebugToStderr forces output to os.Stderr instead of file. Mirrors
 	// --debug-to-stderr / -d2e flags.
@@ -203,8 +203,13 @@ func Init(in InitInput) error {
 // T-3 contract: stand up the logger value with sane defaults so callers can
 // emit events without panicking. T-4 onwards extends with real path/output.
 func doInit(in InitInput) error {
-	if in.MinLevel < LevelVerbose || in.MinLevel > LevelError {
-		in.MinLevel = LevelDebug
+	if in.MinLevel == LevelVerbose {
+		// LevelVerbose is the Go zero value, so a zero-value InitInput should
+		// still honor the CC default/env min-level path. Explicit verbose is
+		// selected via OPENDBX_DEBUG_LOG_LEVEL=verbose.
+		in.MinLevel = getMinDebugLogLevel()
+	} else if in.MinLevel < LevelVerbose || in.MinLevel > LevelError {
+		in.MinLevel = getMinDebugLogLevel()
 	}
 	impl := newLoggerImpl(in)
 	current.Store(impl)
