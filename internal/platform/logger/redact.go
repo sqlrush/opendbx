@@ -41,7 +41,7 @@ var redactPatterns = []struct {
 	},
 	// Authorization: <scheme> <token> header form. Mask only the token.
 	{
-		re: regexp.MustCompile(`(?i)(Authorization:\s*\S+\s+)\S+`),
+		re:   regexp.MustCompile(`(?i)(Authorization:\s*\S+\s+)\S+`),
 		mask: func(m []string) string { return m[1] + redactionToken },
 	},
 	// Bearer <token> (anywhere — common in code samples / cURL traces).
@@ -58,7 +58,7 @@ var redactPatterns = []struct {
 	},
 	// URL userinfo: scheme://user:pass@host  →  scheme://user:<REDACTED>@host.
 	{
-		re: regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://[^:/?#\s]+):[^@\s]+@`),
+		re:   regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://[^:/?#\s]+):[^@\s]+@`),
 		mask: func(m []string) string { return m[1] + ":" + redactionToken + "@" },
 	},
 }
