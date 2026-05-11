@@ -21,7 +21,6 @@ package logger
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -80,8 +79,8 @@ func ParseLevel(name string) (Level, error) {
 	}
 }
 
-// ErrInvalidLevel is returned by ParseLevel for unrecognised names.
-var ErrInvalidLevel = errors.New("logger: invalid level")
+// ErrInvalidLevel sentinel moved to errors.go (spec-0.6 D-4 migration);
+// now carries Code/Message/Hint via errcode registry.
 
 // Attr is a single key/value attribute attached to a log event.
 //
@@ -166,20 +165,9 @@ type InitInput struct {
 	DebugToStderr bool
 }
 
-// Errors returned by package-level functions.
-var (
-	// ErrAlreadyInitialised is returned by Init when called a second time
-	// AFTER the first call already established the global logger. The
-	// sync.Once contract gives the first call's result; this sentinel lets
-	// later callers detect "no-op success" distinctly from a fresh init
-	// (e.g. for diagnostics inside cobra inheritance chains).
-	//
-	// Resolves go-reviewer HIGH-2 — sentinel is now actually returned.
-	ErrAlreadyInitialised = errors.New("logger: already initialised")
-
-	// ErrNotInitialised is returned by Close when called before Init.
-	ErrNotInitialised = errors.New("logger: not initialised")
-)
+// ErrAlreadyInitialised + ErrNotInitialised sentinels moved to errors.go
+// (spec-0.6 D-4 migration); now carry Code/Message/Hint via errcode
+// registry. Public errors.Is usage unchanged via Code matching.
 
 // Package-level state (sync.Once guarantees idempotent Init; rule 9 race-clean).
 var (

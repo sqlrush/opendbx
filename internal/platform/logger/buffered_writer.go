@@ -5,15 +5,15 @@
 package logger
 
 import (
-	"errors"
 	"math"
 	"strings"
 	"sync"
 	"time"
 )
 
-// ErrWriterClosed is returned by bufferedWriter.Write after Dispose.
-var ErrWriterClosed = errors.New("logger: BufferedWriter closed")
+// ErrWriterClosed sentinel moved to errors.go (spec-0.6 D-4 migration). It
+// now carries Code/Message/Hint via errcode registry. Callers using
+// `errors.Is(err, ErrWriterClosed)` continue to work via Code matching.
 
 // writeFunc is the lowest-level I/O callback invoked by a bufferedWriter to
 // flush a single batched payload. Returning an error is best-effort: the

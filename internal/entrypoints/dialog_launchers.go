@@ -21,12 +21,11 @@ package entrypoints
 
 import (
 	"context"
-	"errors"
 )
 
 // ErrLauncherNotImplemented signals a dialog launcher has not yet been wired
-// to a real React/Ink-equivalent UI.
-var ErrLauncherNotImplemented = errors.New("dialog launcher not implemented in stage 0 (lands in spec-1.15-tui)")
+// to a real React/Ink-equivalent UI. Moved to errors.go in spec-0.6 D-4
+// (now carries Code/Message/Hint via errcode registry).
 
 // SnapshotUpdateProps parallels CC `<SnapshotUpdateDialog>` props.
 type SnapshotUpdateProps struct {

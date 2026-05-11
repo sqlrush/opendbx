@@ -211,11 +211,14 @@ func emitSpanEnd(traceID, spanID, parentSpanID, verb string, start, end time.Tim
 		warnSidecar("marshal-span", getSidecarPath(impl.sessionID), err)
 		return
 	}
-	// Attach error info if RecordError was called. The error message is
-	// redacted before embedding so the sidecar never carries a raw secret
-	// even when callers do `RecordError(fmt.Errorf("auth failed: token=%s", t))`.
+	// Attach error info if RecordError was called. spec-0.6 D-5 wiring: use
+	// errors.As (via errcodeFromErr helper) so wrapped chains (fmt.Errorf %w,
+	// errcode.Wrap, redactedError) all surface the structured Code rather than
+	// degrading to plain text. Falls back to `code:""` + redacted message for
+	// non-errcode errors (spec § 2.4 Q9 ★A fallback).
 	if recErr != nil {
-		line, _ = injectSpanError(line, redactedError{msg: redactString(recErr.Error())})
+		code, msg, hint := errcodeFromErr(recErr)
+		line, _ = injectSpanError(line, code, msg, hint)
 	}
 	// Post-format redaction (spec § 2.6 fail-safe layer): also catches
 	// secrets that leaked through attrs.
@@ -223,15 +226,17 @@ func emitSpanEnd(traceID, spanID, parentSpanID, verb string, start, end time.Tim
 }
 
 // injectSpanError rewrites a sidecar JSON line to populate the `error` field
-// from a Go error. spec-0.6 will introduce a structured error type with
-// Code/Hint; for now we map .Error() into `error.message` only.
-func injectSpanError(line []byte, recErr error) ([]byte, error) {
+// with a structured triple. spec-0.6 D-5 — replaces the previous version
+// that only mapped .Error() into `message`.
+func injectSpanError(line []byte, code, msg, hint string) ([]byte, error) {
 	const needle = `"error":null`
 	idx := indexOfLastBytes(line, needle)
 	if idx < 0 {
 		return line, nil
 	}
-	replacement := []byte(`"error":{"code":"","message":` + jsonString(recErr.Error()) + `,"hint":""}`)
+	replacement := []byte(`"error":{"code":` + jsonString(code) +
+		`,"message":` + jsonString(redactString(msg)) +
+		`,"hint":` + jsonString(hint) + `}`)
 	out := make([]byte, 0, len(line)-len(needle)+len(replacement))
 	out = append(out, line[:idx]...)
 	out = append(out, replacement...)
