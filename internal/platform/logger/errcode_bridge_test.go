@@ -32,7 +32,7 @@ func registerLoggerTestCode(t *testing.T, code, msg, hint string) errcode.Sentin
 
 func TestErrcodeFromErrPlain(t *testing.T) {
 	t.Parallel()
-	registerLoggerTestCode(t, "TEST.PLAIN_ERRCODE", "msg", "hint")
+	_ = registerLoggerTestCode(t, "TEST.PLAIN_ERRCODE", "msg", "hint")
 	ec := errcode.New("TEST.PLAIN_ERRCODE", "", "")
 	code, msg, hint := errcodeFromErr(ec)
 	if code != "TEST.PLAIN_ERRCODE" || msg != "msg" || hint != "hint" {
@@ -42,7 +42,7 @@ func TestErrcodeFromErrPlain(t *testing.T) {
 
 func TestErrcodeFromErrFmtErrorfWrapped(t *testing.T) {
 	t.Parallel()
-	registerLoggerTestCode(t, "TEST.FMTWRAP_INNER", "inner msg", "inner hint")
+	_ = registerLoggerTestCode(t, "TEST.FMTWRAP_INNER", "inner msg", "inner hint")
 	inner := errcode.New("TEST.FMTWRAP_INNER", "", "")
 	outer := fmt.Errorf("operation failed: %w", inner)
 	code, msg, hint := errcodeFromErr(outer)
@@ -53,8 +53,8 @@ func TestErrcodeFromErrFmtErrorfWrapped(t *testing.T) {
 
 func TestErrcodeFromErrErrcodeWrap(t *testing.T) {
 	t.Parallel()
-	registerLoggerTestCode(t, "TEST.ECWRAP_INNER", "inner", "ih")
-	registerLoggerTestCode(t, "TEST.ECWRAP_OUTER", "outer", "oh")
+	_ = registerLoggerTestCode(t, "TEST.ECWRAP_INNER", "inner", "ih")
+	_ = registerLoggerTestCode(t, "TEST.ECWRAP_OUTER", "outer", "oh")
 	inner := errcode.New("TEST.ECWRAP_INNER", "", "")
 	outer := errcode.Wrap("TEST.ECWRAP_OUTER", inner, "", "")
 	code, msg, hint := errcodeFromErr(outer)
@@ -70,7 +70,7 @@ func TestErrcodeFromErrErrcodeWrap(t *testing.T) {
 
 func TestErrcodeFromErrRedactedErrorWrapped(t *testing.T) {
 	t.Parallel()
-	registerLoggerTestCode(t, "TEST.REDACT_INNER", "secret context", "fix it")
+	_ = registerLoggerTestCode(t, "TEST.REDACT_INNER", "secret context", "fix it")
 	inner := errcode.New("TEST.REDACT_INNER", "", "")
 	wrapped := redactedError{msg: "redacted layer", wrapped: inner}
 	code, msg, hint := errcodeFromErr(wrapped)
@@ -111,7 +111,7 @@ func TestSpanEndWithErrcodeSidecarFull(t *testing.T) {
 	mainLog := filepath.Join(tmp, "main.log")
 	setArgvForTesting(t, "opendbx", "--debug", "--debug-file", mainLog)
 
-	registerLoggerTestCode(t, "TEST.SPAN_ERRCODE_E2E",
+	_ = registerLoggerTestCode(t, "TEST.SPAN_ERRCODE_E2E",
 		"operation timed out",
 		"increase OPENDBX_LLM_REQUEST_TIMEOUT or check network")
 
@@ -155,7 +155,7 @@ func TestSpanEndWithFmtWrappedErrcodeSidecar(t *testing.T) {
 	mainLog := filepath.Join(tmp, "main.log")
 	setArgvForTesting(t, "opendbx", "--debug", "--debug-file", mainLog)
 
-	registerLoggerTestCode(t, "TEST.FMTWRAP_E2E", "stream stalled", "check provider status")
+	_ = registerLoggerTestCode(t, "TEST.FMTWRAP_E2E", "stream stalled", "check provider status")
 
 	if err := Init(InitInput{SessionID: "fmtwrap-e2e"}); err != nil {
 		t.Fatalf("Init: %v", err)

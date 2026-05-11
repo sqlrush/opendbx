@@ -312,7 +312,7 @@ func TestRegisterConcurrent(t *testing.T) {
 		code := code
 		go func() {
 			defer wg.Done()
-			Register(code, "msg", "hint")
+			_ = Register(code, "msg", "hint")
 		}()
 	}
 	wg.Wait()
@@ -330,7 +330,7 @@ func TestIsHelperFunc(t *testing.T) {
 func TestUnregisterForTestingRemovesFromAll(t *testing.T) {
 	t.Parallel()
 	code := "TEST.UNREG_REMOVES"
-	Register(code, "m", "h")
+	_ = Register(code, "m", "h")
 	if _, ok := Lookup(code); !ok {
 		t.Fatal("seed Register failed")
 	}
