@@ -42,4 +42,13 @@ var (
 		"internal error",
 		"this indicates an opendbx bug; please report with --debug log + sidecar JSONL",
 	)
+
+	// ErrFlagInvalid is used by cmd/opendbx for cobra flag value validation.
+	// It lives here instead of cmd/opendbx so docs_gen can load it without
+	// importing a command package.
+	ErrFlagInvalid = Register(
+		"CMD.FLAG_INVALID",
+		"invalid command-line flag value",
+		"check the flag help text and retry with one of the accepted values",
+	)
 )

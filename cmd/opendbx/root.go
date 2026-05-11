@@ -26,6 +26,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sqlrush/opendbx/internal/entrypoints"
+	"github.com/sqlrush/opendbx/internal/platform/errcode"
 	"github.com/sqlrush/opendbx/internal/platform/version"
 )
 
@@ -56,8 +57,11 @@ func newRootCommand() *cobra.Command {
 		//   2. Stash the resolved *Config in the cobra context for any
 		//      subcommand that wants it (admin config sources, etc.).
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if err := validateChoiceFlags(cmd, opts); err != nil {
+				return err
+			}
 			if shouldSkipConfigLoad(cmd) {
-				return validateChoiceFlags(cmd, opts)
+				return nil
 			}
 			entrypoints.Checkpoint("config_load_start")
 			cfg, err := entrypoints.LoadConfigFromCLI(buildCLIInputs(opts))
@@ -82,7 +86,7 @@ func newRootCommand() *cobra.Command {
 			}
 			entrypoints.RegisterLoggerSignalCleanup()
 			entrypoints.Checkpoint("logger_initialised")
-			return validateChoiceFlags(cmd, opts)
+			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Manual --version handling (cobra's built-in only supports --version,
@@ -207,19 +211,19 @@ func runInteractRoot(cmd *cobra.Command, opts *Options) error {
 // validation), so we check after-the-fact in PreRunE.
 func validateChoiceFlags(_ *cobra.Command, opts *Options) error {
 	if opts.Print.OutputFormat != "" && !contains(validOutputFormats, opts.Print.OutputFormat) {
-		return fmt.Errorf("invalid --output-format %q (must be one of: %s)",
+		return errcode.Newf(errcode.ErrFlagInvalid.Code(), "invalid --output-format %q (must be one of: %s)",
 			opts.Print.OutputFormat, strings.Join(validOutputFormats, ", "))
 	}
 	if opts.Print.InputFormat != "" && !contains(validInputFormats, opts.Print.InputFormat) {
-		return fmt.Errorf("invalid --input-format %q (must be one of: %s)",
+		return errcode.Newf(errcode.ErrFlagInvalid.Code(), "invalid --input-format %q (must be one of: %s)",
 			opts.Print.InputFormat, strings.Join(validInputFormats, ", "))
 	}
 	if opts.IO.PermissionMode != "" && !contains(validPermissionModes, opts.IO.PermissionMode) {
-		return fmt.Errorf("invalid --permission-mode %q (must be one of: %s)",
+		return errcode.Newf(errcode.ErrFlagInvalid.Code(), "invalid --permission-mode %q (must be one of: %s)",
 			opts.IO.PermissionMode, strings.Join(validPermissionModes, ", "))
 	}
 	if opts.Print.MaxBudgetUSD < 0 {
-		return fmt.Errorf("--max-budget-usd must be ≥ 0 (got %.2f)", opts.Print.MaxBudgetUSD)
+		return errcode.Newf(errcode.ErrFlagInvalid.Code(), "--max-budget-usd must be ≥ 0 (got %.2f)", opts.Print.MaxBudgetUSD)
 	}
 	return nil
 }

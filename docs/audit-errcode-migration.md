@@ -23,32 +23,32 @@
 
 | Line region | Pattern | Class | Decision |
 |---|---|---|---|
-| ENV parse errors (uint8/int/duration/bool/oneof) | `fmt.Errorf("OPENDBX_X env: ...")` | **boundary** (returned through `config.Load` → cmd) | Migrate to `errcode.Newf("CONFIG.ENV_PARSE_FAILED", ...)` — done in this commit for representative cases; full migration deferred to spec-0.10 lint wave |
+| ENV parse errors (uint8/int/duration/bool/oneof) | `fmt.Errorf("OPENDBX_X env: ...")` | **boundary** (returned through `config.Load` → cmd) | `config.Load` wraps with `CONFIG.ENV_PARSE_FAILED`; helper internals remain `fmt.Errorf` |
 
 ### `internal/platform/config/validation.go` (7 sites)
 
 | Pattern | Class | Decision |
 |---|---|---|
-| `required` / `min` / `max` / `oneof` rule violations | **boundary** | Migrate to `errcode.Newf("CONFIG.VALIDATION_FAILED", ...)` — exemplar migrated; spec-0.10 lint covers rest |
+| `required` / `min` / `max` / `oneof` rule violations | **boundary** | `config.Load` / `ValidateFile` wrap with `CONFIG.VALIDATION_FAILED`; helper internals remain `fmt.Errorf` |
 
 ### `internal/platform/config/loader.go` (7 sites)
 
 | Pattern | Class | Decision |
 |---|---|---|
-| yaml decode / source merge failures | **boundary** | Migrate to `errcode.Wrap("CONFIG.LOAD_FAILED", root, ...)` — exemplar; full pass spec-0.10 |
+| yaml decode / source merge failures | **boundary** | `config.Load` wraps with `CONFIG.LOAD_FAILED` |
 | inner helper string formatting | **private** | Keep `fmt.Errorf`; `config.Load` wraps at exit |
 
 ### `internal/platform/config/admin.go` (7 sites)
 
 | Pattern | Class | Decision |
 |---|---|---|
-| admin config validate / dump-defaults / sources verb errors | **boundary** (user-visible CLI output) | Migrate to `errcode.Newf("CONFIG.ADMIN_*", ...)` |
+| admin config validate / dump-defaults / sources verb errors | **boundary** (user-visible CLI output) | Wrapped with `CONFIG.*` / `ERRCODE.*` at admin API boundary |
 
 ### `cmd/opendbx/root.go` (4 sites)
 
 | Pattern | Class | Decision |
 |---|---|---|
-| flag validation / choice violations | **boundary** | Migrate to `errcode.Newf("CMD.FLAG_INVALID", ...)` |
+| flag validation / choice violations | **boundary** | Wrapped with `CMD.FLAG_INVALID` |
 
 ### `internal/platform/logger/errcode_bridge.go` (1 site)
 
@@ -67,9 +67,11 @@
 ## spec-0.6 T-8 actual state (R2 honesty pass — codex post-impl finding)
 
 **Migration status**: 6 public sentinel migrations (logger 4 + entrypoints 2)
-**are** complete and exercised by `errors.go` + `migration_test.go`. The 40
-inline `fmt.Errorf` sites are **NOT** migrated in this PR — only their
-target boundary codes are registered as the Stage-0 foundation.
+**are** complete and exercised by `errors.go` + migration tests. Public
+boundary returns for config/admin/cmd now wrap their existing helper errors
+with `CONFIG.*`, `CMD.FLAG_INVALID`, or builtin `ERRCODE.*` codes. Private
+helpers still use `fmt.Errorf`; that is intentional under the B+ scope because
+the exported boundary adds the code.
 
 ### What landed in this PR
 
@@ -78,28 +80,27 @@ target boundary codes are registered as the Stage-0 foundation.
    `entrypoints.ErrLauncherNotImplemented` /
    `ErrInteractiveHelperNotImplemented` now backed by `errcode.Register`
    with `errors.Is` backward-compat preserved.
-2. **4 CONFIG.* boundary codes** registered in `config/errors.go`. These
-   are **ready to use** but call sites in `config/{env,validation,loader,
-   admin}.go` still use `fmt.Errorf` — leaves the codes as Stage-0 contract
-   without churning the diff.
+2. **4 CONFIG.* boundary codes** registered in `config/errors.go` and used at
+   `config.Load` / admin config public boundaries.
 3. **Audit classification** (boundary / private / external / already-wrapped)
    for all 40 sites in this document so the spec-0.10 lint pass has a
    ground-truth reference.
+4. **CMD.FLAG_INVALID** registered via `errcode.ErrFlagInvalid` and used by
+   cmd/opendbx choice flag validation.
 
 ### Deferred to spec-0.10 lint wave
 
-All 40 `fmt.Errorf` inline-new-error sites stay as-is in this PR. The
-spec-0.10 custom golangci-lint rule will:
+Private `fmt.Errorf` inline-new-error sites stay as-is. The spec-0.10 custom
+golangci-lint rule will:
 
 - Scan every package's public boundary surface for `fmt.Errorf` returns
 - Flag any boundary error that does not pass through `errcode.Newf` /
   `errcode.Wrap`
-- Auto-suggest the right `CONFIG.*` / `CMD.*` code based on this audit
+- Auto-suggest the right `CONFIG.*` / `CMD.*` / `ERRCODE.*` code based on this audit
   document's classification
 
-This split honours user Q11 B+ scope decision: **codes registered (this PR)
-+ public boundary use enforced (spec-0.10 lint)**. The codes are not dead
-weight — they're the canonical Code values the lint rule will recommend.
+This split honours user Q11 B+ scope decision: **public boundaries carry
+codes now; private helper style is enforced later by lint**.
 
 ### New error codes registered in this PR
 
@@ -107,7 +108,9 @@ weight — they're the canonical Code values the lint rule will recommend.
 - `CONFIG.VALIDATION_FAILED` — schema validation rule violation
 - `CONFIG.LOAD_FAILED` — yaml decode / source resolution failed
 - `CONFIG.ADMIN_FIELD_NOT_FOUND` — admin config sources field unknown
+- `CMD.FLAG_INVALID` — command-line flag value failed choice/range validation
 
 All registered in `internal/platform/config/errors.go` with full
-Message + Hint text. No `CMD.*` codes registered yet — those land with
-the corresponding cmd/opendbx migration in a follow-up.
+Message + Hint text, except `CMD.FLAG_INVALID` which lives in
+`internal/platform/errcode/builtin.go` so docs generation can load it without
+importing a command package.

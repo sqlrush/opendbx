@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sqlrush/opendbx/internal/platform/errcode"
 )
 
 func TestGetSidecarPathSessionID(t *testing.T) {
@@ -174,6 +176,43 @@ func TestMergeAttrs(t *testing.T) {
 	}
 	if got := mergeAttrs(bound, nil); len(got) != 1 || got[0].Key != "a" {
 		t.Errorf("nil-perCall merge = %v", got)
+	}
+}
+
+func TestMarshalSidecarEventPromotesErrcodeAttr(t *testing.T) {
+	now := time.Date(2026, 5, 11, 14, 32, 1, 0, time.UTC)
+	_ = errcode.Register("TEST.SIDECAR_ATTR_ERR", "stream failed", "retry the request")
+
+	line, err := marshalSidecarEvent(
+		now, LevelError, "llm", "stream failed", "sess",
+		[]Attr{
+			{Key: "event", Value: "llm.stream.error"},
+			{Key: "err", Value: errcode.New("TEST.SIDECAR_ATTR_ERR", "", "")},
+			{Key: "provider", Value: "anthropic"},
+		},
+		"", "",
+	)
+	if err != nil {
+		t.Fatalf("marshalSidecarEvent: %v", err)
+	}
+
+	var got sidecarEvent
+	if err := json.Unmarshal(bytes.TrimRight(line, "\n"), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Error == nil {
+		t.Fatalf("sidecar error should be populated: %s", line)
+	}
+	if got.Error.Code != "TEST.SIDECAR_ATTR_ERR" ||
+		got.Error.Message != "stream failed" ||
+		got.Error.Hint != "retry the request" {
+		t.Fatalf("sidecar error = %+v", got.Error)
+	}
+	if _, ok := got.Attrs["err"]; ok {
+		t.Fatalf("err attr should be promoted, not echoed in attrs: %+v", got.Attrs)
+	}
+	if got.Attrs["provider"] != "anthropic" {
+		t.Fatalf("provider attr lost: %+v", got.Attrs)
 	}
 }
 

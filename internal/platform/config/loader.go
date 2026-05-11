@@ -56,51 +56,51 @@ func Load(opts LoadOptions) (*Config, error) {
 
 	paths, err := DefaultSourcePaths(opts.CWD)
 	if err != nil {
-		return nil, fmt.Errorf("resolve config paths: %w", err)
+		return nil, wrapLoadError(fmt.Errorf("resolve config paths: %w", err))
 	}
 	if opts.FlagSettingsPath != "" {
 		paths.FlagPath = opts.FlagSettingsPath
 	}
 	selectedSources, err := parseSettingSources(opts.SettingSources)
 	if err != nil {
-		return nil, err
+		return nil, wrapLoadError(err)
 	}
 
 	if err := mergeFile(cfg, paths.PolicyPath, SourcePolicySettings); err != nil {
-		return nil, err
+		return nil, wrapLoadError(err)
 	}
 	if selectedSources["user"] {
 		if err := mergeFile(cfg, paths.UserPath, SourceUserSettings); err != nil {
-			return nil, err
+			return nil, wrapLoadError(err)
 		}
 	}
 	if selectedSources["project"] {
 		if err := mergeFile(cfg, paths.ProjectPath, SourceProjectSettings); err != nil {
-			return nil, err
+			return nil, wrapLoadError(err)
 		}
 	}
 	if selectedSources["local"] {
 		if err := mergeFile(cfg, paths.LocalPath, SourceLocalSettings); err != nil {
-			return nil, err
+			return nil, wrapLoadError(err)
 		}
 	}
 
 	// Per spec § 1.1 D-2 override chain: ... → Local → ENV → --settings → CLI flag.
 	// CFG-HIGH-02 fix: ENV must run BEFORE --settings (so --settings beats ENV).
 	if err := applyENV(cfg); err != nil {
-		return nil, err
+		return nil, wrapLoadError(err)
 	}
 	if paths.FlagPath != "" {
 		if err := mergeFlagSettings(cfg, paths.FlagPath); err != nil {
-			return nil, err
+			return nil, wrapLoadError(err)
 		}
 	}
 	if err := applyFlagOverrides(cfg, opts.FlagOverrides); err != nil {
-		return nil, err
+		return nil, wrapLoadError(err)
 	}
 
 	if err := Validate(cfg); err != nil {
-		return nil, fmt.Errorf("config validation failed:\n%w", err)
+		return nil, wrapLoadError(fmt.Errorf("config validation failed:\n%w", err))
 	}
 	return cfg, nil
 }
