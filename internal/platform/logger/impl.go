@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -27,6 +28,7 @@ type loggerImpl struct {
 	sessionID      string
 	logPath        string
 	sidecarEnabled bool
+	debugEnabled   bool
 	debugToStderr  bool
 	filter         *debugFilter
 	mainWriter     *bufferedWriter
@@ -51,9 +53,14 @@ func newLoggerImpl(in InitInput) *loggerImpl {
 		logPath = getDebugLogPath(sid)
 	}
 	debugToStderr := in.DebugToStderr || isDebugToStdErr()
+	debugEnabled := in.DebugEnabled || debugToStderr
 	cfg := defaultBufferedWriterConfig(mainWriteFunc(logPath, debugToStderr))
-	cfg.immediateMode = IsDebugMode() || debugToStderr
+	cfg.immediateMode = IsDebugMode() || debugEnabled
 	sidecarEnabled := !in.DisableSidecar
+	filter := getDebugFilter()
+	if strings.TrimSpace(in.DebugFilter) != "" {
+		filter = parseDebugFilter(in.DebugFilter)
+	}
 	var sidecar *bufferedWriter
 	if sidecarEnabled {
 		// Sidecar path is intentionally NOT derived from in.LogPath / --debug-file
@@ -68,8 +75,9 @@ func newLoggerImpl(in InitInput) *loggerImpl {
 		sessionID:      sid,
 		logPath:        logPath,
 		sidecarEnabled: sidecarEnabled,
+		debugEnabled:   debugEnabled,
 		debugToStderr:  debugToStderr,
-		filter:         getDebugFilter(),
+		filter:         filter,
 		mainWriter:     newBufferedWriter(cfg),
 		sidecarWriter:  sidecar,
 	}
@@ -158,7 +166,7 @@ func (l *loggerImpl) log(level Level, msg string, attrs []Attr) {
 	if level < l.minLevel {
 		return
 	}
-	if !IsDebugMode() && !l.debugToStderr {
+	if !IsDebugMode() && !l.debugEnabled && !l.debugToStderr {
 		return
 	}
 	if !l.shouldShow(msg) {

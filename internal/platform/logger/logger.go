@@ -133,6 +133,11 @@ type InitInput struct {
 	// Override via OPENDBX_DEBUG_LOG_LEVEL env or callers.
 	MinLevel Level
 
+	// MinLevelSet distinguishes an explicit LevelVerbose (the Go zero value)
+	// from an omitted MinLevel. Keep zero-value InitInput on CC default
+	// LevelDebug while still allowing config/env to request verbose.
+	MinLevelSet bool
+
 	// SessionID overrides the auto-generated UUID v4 session id. Used by
 	// tests and CI for deterministic golden comparison. Empty string means
 	// "generate one".
@@ -142,6 +147,15 @@ type InitInput struct {
 	// --debug-file flag, then OPENDBX_DEBUG_LOGS_DIR env, then
 	// <configHome>/debug/<sessionId>.txt.
 	LogPath string
+
+	// DebugEnabled records cobra-parsed debug activation flags. This covers
+	// in-process command execution where os.Args still points at the test
+	// binary instead of the parsed opendbx argv.
+	DebugEnabled bool
+
+	// DebugFilter is the cobra-parsed --debug=<pattern> value. Empty means
+	// "fall back to argv/env-derived filter behavior".
+	DebugFilter string
 
 	// DisableSidecar disables JSONL sidecar emission. The default is enabled
 	// (false) so a zero-value InitInput still matches the spec-0.5 contract.
@@ -217,7 +231,7 @@ func Init(in InitInput) error {
 // T-3 contract: stand up the logger value with sane defaults so callers can
 // emit events without panicking. T-4 onwards extends with real path/output.
 func doInit(in InitInput) error {
-	if in.MinLevel == LevelVerbose {
+	if !in.MinLevelSet && in.MinLevel == LevelVerbose {
 		// LevelVerbose is the Go zero value, so a zero-value InitInput should
 		// still honor the CC default/env min-level path. Explicit verbose is
 		// selected via OPENDBX_DEBUG_LOG_LEVEL=verbose.

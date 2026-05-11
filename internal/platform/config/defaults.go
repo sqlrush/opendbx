@@ -34,6 +34,8 @@ func Default() *Config {
 			Color:        "auto",
 			WrapWidth:    0, // 0 = use terminal width
 			IncludeStats: false,
+			LogLevel:     "debug",
+			LogPath:      "",
 		},
 		LLM: LLMConfig{
 			ActiveModel:    "",

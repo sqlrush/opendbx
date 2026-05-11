@@ -12,7 +12,9 @@ package entrypoints
 
 import (
 	"errors"
+	"strings"
 
+	"github.com/sqlrush/opendbx/internal/platform/config"
 	"github.com/sqlrush/opendbx/internal/platform/logger"
 )
 
@@ -23,9 +25,54 @@ import (
 // (--debug-file → OPENDBX_DEBUG_LOGS_DIR env → <configHome>/debug/...).
 type LoggerInitInputs struct {
 	SessionID      string
+	Debug          string
+	DebugFile      string
 	LogPath        string
+	MinLevel       string
 	DebugToStderr  bool
 	DisableSidecar bool
+}
+
+// InitLoggerFromConfigAndCLI initialises the global logger using config plus
+// cobra-parsed inputs. Explicit CLI debug flags win over config defaults.
+func InitLoggerFromConfigAndCLI(cfg *config.Config, in LoggerInitInputs) error {
+	initInput := logger.InitInput{
+		SessionID:      in.SessionID,
+		DebugEnabled:   in.Debug != "" || in.DebugFile != "" || in.DebugToStderr,
+		DebugFilter:    in.Debug,
+		DebugToStderr:  in.DebugToStderr,
+		DisableSidecar: in.DisableSidecar,
+	}
+
+	switch {
+	case in.DebugFile != "":
+		initInput.LogPath = in.DebugFile
+	case in.LogPath != "":
+		initInput.LogPath = in.LogPath
+	case cfg != nil && cfg.Output.LogPath != "":
+		initInput.LogPath = cfg.Output.LogPath
+	}
+
+	minLevel := strings.TrimSpace(in.MinLevel)
+	if minLevel == "" && cfg != nil &&
+		cfg.Output.LogLevel != "" &&
+		cfg.Source("Output.LogLevel") != config.SourceDefault {
+		minLevel = cfg.Output.LogLevel
+	}
+	if minLevel != "" {
+		lvl, err := logger.ParseLevel(minLevel)
+		if err != nil {
+			return err
+		}
+		initInput.MinLevel = lvl
+		initInput.MinLevelSet = true
+	}
+
+	err := logger.Init(initInput)
+	if errors.Is(err, logger.ErrAlreadyInitialised) {
+		return nil
+	}
+	return err
 }
 
 // InitLoggerFromCLI initialises the global logger using the cobra-parsed
@@ -34,28 +81,8 @@ type LoggerInitInputs struct {
 //
 // Idempotent (logger.Init is sync.Once-guarded internally); subsequent
 // calls are no-ops returning nil.
-//
-// NOTE (spec-0.5 → spec-0.4 forward link): spec-0.5 § 1.4 originally
-// planned cfg.Output.LogLevel / cfg.Output.LogPath plumbing here. spec-0.4
-// shipped without those fields (they were not in the agreed 7-sub-struct
-// shape). Until a spec-0.4 errata or spec-0.6 adds them, logger.Init
-// resolves level via OPENDBX_DEBUG_LOG_LEVEL env and path via --debug-file
-// / OPENDBX_DEBUG_LOGS_DIR — all already wired in paths.go (T-6).
 func InitLoggerFromCLI(in LoggerInitInputs) error {
-	err := logger.Init(logger.InitInput{
-		SessionID:      in.SessionID,
-		LogPath:        in.LogPath,
-		DebugToStderr:  in.DebugToStderr,
-		DisableSidecar: in.DisableSidecar,
-	})
-	// ErrAlreadyInitialised is a benign no-op for cobra inheritance chains
-	// (PersistentPreRunE inherits into subcommands; each invocation hits this
-	// relay once). Callers that need to distinguish "fresh init" can check
-	// for it directly.
-	if errors.Is(err, logger.ErrAlreadyInitialised) {
-		return nil
-	}
-	return err
+	return InitLoggerFromConfigAndCLI(nil, in)
 }
 
 // RegisterLoggerSignalCleanup arms SIGINT / SIGTERM handlers so the logger
