@@ -6,6 +6,7 @@ package logger
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -29,6 +30,7 @@ type loggerImpl struct {
 	debugToStderr  bool
 	filter         *debugFilter
 	mainWriter     *bufferedWriter
+	sidecarWriter  *bufferedWriter // independent JSONL sidecar (T-7 D-5); nil if disabled
 
 	// Per-call derived state (clones via With* methods).
 	module string
@@ -51,15 +53,25 @@ func newLoggerImpl(in InitInput) *loggerImpl {
 	debugToStderr := in.DebugToStderr || isDebugToStdErr()
 	cfg := defaultBufferedWriterConfig(mainWriteFunc(logPath, debugToStderr))
 	cfg.immediateMode = IsDebugMode() || debugToStderr
+	sidecarEnabled := !in.DisableSidecar
+	var sidecar *bufferedWriter
+	if sidecarEnabled {
+		// Sidecar path is intentionally NOT derived from in.LogPath / --debug-file
+		// (Q3 ★A hard constraint): the user-facing flag controls only the main
+		// text surface; sidecar always lands under the platform debug dir keyed
+		// by session id so machine consumers (sentinel / CI) can find it.
+		sidecar = newSidecarWriter(getSidecarPath(sid))
+	}
 	return &loggerImpl{
 		mu:             &sync.Mutex{},
 		minLevel:       in.MinLevel,
 		sessionID:      sid,
 		logPath:        logPath,
-		sidecarEnabled: !in.DisableSidecar,
+		sidecarEnabled: sidecarEnabled,
 		debugToStderr:  debugToStderr,
 		filter:         getDebugFilter(),
 		mainWriter:     newBufferedWriter(cfg),
+		sidecarWriter:  sidecar,
 	}
 }
 
@@ -94,23 +106,41 @@ func generateSessionID() string {
 	return "00000000-0000-4000-8000-000000000000" // T-8 placeholder
 }
 
-// close flushes and releases all writer resources. T-7 plumbs in real
-// BufferedWriter dispose with errors.Join (claude HIGH-4 contract).
+// close flushes and releases all writer resources.
+//
+// Dispose contract (spec § 3, claude HIGH-4 + codex MED-3):
+//   - BOTH the main writer and the sidecar writer are flushed/closed even if
+//     one fails. We never early-return on an intermediate error.
+//   - Errors are combined via errors.Join so callers can inspect each leg
+//     independently (e.g. main path disk-full + sidecar permission-denied).
+//   - sidecar errors are best-effort and should not by themselves change
+//     process exit status; we surface them here for completeness, but the
+//     sidecar write path itself already swallows write failures to stderr
+//     (see sidecarWriteFunc). So sidecar Dispose typically returns nil.
 func (l *loggerImpl) close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.mainWriter == nil {
-		return nil
+	var mainErr, sideErr error
+	if l.mainWriter != nil {
+		mainErr = l.mainWriter.Dispose()
 	}
-	return l.mainWriter.Dispose()
+	if l.sidecarWriter != nil {
+		sideErr = l.sidecarWriter.Dispose()
+	}
+	return errors.Join(mainErr, sideErr)
 }
 
-// log is the central event emission funnel. T-4 onwards adds:
-//   - filter check (D-3)
-//   - level check vs minLevel
-//   - text formatter → BufferedWriter
-//   - sidecar JSONL marshal → independent BufferedWriter
-//   - redaction pre/post-format (D-9)
+// log is the central event emission funnel. Pipeline:
+//   1. level check (vs configured minLevel)
+//   2. debug-mode gate (IsDebugMode or debugToStderr; mirrors CC's "no
+//      writes outside debug mode" contract)
+//   3. filter check (D-3)
+//   4. text formatter → main BufferedWriter (D-2)
+//   5. sidecar JSONL marshal → independent BufferedWriter (D-5)
+//
+// Redaction (D-9) and trace_context (D-6) hook into steps 4/5 via T-8 / T-10
+// follow-ups; T-7 plumbs in the schema fields with empty trace_id/span_id
+// (Q8 ★A behaviour for events outside an active span).
 func (l *loggerImpl) log(level Level, msg string, attrs []Attr) {
 	if level < l.minLevel {
 		return
@@ -121,11 +151,35 @@ func (l *loggerImpl) log(level Level, msg string, attrs []Attr) {
 	if !l.shouldShow(msg) {
 		return
 	}
-	if l.mainWriter == nil {
-		return
+	now := time.Now()
+	merged := mergeAttrs(l.attrs, attrs)
+
+	// Main text path. Best-effort: write errors are swallowed (the BufferedWriter
+	// itself propagates them to its caller, but logger.Error()-style recursion
+	// would deadlock on the same goroutine — keep it simple).
+	if l.mainWriter != nil {
+		_ = l.mainWriter.Write(formatEvent(now, level, msg))
 	}
-	_ = l.mainWriter.Write(formatEvent(time.Now(), level, msg))
-	_ = attrs
+
+	// Sidecar JSONL path (independent file handle / buffer; failures do NOT
+	// affect the main path per spec § 3 guarantee).
+	if l.sidecarEnabled && l.sidecarWriter != nil {
+		ctxTraceID, ctxSpanID := traceIDsFromContext(l.ctx)
+		line, err := marshalSidecarEvent(now, level, l.module, msg, l.sessionID, merged, ctxTraceID, ctxSpanID)
+		if err != nil {
+			warnSidecar("marshal", l.sessionID, err)
+		} else {
+			_ = l.sidecarWriter.Write(string(line))
+		}
+	}
+}
+
+// traceIDsFromContext extracts the trace_id / span_id pair carried in ctx
+// via the trace_context package (T-8). T-7 returns ("", "") so events outside
+// an active span carry explicit empty strings per Q8 ★A.
+func traceIDsFromContext(_ context.Context) (traceID, spanID string) {
+	// T-8 will wire this to a real span lookup.
+	return "", ""
 }
 
 func (l *loggerImpl) shouldShow(msg string) bool {
