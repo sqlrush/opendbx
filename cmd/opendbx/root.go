@@ -89,6 +89,13 @@ func newRootCommand() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// spec-0.7 T-6: --version-verbose takes precedence over --version
+			// when both are set (Q8 + D-4: verbose is more detailed; conflict
+			// resolves toward more information).
+			if vv, _ := cmd.Flags().GetBool("version-verbose"); vv {
+				_, _ = fmt.Fprint(cmd.OutOrStdout(), version.Verbose())
+				return nil
+			}
 			// Manual --version handling (cobra's built-in only supports --version,
 			// no -v shorthand; we emulate CC commander's `-v, --version` shape).
 			if v, _ := cmd.Flags().GetBool("version"); v {
@@ -176,6 +183,11 @@ func shouldSkipConfigLoad(cmd *cobra.Command) bool {
 	}
 	if cmd == cmd.Root() {
 		if v, _ := cmd.Flags().GetBool("version"); v {
+			return true
+		}
+		// spec-0.7 T-6 / claude HIGH-4: --version-verbose 同 --version 是
+		// diagnostic 出口, broken config 不应该阻止用户拿到诊断信息.
+		if vv, _ := cmd.Flags().GetBool("version-verbose"); vv {
 			return true
 		}
 	}
