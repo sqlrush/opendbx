@@ -115,6 +115,31 @@ tag-spec: ## Tag a spec FROZEN via opendbrb/scripts/release/tag-spec.sh (SPEC=sp
 		$(if $(filter 1,$(FORCE_DIRTY)),--force-dirty,) \
 		$(if $(filter 1,$(REPAIR_PEER)),--repair-missing-peer,)
 
+# spec-0.8 D-4 / T-7: release pipeline placeholder.
+#
+# Real release flow (GoReleaser + multi-arch + GitHub Release body) lands
+# in spec-5.1. Until then, this target exits 1 with a clear error so:
+#   - CI never accidentally "succeeds" a release that didn't actually run
+#   - Local users see explicit pointer to current alternative (make build)
+#   - spec-0.9 ci-github-actions MUST NOT call this target (CI 调用必须红)
+#
+# Q4 ★A (R2): stub-fail vs no-op vs scaffold; stub-fail picked because
+# silent no-op breaks the worst (CI thinks release pipeline ran).
+.PHONY: release
+release: ## STUB — release pipeline lands in spec-5.1; fail-fast (do NOT call from CI)
+	@echo "ERROR: 'make release' is a stub. The real release pipeline" >&2
+	@echo "       (GoReleaser + multi-arch binary + GitHub Release body)" >&2
+	@echo "       lands in spec-5.1-release-pipeline." >&2
+	@echo "" >&2
+	@echo "  For local single-binary build:" >&2
+	@echo "    make build                                    # → bin/opendbx" >&2
+	@echo "" >&2
+	@echo "  For tagging a spec FROZEN (spec-0.7 dual-repo automation):" >&2
+	@echo "    make tag-spec SPEC=spec-X.Y-<slug>" >&2
+	@echo "" >&2
+	@echo "  spec-0.9 ci-github-actions: do NOT invoke 'make release'." >&2
+	@exit 1
+
 # Layer-2 gate: 所有这些命令必须 PASS 才允许 push
 # 详见设计仓 docs/cicd-and-methodology.md § 2
 # Layer-2 gate runs cheap checks first (fmt/vet/tidy/lint/import/dep/golden/
