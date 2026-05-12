@@ -2,15 +2,14 @@
 //
 // Author: sqlrush
 
-// coverage-gate enforces CLAUDE.md 规则 8 per-package coverage thresholds
-// against a `go test -coverprofile=...` output file.
-//
-// spec-0.8 D-1 / T-3.
+// Package main implements coverage-gate, enforcing CLAUDE.md 规则 8
+// per-package coverage thresholds against a `go test -coverprofile=...`
+// output file. spec-0.8 D-1 / T-3.
 //
 // Tiers (R2 用户拍板 CRIT-A):
 //
 //   - Core packages (≥ 85%):
-//       internal/platform/{errcode, logger, version}
+//     internal/platform/{errcode, logger, version}
 //   - Other packages (≥ 75%): everything not in core/exempt
 //   - Exempt (no threshold): entrypoints stub + tools/* lint tools +
 //     cmd/opendbx + internal/platform/config + internal/platform/rpc
@@ -37,7 +36,6 @@
 //	go run ./tools/coverage-gate                              # default profile=coverage.out
 //	go run ./tools/coverage-gate -profile=/tmp/foo.out -v     # custom profile + verbose
 //	COVERAGE_GATE_SKIP=1 go run ./tools/coverage-gate         # emergency bypass
-
 package main
 
 import (
@@ -50,7 +48,7 @@ import (
 	"strings"
 )
 
-// Tiers per spec-0.8 D-1.
+// Threshold constants per spec-0.8 D-1.
 const (
 	coreThreshold  = 85.0
 	otherThreshold = 75.0
@@ -99,6 +97,7 @@ func (p PackageCoverage) Percent() float64 {
 // Tier classifies a package per spec D-1.
 type Tier int
 
+// Tier values returned by classify().
 const (
 	TierCore Tier = iota
 	TierOther
@@ -201,11 +200,11 @@ func ParseProfile(path string) (map[string]*PackageCoverage, error) {
 		// fields[0] = "<start>.<col>,<end>.<col>" (range; we don't need it)
 		numStmts, err := strconv.Atoi(fields[1])
 		if err != nil {
-			return nil, fmt.Errorf("line %d: numStmts not integer: %v", lineNum, err)
+			return nil, fmt.Errorf("line %d: numStmts not integer: %w", lineNum, err)
 		}
 		count, err := strconv.Atoi(fields[2])
 		if err != nil {
-			return nil, fmt.Errorf("line %d: count not integer: %v", lineNum, err)
+			return nil, fmt.Errorf("line %d: count not integer: %w", lineNum, err)
 		}
 
 		p, ok := pkgs[pkgPath]
