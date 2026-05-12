@@ -1,0 +1,26 @@
+# opendbx hook-local copy of opendbrb/specs/spec-registry.txt.
+# Authority remains opendbrb; this snapshot lets the pre-push hook validate
+# tag semantics when the sibling design repo is unavailable (for example in
+# GitHub Actions tag checkout).
+#
+# spec_id	stage	ordinal	role	tag_policy
+0.1	0	1	main	tag
+0.2	0	2	main	tag
+0.3	0	3	main	tag
+0.4	0	4	main	tag
+0.5	0	5	main	tag
+0.6	0	6	main	tag
+0.7	0	7	main	tag
+0.8	0	8	main	tag
+0.9	0	9	main	tag
+0.10	0	10	main	tag
+0.11	0	11	main	tag
+0.11.5	0	12	sub	tag
+0.12	0	13	main	tag
+0.13	0	14	main	tag
+0.14	0	15	main	tag
+0.15a	0	16	survey	skip
+0.15b	0	17	survey	skip
+0.15c	0	18	survey	skip
+0.16	0	19	acceptance	tag
+1.1	1	20	main	tag

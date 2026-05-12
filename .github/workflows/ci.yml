@@ -161,7 +161,7 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends shellcheck
       - name: shellcheck git-hooks/pre-push
         run: shellcheck git-hooks/pre-push
-      - name: Run pre-push hook test suite (10 path coverage)
+      - name: Run pre-push hook test suite
         run: |
           cd git-hooks/test
           go test -race ./...
