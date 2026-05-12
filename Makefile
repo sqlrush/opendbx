@@ -51,8 +51,40 @@ fmt: ## Format code
 	gofmt -w .
 	$(GO) mod tidy
 
-bench: ## Run benchmarks
-	$(GO) test -bench=. -benchmem -run=^$$ -count=1 ./...
+# spec-0.8 D-2 / T-5: bench WARN-mode in gate.
+#
+# BENCH_TIMEOUT defaults to 2m (Q10 ★A); override via env: `BENCH_TIMEOUT=5m make bench`.
+# Output captured to BENCH_OUTPUT for spec-0.11 baseline comparison.
+#
+# WARN signal format (claude MED-5 + Q2 ★A): any anomaly (timeout, parse
+# error, no benchmarks) emits `BENCH_WARN: <reason>` to stderr and exits 0.
+# spec-0.11 will grep `BENCH_WARN:` to flip to FAIL semantics with baselines.
+BENCH_TIMEOUT ?= 2m
+BENCH_OUTPUT  := /tmp/opendbx-bench.out
+
+bench: ## Run benchmarks → /tmp/opendbx-bench.out (WARN-only; spec-0.11 flips FAIL)
+	@echo "=== bench (BENCH_TIMEOUT=$(BENCH_TIMEOUT)) ==="
+	@set +e; \
+	$(GO) test -bench=. -benchmem -run=^$$$$ -count=1 -timeout=$(BENCH_TIMEOUT) ./... 2>&1 | tee $(BENCH_OUTPUT); \
+	rc=$$?; \
+	if [ $$rc -ne 0 ]; then \
+		echo "BENCH_WARN: bench exit code $$rc (timeout / parse error / runtime panic); see $(BENCH_OUTPUT)" >&2; \
+		exit 0; \
+	fi; \
+	if ! grep -q '^Benchmark' $(BENCH_OUTPUT); then \
+		echo "BENCH_WARN: no benchmarks present in this codebase (Stage 0 expected; spec-1.4+ adds perf baselines)" >&2; \
+	fi
+
+# gate-fast: skip the expensive coverage + bench steps for quick dev iteration
+# (does NOT replace push-time `make gate`; CI must use full gate).
+.PHONY: gate-fast
+gate-fast: import-check dep-check golden ## Fast dev gate (skip coverage + bench; not for push)
+	@echo "=== gate-fast (no coverage / no bench) ==="
+	gofmt -l . | tee /tmp/opendbx-fmt.txt && [ ! -s /tmp/opendbx-fmt.txt ] || (echo "gofmt failed" && exit 1)
+	$(GO) vet ./...
+	CGO_ENABLED=0 $(GO) build ./...
+	$(GO) test -race ./...
+	@echo "=== gate-fast PASSED (push 前请跑 make gate 全套) ==="
 
 # Layer-2 gate: 所有这些命令必须 PASS 才允许 push
 # 详见设计仓 docs/cicd-and-methodology.md § 2
@@ -72,6 +104,7 @@ gate: import-check dep-check golden ## Local layer-2 gate (must pass before push
 	@command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout 5m || echo "golangci-lint not installed (skip in bootstrap)"
 	CGO_ENABLED=0 $(GO) build ./...
 	$(MAKE) coverage-gate
+	$(MAKE) bench
 	@echo "=== Layer-2 Gate PASSED ==="
 
 # spec-0.8 D-1 / T-4: enforce CLAUDE.md 规则 8 per-package coverage thresholds.
