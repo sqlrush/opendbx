@@ -1,4 +1,31 @@
-.PHONY: all build test gate lint fmt clean help hooks-install hooks-status import-check dep-check golden golden-update gen-docs cc-help-diff
+# opendbx top-level Makefile
+# ============================
+#
+# spec-0.8 D-7 / T-11 — doc block satisfies binary criterion: ≥ 3 categories
+# + ≥ 1 cross-repo dependency + ≥ 1 GNU make / bash requirement.
+#
+# Categories:
+#
+#   用户日常:  build / test / gate / gate-fast / fmt / lint / bench
+#   CI 投影:   import-check / dep-check / golden / coverage-gate / makefile-check
+#   release:   tag-spec (cross-repo dual-tag) / release (stub → spec-5.1)
+#   维护:      hooks-install / hooks-status / gen-docs / cc-help-diff / clean
+#
+# Cross-repo dependencies:
+#   tag-spec / gen-docs / cc-help-diff / makefile-check 都需要 sibling
+#   $(OPENDBRB_DIR) (default ../opendbrb; override via env).
+#
+# Platform:
+#   Requires GNU make + bash 3.2+ + git. macOS / Linux only; Windows not
+#   supported (spec-0.7 § 2.3). All shell recipes avoid bash 4+ features
+#   (no globstar `**`) — macOS bash 3.2 broke spec-0.7 T-14 dogfood on `**`.
+
+# T-10a fix per spec-0.8 R2 MED-1: .PHONY split across multiple single-line
+# declarations (makefile-check tool rejects backslash continuation).
+.PHONY: all build test test-cover gate gate-fast lint fmt bench clean help
+.PHONY: hooks-install hooks-status import-check dep-check
+.PHONY: golden golden-update gen-docs cc-help-diff
+.PHONY: coverage-gate makefile-check tag-spec release
 
 BIN_DIR := bin
 BIN_NAME := opendbx
@@ -33,7 +60,7 @@ LDFLAGS := -s -w \
     -X $(VERSION_PKG).Dirty=$(DIRTY)
 GO_BUILD_FLAGS := -trimpath -ldflags="$(LDFLAGS)"
 
-all: build
+all: build ## Default: build the opendbx binary
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -157,6 +184,7 @@ gate: import-check dep-check golden ## Local layer-2 gate (must pass before push
 	$(GO) mod tidy && git diff --exit-code go.mod go.sum 2>/dev/null || (echo "go.mod/go.sum dirty after tidy" && exit 1)
 	@command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout 5m || echo "golangci-lint not installed (skip in bootstrap)"
 	CGO_ENABLED=0 $(GO) build ./...
+	$(MAKE) makefile-check
 	$(MAKE) coverage-gate
 	$(MAKE) bench
 	@echo "=== Layer-2 Gate PASSED ==="
@@ -176,11 +204,21 @@ gate: import-check dep-check golden ## Local layer-2 gate (must pass before push
 # Emergency override: `COVERAGE_GATE_SKIP=1 make coverage-gate` (Q11 ★A;
 # usage MUST be noted in CHANGELOG).
 COVERAGE_PROFILE := /tmp/opendbx-coverage.out
-.PHONY: coverage-gate
 coverage-gate: ## Run go test -coverprofile + enforce per-package thresholds (spec-0.8 D-1)
 	@echo "=== gate: coverage-gate ==="
 	$(GO) test -race -coverprofile=$(COVERAGE_PROFILE) ./...
 	$(GO) run ./tools/coverage-gate -profile=$(COVERAGE_PROFILE)
+
+# spec-0.8 D-6 / T-10b: Makefile lint. Scans this Makefile + sibling
+# opendbrb/Makefile (if present) for the 5 conventions defined in
+# tools/makefile-check (help comment / .PHONY / kebab-lower / no-dup /
+# doc-block + .PHONY no-continuation). Sibling skip is silent — gate
+# remains useful for opendbx-only clones.
+makefile-check: ## Lint top-level Makefile(s) (this repo + sibling opendbrb if present)
+	@echo "=== gate: makefile-check ==="
+	@files="Makefile"; \
+	if [ -f "$(OPENDBRB_DIR)/Makefile" ]; then files="$$files $(OPENDBRB_DIR)/Makefile"; fi; \
+	$(GO) run ./tools/makefile-check $$files
 
 # spec-0.2 governance gates (D-5 / D-6 / D-3) — see docs/cicd-and-methodology.md
 import-check: ## Run import-rules-check (spec-0.2 D-5)
