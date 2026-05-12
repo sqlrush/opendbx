@@ -1,0 +1,68 @@
+# spec-0.7 D-5 / T-8 — remote-side tag validation (defence-in-depth).
+#
+# The git-hooks/pre-push hook is the primary gate (catches violations on
+# the developer's machine before any push reaches origin). This workflow
+# is the bypass-resistant backstop: if someone pushes a tag with
+# `git push --no-verify` (or from a machine without hooks installed), the
+# workflow re-runs the same 5 invariants on the GitHub Actions runner and
+# fails the workflow run if any check rejects.
+#
+# Important: this workflow CANNOT delete the bad tag (that would violate
+# the CLAUDE.md 规则 14 "tag immutability" principle the hook enforces).
+# A failed run produces a visible CI red mark + log; recovery is manual:
+# fix the tag content and re-push, or accept the bad tag as historical.
+#
+# Trigger: push of any `v*` tag to origin.
+
+name: tag-validate
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-tag:
+    name: tag-validate  # explicit name for branch protection contexts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need full history + tags + branches so we can compare tag target
+          # to refs/heads/main HEAD.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          # stdlib-only test module; cache on go.mod.
+          cache-dependency-path: git-hooks/test/go.mod
+
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends shellcheck
+
+      - name: shellcheck git-hooks/pre-push
+        run: shellcheck git-hooks/pre-push
+
+      - name: Run pre-push hook test suite
+        run: |
+          cd git-hooks/test
+          go test -race ./...
+
+      - name: Replay tag validation on this push
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          # GITHUB_REF on tag push: refs/tags/v.....
+          tag="${GITHUB_REF#refs/tags/}"
+          tag_sha=$(git rev-parse "$tag")
+          # Synthesize pre-push protocol line (create-push form):
+          #   <local_ref> <local_sha> <remote_ref> <remote_sha=zero>
+          ZERO=0000000000000000000000000000000000000000
+          echo "Validating tag: $tag (sha=$tag_sha)"
+          printf '%s %s %s %s\n' "refs/tags/$tag" "$tag_sha" "refs/tags/$tag" "$ZERO" \
+              | bash git-hooks/pre-push
