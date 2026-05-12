@@ -24,12 +24,17 @@ import (
 
 const zeroSHA = "0000000000000000000000000000000000000000"
 
-// canonicalMsg returns a tag message matching spec-0.7 § 2.7 schema.
-func canonicalMsg() string {
+// canonicalMsg returns a tag message matching spec-0.7 § 2.7 schema with
+// a Commit field matching the actual git HEAD short hash. After T-12 H3
+// strict validation, the hook compares the Commit field to the actual tag
+// target — so fixtures must compute the real hash.
+func canonicalMsg(t *testing.T, dir string) string {
+	t.Helper()
+	commit := mustGit(t, dir, "rev-parse", "--short=12", "HEAD")
 	return strings.Join([]string{
 		"Spec: spec-0.7-version-numbering",
 		"Repo: opendbx",
-		"Commit: abc123def456",
+		"Commit: " + commit,
 		"Peer-Repo: opendbrb",
 		"Peer-Commit: 789abc012def",
 	}, "\n") + "\n"
@@ -78,11 +83,30 @@ func fakeRepo(t *testing.T) string {
 	return dir
 }
 
+// cleanGitEnv returns the parent process env with GIT_DIR / GIT_WORK_TREE
+// FILTERED OUT (not set to ""; empty value triggers "empty string is not
+// a valid path" from git). Adds the test-isolation pins for global +
+// system config. go-reviewer T-12 M2 fix.
+func cleanGitEnv() []string {
+	out := make([]string, 0, len(os.Environ())+2)
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "GIT_DIR=") || strings.HasPrefix(kv, "GIT_WORK_TREE=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	out = append(out,
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_SYSTEM=/dev/null",
+	)
+	return out
+}
+
 func mustGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	cmd.Env = cleanGitEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s in %s failed: %v\n%s", strings.Join(args, " "), dir, err, out)
@@ -102,11 +126,7 @@ func runHook(t *testing.T, dir, stdin string, env ...string) (string, error) {
 	t.Helper()
 	cmd := exec.Command("bash", hookPath(t)) //nolint:gosec // test-only exec of in-repo hook
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_CONFIG_SYSTEM=/dev/null",
-	)
-	cmd.Env = append(cmd.Env, env...)
+	cmd.Env = append(cleanGitEnv(), env...)
 	cmd.Stdin = strings.NewReader(stdin)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
@@ -129,7 +149,7 @@ func pushLine(localRef, localSHA, remoteRef, remoteSHA string) string {
 
 func TestPrePush_AcceptValidTag(t *testing.T) {
 	dir := fakeRepo(t)
-	mustGit(t, dir, "tag", "-a", "v0.7.0-stage0.7", "-m", canonicalMsg())
+	mustGit(t, dir, "tag", "-a", "v0.7.0-stage0.7", "-m", canonicalMsg(t, dir))
 	head := gitRevHEAD(t, dir)
 
 	stdin := pushLine("refs/tags/v0.7.0-stage0.7", head, "refs/tags/v0.7.0-stage0.7", zeroSHA)
@@ -143,7 +163,7 @@ func TestPrePush_AcceptValidTag(t *testing.T) {
 
 func TestPrePush_RejectInvalidName(t *testing.T) {
 	dir := fakeRepo(t)
-	mustGit(t, dir, "tag", "-a", "v1.0", "-m", canonicalMsg()) // missing -stage<S>.<N>
+	mustGit(t, dir, "tag", "-a", "v1.0", "-m", canonicalMsg(t, dir)) // missing -stage<S>.<N>
 	head := gitRevHEAD(t, dir)
 
 	stdin := pushLine("refs/tags/v1.0", head, "refs/tags/v1.0", zeroSHA)
@@ -186,7 +206,7 @@ func TestPrePush_RejectNonMainTarget(t *testing.T) {
 	mustGit(t, dir, "add", "second.txt")
 	mustGit(t, dir, "commit", "-m", "second commit")
 	// Tag the OLD commit (now != main HEAD).
-	mustGit(t, dir, "tag", "-a", "v0.7.0-stage0.7", firstHead, "-m", canonicalMsg())
+	mustGit(t, dir, "tag", "-a", "v0.7.0-stage0.7", firstHead, "-m", canonicalMsg(t, dir))
 
 	stdin := pushLine("refs/tags/v0.7.0-stage0.7", firstHead, "refs/tags/v0.7.0-stage0.7", zeroSHA)
 	out, err := runHook(t, dir, stdin)
@@ -198,11 +218,12 @@ func TestPrePush_RejectNonMainTarget(t *testing.T) {
 	}
 }
 
-// --- Path 5: canonical message missing field → REJECT -----------------
+// --- Path 5: canonical message missing field → REJECT (codex T-12 H3:
+//             now caught by 5-line count check, not field-presence).
 
 func TestPrePush_RejectMissingCanonicalField(t *testing.T) {
 	dir := fakeRepo(t)
-	// Missing "Peer-Commit:" field.
+	// Missing "Peer-Commit:" line — only 4 non-empty lines total.
 	incompleteMsg := strings.Join([]string{
 		"Spec: spec-0.7-version-numbering",
 		"Repo: opendbx",
@@ -218,17 +239,37 @@ func TestPrePush_RejectMissingCanonicalField(t *testing.T) {
 	if err == nil {
 		t.Fatalf("hook should reject missing canonical field; got success:\n%s", out)
 	}
-	if !strings.Contains(out, "Peer-Commit:") {
-		t.Errorf("error should mention missing 'Peer-Commit:':\n%s", out)
+	if !strings.Contains(out, "5 non-empty lines") {
+		t.Errorf("error should mention line count check:\n%s", out)
 	}
 }
 
-// --- Path 6: tag delete → REJECT (unless OPENDBX_TAG_REPAIR=1) --------
+// --- Path 6: tag delete → REJECT (unless OPENDBX_TAG_REPAIR=1)
+//
+// codex T-12 H1: real git pre-push delete protocol uses local_ref="(delete)"
+// + remote_ref="refs/tags/<name>". Test BOTH the unrealistic fixture (kept
+// for compatibility) and the realistic protocol shape.
+
+func TestPrePush_RejectTagDelete_RealProtocol(t *testing.T) {
+	dir := fakeRepo(t)
+	head := gitRevHEAD(t, dir)
+	// Real git protocol: local_ref is the literal "(delete)" string.
+	stdin := pushLine("(delete)", zeroSHA, "refs/tags/v0.7.0-stage0.7", head)
+	out, err := runHook(t, dir, stdin)
+	if err == nil {
+		t.Fatalf("hook should reject real-protocol tag delete; got success:\n%s", out)
+	}
+	if !strings.Contains(out, "tag delete blocked") {
+		t.Errorf("error should mention 'tag delete blocked':\n%s", out)
+	}
+}
 
 func TestPrePush_RejectTagDelete(t *testing.T) {
 	dir := fakeRepo(t)
 	head := gitRevHEAD(t, dir)
-	// Delete push: local_sha = zero.
+	// Legacy fixture: local_ref still refs/tags/* but local_sha=zero. Some
+	// git client versions emit this shape historically; the hook handles
+	// both. We assert the same reject behavior.
 	stdin := pushLine("refs/tags/v0.7.0-stage0.7", zeroSHA, "refs/tags/v0.7.0-stage0.7", head)
 	out, err := runHook(t, dir, stdin)
 	if err == nil {
@@ -243,7 +284,7 @@ func TestPrePush_RejectTagDelete(t *testing.T) {
 
 func TestPrePush_RejectTagUpdate(t *testing.T) {
 	dir := fakeRepo(t)
-	mustGit(t, dir, "tag", "-a", "v0.7.0-stage0.7", "-m", canonicalMsg())
+	mustGit(t, dir, "tag", "-a", "v0.7.0-stage0.7", "-m", canonicalMsg(t, dir))
 	head := gitRevHEAD(t, dir)
 	// Update: both shas non-zero AND differ.
 	stdin := pushLine("refs/tags/v0.7.0-stage0.7", head, "refs/tags/v0.7.0-stage0.7", "1111111111111111111111111111111111111111")
@@ -301,5 +342,79 @@ func TestPrePush_EmptyStdinAccepted(t *testing.T) {
 	out, err := runHook(t, dir, "")
 	if err != nil {
 		t.Fatalf("hook should accept empty stdin; got error: %v\n%s", err, out)
+	}
+}
+
+// --- Path 11: canonical schema strict — wrong Repo value → REJECT ----
+// codex T-12 H3: hook must enforce Repo=opendbx (in opendbx repo) literal.
+
+func TestPrePush_RejectWrongRepoField(t *testing.T) {
+	dir := fakeRepo(t)
+	commit := mustGit(t, dir, "rev-parse", "--short=12", "HEAD")
+	wrongMsg := strings.Join([]string{
+		"Spec: spec-0.7-version-numbering",
+		"Repo: opendbrb", // wrong — must be opendbx
+		"Commit: " + commit,
+		"Peer-Repo: opendbrb",
+		"Peer-Commit: 789abc012def",
+	}, "\n") + "\n"
+	mustGit(t, dir, "tag", "-a", "v0.7.0-stage0.7", "-m", wrongMsg)
+	head := gitRevHEAD(t, dir)
+	stdin := pushLine("refs/tags/v0.7.0-stage0.7", head, "refs/tags/v0.7.0-stage0.7", zeroSHA)
+	out, err := runHook(t, dir, stdin)
+	if err == nil {
+		t.Fatalf("hook should reject wrong Repo field; got success:\n%s", out)
+	}
+	if !strings.Contains(out, "must be 'Repo: opendbx'") {
+		t.Errorf("error should mention 'must be Repo: opendbx':\n%s", out)
+	}
+}
+
+// --- Path 12: canonical schema — Commit value mismatch → REJECT ------
+// codex T-12 H3: hook must enforce Commit == actual git rev-parse short=12 of tag^{}.
+
+func TestPrePush_RejectMismatchedCommit(t *testing.T) {
+	dir := fakeRepo(t)
+	mismatchMsg := strings.Join([]string{
+		"Spec: spec-0.7-version-numbering",
+		"Repo: opendbx",
+		"Commit: deadbeef0000", // wrong — does not match actual HEAD
+		"Peer-Repo: opendbrb",
+		"Peer-Commit: 789abc012def",
+	}, "\n") + "\n"
+	mustGit(t, dir, "tag", "-a", "v0.7.0-stage0.7", "-m", mismatchMsg)
+	head := gitRevHEAD(t, dir)
+	stdin := pushLine("refs/tags/v0.7.0-stage0.7", head, "refs/tags/v0.7.0-stage0.7", zeroSHA)
+	out, err := runHook(t, dir, stdin)
+	if err == nil {
+		t.Fatalf("hook should reject mismatched Commit; got success:\n%s", out)
+	}
+	if !strings.Contains(out, "Commit field") {
+		t.Errorf("error should mention 'Commit field' mismatch:\n%s", out)
+	}
+}
+
+// --- Path 13: canonical schema — extra line beyond 5 → REJECT --------
+
+func TestPrePush_RejectExtraLinesInMessage(t *testing.T) {
+	dir := fakeRepo(t)
+	commit := mustGit(t, dir, "rev-parse", "--short=12", "HEAD")
+	extraMsg := strings.Join([]string{
+		"Spec: spec-0.7-version-numbering",
+		"Repo: opendbx",
+		"Commit: " + commit,
+		"Peer-Repo: opendbrb",
+		"Peer-Commit: 789abc012def",
+		"Extra: bogus", // 6th line — must be rejected
+	}, "\n") + "\n"
+	mustGit(t, dir, "tag", "-a", "v0.7.0-stage0.7", "-m", extraMsg)
+	head := gitRevHEAD(t, dir)
+	stdin := pushLine("refs/tags/v0.7.0-stage0.7", head, "refs/tags/v0.7.0-stage0.7", zeroSHA)
+	out, err := runHook(t, dir, stdin)
+	if err == nil {
+		t.Fatalf("hook should reject extra lines; got success:\n%s", out)
+	}
+	if !strings.Contains(out, "5 non-empty lines") {
+		t.Errorf("error should mention line-count enforcement:\n%s", out)
 	}
 }
