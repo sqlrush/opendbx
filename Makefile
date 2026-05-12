@@ -4,6 +4,11 @@ BIN_DIR := bin
 BIN_NAME := opendbx
 GO := go
 
+# spec-0.8 D-3 / T-6: cross-repo sibling path for tag-spec / sync-registry.
+# Default ../opendbrb; override with `make tag-spec OPENDBRB_DIR=~/work/opendbrb ...`
+# when clone path differs.
+OPENDBRB_DIR ?= ../opendbrb
+
 # spec-0.7 D-3 / T-5: linker -X 注入 4 字段构建元数据 (Version / Commit /
 # BuildDate / Dirty). Supported platforms: linux, darwin (POSIX shell + git +
 # date -u). Windows not a target for ldflag metadata injection.
@@ -85,6 +90,30 @@ gate-fast: import-check dep-check golden ## Fast dev gate (skip coverage + bench
 	CGO_ENABLED=0 $(GO) build ./...
 	$(GO) test -race ./...
 	@echo "=== gate-fast PASSED (push 前请跑 make gate 全套) ==="
+
+# spec-0.8 D-3 / T-6: tag-spec wrapper.
+#
+# Forwards to ../opendbrb/scripts/release/tag-spec.sh (spec-0.7 D-2 SSOT).
+# Both repos get this target (Q3 ★A); opendbrb side ships in T-8 / D-5.
+#
+# Env vars (read by underlying script): DRY_RUN / OPENDBX_TAG_REPAIR
+# Make vars → script flags: STAGE_ACCEPTED / FORCE_DIRTY / REPAIR_PEER
+#
+# Examples:
+#   make tag-spec SPEC=spec-0.8-makefile-build
+#   DRY_RUN=1 make tag-spec SPEC=spec-0.8-makefile-build
+#   make tag-spec SPEC=spec-0.16-stage0-acceptance STAGE_ACCEPTED=1
+#   make tag-spec SPEC=spec-0.8-... REPAIR_PEER=1 OPENDBX_TAG_REPAIR=1
+.PHONY: tag-spec
+tag-spec: ## Tag a spec FROZEN via opendbrb/scripts/release/tag-spec.sh (SPEC=spec-X.Y-... required)
+	@[ -n "$(SPEC)" ] || (echo "ERR: SPEC= required (e.g. make tag-spec SPEC=spec-0.8-makefile-build)" >&2; exit 1)
+	@[ -d "$(OPENDBRB_DIR)" ] || (echo "ERR: $(OPENDBRB_DIR) not found; clone opendbrb sibling or override OPENDBRB_DIR=..." >&2; exit 1)
+	@[ -x "$(OPENDBRB_DIR)/scripts/release/tag-spec.sh" ] || (echo "ERR: $(OPENDBRB_DIR)/scripts/release/tag-spec.sh missing or not executable" >&2; exit 1)
+	@DRY_RUN=$(DRY_RUN) OPENDBX_TAG_REPAIR=$(OPENDBX_TAG_REPAIR) \
+		$(OPENDBRB_DIR)/scripts/release/tag-spec.sh $(SPEC) \
+		$(if $(filter 1,$(STAGE_ACCEPTED)),--stage-accepted,) \
+		$(if $(filter 1,$(FORCE_DIRTY)),--force-dirty,) \
+		$(if $(filter 1,$(REPAIR_PEER)),--repair-missing-peer,)
 
 # Layer-2 gate: 所有这些命令必须 PASS 才允许 push
 # 详见设计仓 docs/cicd-and-methodology.md § 2
