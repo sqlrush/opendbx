@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+#
+# opendbx pre-push hook — spec-0.7 D-5 / T-8.
+#
+# Validates `git push origin v*` (tag pushes) against 5 invariants before
+# the push reaches the remote. Auto-installed via `make hooks-install`
+# (SRC_HOOKS wildcard pickup; Makefile spec-0.1 D-2).
+#
+# Invariants (spec-0.7 § 2.5):
+#
+#   1. Tag name matches VersionPattern (regex source: D-1 grammar.go).
+#   2. Tag is annotated (not lightweight; defends message-schema check).
+#   3. Tag's peeled commit == refs/heads/main HEAD (no detached refs;
+#      claude HIGH-3 correction: peel via `^{}` not "current commit").
+#   4. Tag message contains canonical 5-field schema (spec § 2.7):
+#      Spec: / Repo: / Commit: / Peer-Repo: / Peer-Commit:.
+#   5. Reject tag update or delete pushes (annotated tags are immutable
+#      after first push; CLAUDE.md 规则 14 main protection extends to tags).
+#      Override: OPENDBX_TAG_REPAIR=1 env (used by tag-spec.sh
+#      --repair-missing-peer mode).
+#
+# Bypass: git push --no-verify   (emergency only; document in CHANGELOG)
+
+set -euo pipefail
+
+# git pre-push protocol: each ref to be pushed is read from stdin as:
+#   <local_ref> <local_sha> <remote_ref> <remote_sha>
+#
+# For tag pushes: local_ref = refs/tags/<name>, remote_ref = refs/tags/<name>.
+# Delete: local_sha = 0000...; remote_sha != 0000.
+# Update: both shas non-zero AND differ.
+# Create: local_sha != 0000 AND remote_sha = 0000.
+
+# Zero-sha sentinel that git uses to mean "no commit" (40-char literal).
+ZERO_SHA="0000000000000000000000000000000000000000"
+
+# Source pattern matches the one in grammar.go (spec-0.7 D-1).
+# Capture groups: 1=MAJOR, 2=MINOR, 3=PATCH, 4=Stage, 5=SpecN, 6=accepted suffix.
+VERSION_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+-stage[0-9]+\.[0-9]+(-accepted)?$'
+
+# Canonical message fields (spec § 2.7).
+CANONICAL_FIELDS=(
+    "Spec:"
+    "Repo:"
+    "Commit:"
+    "Peer-Repo:"
+    "Peer-Commit:"
+)
+
+err() { echo >&2 "ERROR: pre-push: $*"; }
+
+# Reject single ref. Echoes diagnostic to stderr. Returns 1 if invalid.
+validate_tag_ref() {
+    local local_ref="$1" local_sha="$2" remote_sha="$3"
+    local tag="${local_ref#refs/tags/}"
+
+    # 5. Reject delete + update (annotated tag immutability) unless repair env.
+    if [[ "${OPENDBX_TAG_REPAIR:-0}" != "1" ]]; then
+        if [[ "$local_sha" == "$ZERO_SHA" ]]; then
+            err "tag delete blocked for $tag (CLAUDE.md 规则 14: tags are immutable). Set OPENDBX_TAG_REPAIR=1 to override."
+            return 1
+        fi
+        if [[ "$remote_sha" != "$ZERO_SHA" && "$remote_sha" != "$local_sha" ]]; then
+            err "tag update blocked for $tag (existing remote $remote_sha != local $local_sha). Set OPENDBX_TAG_REPAIR=1 to override."
+            return 1
+        fi
+    fi
+
+    # 1. VersionPattern match.
+    if [[ ! "$tag" =~ $VERSION_PATTERN ]]; then
+        err "tag $tag violates VersionPattern (spec-0.7 § 2.1)"
+        err "  expected: v<MAJOR>.<MINOR>.<PATCH>-stage<S>.<N>[-accepted]"
+        return 1
+    fi
+
+    # 2. Annotated tag check (`git cat-file -t` returns "tag" for annotated,
+    #    "commit" for lightweight pointing directly to a commit).
+    local tag_type
+    tag_type=$(git cat-file -t "$tag" 2>/dev/null || echo "missing")
+    if [[ "$tag_type" != "tag" ]]; then
+        err "tag $tag is $tag_type, must be annotated (use \`git tag -a $tag -m ...\` or scripts/release/tag-spec.sh)"
+        return 1
+    fi
+
+    # 3. Tag's peeled commit == main HEAD (claude HIGH-3 correction).
+    local tag_target main_head
+    tag_target=$(git rev-parse "${tag}^{}" 2>/dev/null) || {
+        err "could not peel tag $tag to commit"
+        return 1
+    }
+    main_head=$(git rev-parse refs/heads/main 2>/dev/null) || {
+        err "could not resolve refs/heads/main (is main checked out / fetched?)"
+        return 1
+    }
+    if [[ "$tag_target" != "$main_head" ]]; then
+        err "tag $tag points to $tag_target, not main HEAD $main_head"
+        err "  hint: tags must mark the same commit as main HEAD (use scripts/release/tag-spec.sh)"
+        return 1
+    fi
+
+    # 4. Canonical 5-field message schema.
+    local tag_msg
+    tag_msg=$(git tag -l --format='%(contents)' "$tag")
+    for field in "${CANONICAL_FIELDS[@]}"; do
+        if ! grep -qF "$field" <<< "$tag_msg"; then
+            err "tag $tag message missing canonical field '$field' (spec-0.7 § 2.7)"
+            err "  expected fields: ${CANONICAL_FIELDS[*]}"
+            err "  hint: use scripts/release/tag-spec.sh (opendbrb) for canonical message generation"
+            return 1
+        fi
+    done
+
+    return 0
+}
+
+# Read stdin (pre-push protocol) and validate every v* tag ref.
+# Format: <local_ref> <local_sha> <remote_ref> <remote_sha>
+# remote_ref is unread because validation uses local_ref (they're identical
+# for tag pushes); shellcheck SC2034 silenced by reading into _ sink.
+failed=0
+while read -r local_ref local_sha _ remote_sha; do
+    # Skip refs that aren't tags or aren't v* tags.
+    case "$local_ref" in
+        refs/tags/v*) ;;
+        *) continue ;;
+    esac
+    if ! validate_tag_ref "$local_ref" "$local_sha" "$remote_sha"; then
+        failed=1
+    fi
+done
+
+if [[ "$failed" == "1" ]]; then
+    err "one or more tag pushes rejected. Use --no-verify only in emergencies."
+    exit 1
+fi
+
+exit 0

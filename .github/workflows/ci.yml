@@ -145,3 +145,23 @@ jobs:
             echo "  - Or fix the change so output matches existing golden."
             exit 1
           fi
+
+  pre-push-hook:
+    name: pre-push hook (spec-0.7 D-5)
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # stdlib-only test module; cache on go.mod.
+          cache-dependency-path: git-hooks/test/go.mod
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends shellcheck
+      - name: shellcheck git-hooks/pre-push
+        run: shellcheck git-hooks/pre-push
+      - name: Run pre-push hook test suite (10 path coverage)
+        run: |
+          cd git-hooks/test
+          go test -race ./...
