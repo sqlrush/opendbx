@@ -38,16 +38,16 @@ ZERO_SHA="0000000000000000000000000000000000000000"
 # Capture groups: 1=MAJOR, 2=MINOR, 3=PATCH, 4=Stage, 5=SpecN, 6=accepted suffix.
 VERSION_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+-stage[0-9]+\.[0-9]+(-accepted)?$'
 
-# Canonical message fields (spec § 2.7).
-CANONICAL_FIELDS=(
-    "Spec:"
-    "Repo:"
-    "Commit:"
-    "Peer-Repo:"
-    "Peer-Commit:"
-)
+# Canonical message strict line-by-line check is implemented inline in
+# validate_tag_ref (T-12 H3 codex fix); no per-field list needed here.
 
 err() { echo >&2 "ERROR: pre-push: $*"; }
+
+# tag_ref / local_tag / remote_tag are loop-locals used in main loop;
+# declared up-front so shellcheck SC2154 doesn't complain.
+tag_ref=""
+local_tag=""
+remote_tag=""
 
 # Reject single ref. Echoes diagnostic to stderr. Returns 1 if invalid.
 validate_tag_ref() {
@@ -98,33 +98,84 @@ validate_tag_ref() {
         return 1
     fi
 
-    # 4. Canonical 5-field message schema.
+    # 4. Canonical 5-field message schema (codex T-12 H3 fix: strict
+    #    ordered parse, value validation — not just field-presence).
+    #
+    #    Required exact order + value rules:
+    #      line 1: "Spec: spec-<id>-<slug>"           (free-form value, just non-empty)
+    #      line 2: "Repo: opendbx"                    (this repo; literal match)
+    #      line 3: "Commit: <12-char>"                (must equal git rev-parse --short=12 tag^{})
+    #      line 4: "Peer-Repo: opendbrb"              (literal match)
+    #      line 5: "Peer-Commit: <12-char>"           (non-empty 12-hex)
+    #    Trailing newlines tolerated; no extra non-empty lines allowed.
     local tag_msg
     tag_msg=$(git tag -l --format='%(contents)' "$tag")
-    for field in "${CANONICAL_FIELDS[@]}"; do
-        if ! grep -qF "$field" <<< "$tag_msg"; then
-            err "tag $tag message missing canonical field '$field' (spec-0.7 § 2.7)"
-            err "  expected fields: ${CANONICAL_FIELDS[*]}"
-            err "  hint: use scripts/release/tag-spec.sh (opendbrb) for canonical message generation"
-            return 1
-        fi
-    done
+    # Strip trailing blank lines for the line-count check; keep order intact.
+    local stripped_msg
+    stripped_msg=$(printf '%s' "$tag_msg" | awk 'NR==1{out=$0; next} {out=out"\n"$0} END{sub(/\n+$/,"",out); print out}')
+    local line_count
+    line_count=$(printf '%s\n' "$stripped_msg" | grep -cv '^[[:space:]]*$' || true)
+    if [[ "$line_count" -ne 5 ]]; then
+        err "tag $tag canonical message must have exactly 5 non-empty lines (got $line_count)"
+        err "  hint: use scripts/release/tag-spec.sh (opendbrb) for canonical generation"
+        return 1
+    fi
+    local line1 line2 line3 line4 line5
+    line1=$(sed -n '1p' <<< "$stripped_msg")
+    line2=$(sed -n '2p' <<< "$stripped_msg")
+    line3=$(sed -n '3p' <<< "$stripped_msg")
+    line4=$(sed -n '4p' <<< "$stripped_msg")
+    line5=$(sed -n '5p' <<< "$stripped_msg")
+    [[ "$line1" =~ ^Spec:\ spec-[A-Za-z0-9.-]+$ ]] || { err "tag $tag line 1 not 'Spec: spec-...': $line1"; return 1; }
+    [[ "$line2" == "Repo: opendbx" ]] || { err "tag $tag line 2 must be 'Repo: opendbx' (got: $line2)"; return 1; }
+    [[ "$line3" =~ ^Commit:\ [0-9a-f]{12}$ ]] || { err "tag $tag line 3 not 'Commit: <12-hex>': $line3"; return 1; }
+    [[ "$line4" == "Peer-Repo: opendbrb" ]] || { err "tag $tag line 4 must be 'Peer-Repo: opendbrb' (got: $line4)"; return 1; }
+    [[ "$line5" =~ ^Peer-Commit:\ [0-9a-f]{12}$ ]] || { err "tag $tag line 5 not 'Peer-Commit: <12-hex>': $line5"; return 1; }
+
+    # 4b. Commit value must equal actual git rev-parse --short=12 of the tag target.
+    local expected_commit actual_commit
+    expected_commit=$(git rev-parse --short=12 "${tag}^{}" 2>/dev/null)
+    actual_commit="${line3#Commit: }"
+    if [[ "$actual_commit" != "$expected_commit" ]]; then
+        err "tag $tag Commit field $actual_commit != actual tag target $expected_commit"
+        err "  hint: the canonical message must reference the same commit the tag points to"
+        return 1
+    fi
 
     return 0
 }
 
 # Read stdin (pre-push protocol) and validate every v* tag ref.
-# Format: <local_ref> <local_sha> <remote_ref> <remote_sha>
-# remote_ref is unread because validation uses local_ref (they're identical
-# for tag pushes); shellcheck SC2034 silenced by reading into _ sink.
+#
+# Protocol per `git help githooks` (pre-push):
+#   <local_ref> <local_sha> <remote_ref> <remote_sha>
+# Special values:
+#   - delete: local_ref="(delete)", local_sha=zero-sha, remote_ref="refs/tags/<name>"
+#   - create: local_ref="refs/tags/<name>", remote_sha=zero-sha
+#   - update: both shas non-zero, local_sha != remote_sha
+#
+# codex T-12 H1 fix: delete protocol uses local_ref="(delete)" not the tag
+# ref, so the prior `case "$local_ref" in refs/tags/v*` filter let deletes
+# bypass invariant 5. Now both local_ref and remote_ref are inspected.
 failed=0
-while read -r local_ref local_sha _ remote_sha; do
-    # Skip refs that aren't tags or aren't v* tags.
+while read -r local_ref local_sha remote_ref remote_sha; do
+    # Identify the tag name from whichever side has the refs/tags/v* shape.
+    local_tag=""
     case "$local_ref" in
-        refs/tags/v*) ;;
-        *) continue ;;
+        refs/tags/v*) local_tag="$local_ref" ;;
     esac
-    if ! validate_tag_ref "$local_ref" "$local_sha" "$remote_sha"; then
+    remote_tag=""
+    case "$remote_ref" in
+        refs/tags/v*) remote_tag="$remote_ref" ;;
+    esac
+    # Skip if neither side is a v* tag.
+    if [[ -z "$local_tag" && -z "$remote_tag" ]]; then
+        continue
+    fi
+    # Resolve the tag-name ref (prefer local if present; on delete local
+    # is "(delete)" so fall back to remote_ref).
+    tag_ref="${local_tag:-$remote_tag}"
+    if ! validate_tag_ref "$tag_ref" "$local_sha" "$remote_sha"; then
         failed=1
     fi
 done
