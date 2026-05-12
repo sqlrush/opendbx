@@ -56,6 +56,14 @@ bench: ## Run benchmarks
 
 # Layer-2 gate: 所有这些命令必须 PASS 才允许 push
 # 详见设计仓 docs/cicd-and-methodology.md § 2
+# Layer-2 gate runs cheap checks first (fmt/vet/tidy/lint/import/dep/golden/
+# build), then the expensive coverage-gate step (which itself runs
+# `go test -race -coverprofile=...` and enforces CLAUDE.md 规则 8 thresholds).
+# spec-0.8 D-1 / T-4.
+#
+# Prereqs run before recipe (Make semantics), so import-check / dep-check /
+# golden run FIRST. The recipe then runs fmt/vet/tidy/lint/build inline,
+# and finally invokes coverage-gate (which subsumes the prior `go test -race`).
 gate: import-check dep-check golden ## Local layer-2 gate (must pass before push)
 	@echo "=== Layer-2 Gate ==="
 	gofmt -l . | tee /tmp/opendbx-fmt.txt && [ ! -s /tmp/opendbx-fmt.txt ] || (echo "gofmt failed" && exit 1)
@@ -63,8 +71,29 @@ gate: import-check dep-check golden ## Local layer-2 gate (must pass before push
 	$(GO) mod tidy && git diff --exit-code go.mod go.sum 2>/dev/null || (echo "go.mod/go.sum dirty after tidy" && exit 1)
 	@command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout 5m || echo "golangci-lint not installed (skip in bootstrap)"
 	CGO_ENABLED=0 $(GO) build ./...
-	$(GO) test -race ./...
+	$(MAKE) coverage-gate
 	@echo "=== Layer-2 Gate PASSED ==="
+
+# spec-0.8 D-1 / T-4: enforce CLAUDE.md 规则 8 per-package coverage thresholds.
+#
+# Tiers (R2 用户拍板 CRIT-A):
+#   core (≥85%): errcode / logger / version
+#   other (≥75%): everything not core/exempt
+#   exempt: entrypoints / tools/* / cmd/opendbx / config / rpc
+#   total (≥80%): aggregated over non-exempt packages
+#
+# coverage-gate runs `go test -race -coverprofile=...` internally — gate
+# uses this as the unit-test step too, so the regular `go test -race` line
+# was removed from the recipe above.
+#
+# Emergency override: `COVERAGE_GATE_SKIP=1 make coverage-gate` (Q11 ★A;
+# usage MUST be noted in CHANGELOG).
+COVERAGE_PROFILE := /tmp/opendbx-coverage.out
+.PHONY: coverage-gate
+coverage-gate: ## Run go test -coverprofile + enforce per-package thresholds (spec-0.8 D-1)
+	@echo "=== gate: coverage-gate ==="
+	$(GO) test -race -coverprofile=$(COVERAGE_PROFILE) ./...
+	$(GO) run ./tools/coverage-gate -profile=$(COVERAGE_PROFILE)
 
 # spec-0.2 governance gates (D-5 / D-6 / D-3) — see docs/cicd-and-methodology.md
 import-check: ## Run import-rules-check (spec-0.2 D-5)
