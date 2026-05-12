@@ -30,9 +30,14 @@ const zeroSHA = "0000000000000000000000000000000000000000"
 // target — so fixtures must compute the real hash.
 func canonicalMsg(t *testing.T, dir string) string {
 	t.Helper()
+	return canonicalMsgForSpec(t, dir, "spec-0.7-version-numbering")
+}
+
+func canonicalMsgForSpec(t *testing.T, dir, spec string) string {
+	t.Helper()
 	commit := mustGit(t, dir, "rev-parse", "--short=12", "HEAD")
 	return strings.Join([]string{
-		"Spec: spec-0.7-version-numbering",
+		"Spec: " + spec,
 		"Repo: opendbx",
 		"Commit: " + commit,
 		"Peer-Repo: opendbrb",
@@ -156,6 +161,33 @@ func TestPrePush_AcceptValidTag(t *testing.T) {
 	out, err := runHook(t, dir, stdin)
 	if err != nil {
 		t.Fatalf("hook should accept valid tag; got error: %v\n%s", err, out)
+	}
+}
+
+func TestPrePush_AcceptValidSubSpecTag(t *testing.T) {
+	dir := fakeRepo(t)
+	mustGit(t, dir, "tag", "-a", "v0.12.0-stage0.12", "-m", canonicalMsgForSpec(t, dir, "spec-0.11.5-ui-review"))
+	head := gitRevHEAD(t, dir)
+
+	stdin := pushLine("refs/tags/v0.12.0-stage0.12", head, "refs/tags/v0.12.0-stage0.12", zeroSHA)
+	out, err := runHook(t, dir, stdin)
+	if err != nil {
+		t.Fatalf("hook should accept valid sub-spec tag; got error: %v\n%s", err, out)
+	}
+}
+
+func TestPrePush_AcceptValidTagWithOnlyOriginMainRef(t *testing.T) {
+	dir := fakeRepo(t)
+	mustGit(t, dir, "tag", "-a", "v0.7.0-stage0.7", "-m", canonicalMsg(t, dir))
+	head := gitRevHEAD(t, dir)
+	mustGit(t, dir, "update-ref", "refs/remotes/origin/main", head)
+	mustGit(t, dir, "checkout", "--detach", "HEAD")
+	mustGit(t, dir, "update-ref", "-d", "refs/heads/main")
+
+	stdin := pushLine("refs/tags/v0.7.0-stage0.7", head, "refs/tags/v0.7.0-stage0.7", zeroSHA)
+	out, err := runHook(t, dir, stdin)
+	if err != nil {
+		t.Fatalf("hook should accept valid tag when only origin/main exists (tag checkout CI shape); got error: %v\n%s", err, out)
 	}
 }
 
@@ -391,6 +423,50 @@ func TestPrePush_RejectMismatchedCommit(t *testing.T) {
 	}
 	if !strings.Contains(out, "Commit field") {
 		t.Errorf("error should mention 'Commit field' mismatch:\n%s", out)
+	}
+}
+
+func TestPrePush_RejectRegistrySemanticMismatch(t *testing.T) {
+	dir := fakeRepo(t)
+	// Regex-valid but semantically wrong: Spec says 0.7, registry ordinal is 7,
+	// while tag MINOR/SpecN says 8.
+	mustGit(t, dir, "tag", "-a", "v0.8.0-stage0.8", "-m", canonicalMsg(t, dir))
+	head := gitRevHEAD(t, dir)
+	stdin := pushLine("refs/tags/v0.8.0-stage0.8", head, "refs/tags/v0.8.0-stage0.8", zeroSHA)
+	out, err := runHook(t, dir, stdin)
+	if err == nil {
+		t.Fatalf("hook should reject registry semantic mismatch; got success:\n%s", out)
+	}
+	if !strings.Contains(out, "does not match registry") {
+		t.Errorf("error should mention registry mismatch:\n%s", out)
+	}
+}
+
+func TestPrePush_RejectSkipPolicySurveyTag(t *testing.T) {
+	dir := fakeRepo(t)
+	mustGit(t, dir, "tag", "-a", "v0.16.0-stage0.16", "-m", canonicalMsgForSpec(t, dir, "spec-0.15a-survey"))
+	head := gitRevHEAD(t, dir)
+	stdin := pushLine("refs/tags/v0.16.0-stage0.16", head, "refs/tags/v0.16.0-stage0.16", zeroSHA)
+	out, err := runHook(t, dir, stdin)
+	if err == nil {
+		t.Fatalf("hook should reject survey tag_policy=skip; got success:\n%s", out)
+	}
+	if !strings.Contains(out, "tag_policy=skip") {
+		t.Errorf("error should mention tag_policy=skip:\n%s", out)
+	}
+}
+
+func TestPrePush_RejectAcceptedSuffixForNonAcceptanceSpec(t *testing.T) {
+	dir := fakeRepo(t)
+	mustGit(t, dir, "tag", "-a", "v0.7.0-stage0.7-accepted", "-m", canonicalMsg(t, dir))
+	head := gitRevHEAD(t, dir)
+	stdin := pushLine("refs/tags/v0.7.0-stage0.7-accepted", head, "refs/tags/v0.7.0-stage0.7-accepted", zeroSHA)
+	out, err := runHook(t, dir, stdin)
+	if err == nil {
+		t.Fatalf("hook should reject accepted suffix on non-acceptance spec; got success:\n%s", out)
+	}
+	if !strings.Contains(out, "want acceptance") {
+		t.Errorf("error should mention acceptance role:\n%s", out)
 	}
 }
 

@@ -35,6 +35,9 @@ jobs:
           # to refs/heads/main HEAD.
           fetch-depth: 0
 
+      - name: Prepare main ref for hook replay
+        run: git fetch --no-tags origin +main:refs/heads/main
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'

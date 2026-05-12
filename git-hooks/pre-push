@@ -36,12 +36,62 @@ ZERO_SHA="0000000000000000000000000000000000000000"
 
 # Source pattern matches the one in grammar.go (spec-0.7 D-1).
 # Capture groups: 1=MAJOR, 2=MINOR, 3=PATCH, 4=Stage, 5=SpecN, 6=accepted suffix.
-VERSION_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+-stage[0-9]+\.[0-9]+(-accepted)?$'
+VERSION_PATTERN='^v([0-9]+)\.([0-9]+)\.([0-9]+)-stage([0-9]+)\.([0-9]+)(-accepted)?$'
+
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+if [[ -L "$SCRIPT_PATH" ]]; then
+    LINK_TARGET=$(readlink "$SCRIPT_PATH")
+    if [[ "$LINK_TARGET" = /* ]]; then
+        SCRIPT_PATH="$LINK_TARGET"
+    else
+        SCRIPT_PATH="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)/$LINK_TARGET"
+    fi
+fi
+SCRIPT_DIR=$(cd "$(dirname "$SCRIPT_PATH")" && pwd)
 
 # Canonical message strict line-by-line check is implemented inline in
 # validate_tag_ref (T-12 H3 codex fix); no per-field list needed here.
 
 err() { echo >&2 "ERROR: pre-push: $*"; }
+
+resolve_main_head() {
+    git rev-parse --verify --quiet refs/heads/main 2>/dev/null ||
+        git rev-parse --verify --quiet refs/remotes/origin/main 2>/dev/null ||
+        git rev-parse --verify --quiet origin/main 2>/dev/null
+}
+
+find_spec_registry() {
+    if [[ -n "${OPENDBX_SPEC_REGISTRY:-}" ]]; then
+        [[ -f "$OPENDBX_SPEC_REGISTRY" ]] && { echo "$OPENDBX_SPEC_REGISTRY"; return 0; }
+        return 1
+    fi
+
+    local repo_root sibling_registry hook_registry
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+    if [[ -n "$repo_root" ]]; then
+        sibling_registry="$repo_root/../opendbrb/specs/spec-registry.txt"
+        [[ -f "$sibling_registry" ]] && { echo "$sibling_registry"; return 0; }
+    fi
+
+    hook_registry="$SCRIPT_DIR/spec-registry.txt"
+    [[ -f "$hook_registry" ]] && { echo "$hook_registry"; return 0; }
+    return 1
+}
+
+normalize_spec_slug() {
+    local raw="$1"
+    raw="${raw#Spec: spec-}"
+    echo "$raw" | awk -F'-' '{print $1}'
+}
+
+registry_lookup() {
+    local registry="$1" spec_id="$2"
+    awk -v s="$spec_id" '
+        /^[[:space:]]*#/ {next}
+        /^[[:space:]]*$/ {next}
+        $1 == s {print $2 "\t" $3 "\t" $4 "\t" $5; exit}
+    ' "$registry"
+}
 
 # tag_ref / local_tag / remote_tag are loop-locals used in main loop;
 # declared up-front so shellcheck SC2154 doesn't complain.
@@ -72,6 +122,10 @@ validate_tag_ref() {
         err "  expected: v<MAJOR>.<MINOR>.<PATCH>-stage<S>.<N>[-accepted]"
         return 1
     fi
+    local tag_minor="${BASH_REMATCH[2]}"
+    local tag_stage="${BASH_REMATCH[4]}"
+    local tag_spec_n="${BASH_REMATCH[5]}"
+    local tag_accepted="${BASH_REMATCH[6]:-}"
 
     # 2. Annotated tag check (`git cat-file -t` returns "tag" for annotated,
     #    "commit" for lightweight pointing directly to a commit).
@@ -88,8 +142,8 @@ validate_tag_ref() {
         err "could not peel tag $tag to commit"
         return 1
     }
-    main_head=$(git rev-parse refs/heads/main 2>/dev/null) || {
-        err "could not resolve refs/heads/main (is main checked out / fetched?)"
+    main_head=$(resolve_main_head) || {
+        err "could not resolve main HEAD (tried refs/heads/main and refs/remotes/origin/main)"
         return 1
     }
     if [[ "$tag_target" != "$main_head" ]]; then
@@ -139,6 +193,35 @@ validate_tag_ref() {
     if [[ "$actual_commit" != "$expected_commit" ]]; then
         err "tag $tag Commit field $actual_commit != actual tag target $expected_commit"
         err "  hint: the canonical message must reference the same commit the tag points to"
+        return 1
+    fi
+
+    # 4c. Semantic registry validation: VersionPattern alone accepts
+    # v0.8.0-stage0.7, but spec-0.7 says MINOR and stage<N> are registry
+    # ordinals. The Spec field is the bridge from canonical message to
+    # spec-registry.txt.
+    local registry spec_id lookup reg_stage reg_ordinal reg_role reg_policy
+    registry=$(find_spec_registry) || {
+        err "could not locate spec-registry.txt (set OPENDBX_SPEC_REGISTRY or install hook via make hooks-install)"
+        return 1
+    }
+    spec_id=$(normalize_spec_slug "$line1")
+    lookup=$(registry_lookup "$registry" "$spec_id")
+    if [[ -z "$lookup" ]]; then
+        err "tag $tag Spec field spec-$spec_id not found in $registry"
+        return 1
+    fi
+    IFS=$'\t' read -r reg_stage reg_ordinal reg_role reg_policy <<< "$lookup"
+    if [[ "$reg_policy" == "skip" ]]; then
+        err "tag $tag references spec-$spec_id with tag_policy=skip; this spec must not be tagged"
+        return 1
+    fi
+    if [[ "$tag_stage" != "$reg_stage" || "$tag_minor" != "$reg_ordinal" || "$tag_spec_n" != "$reg_ordinal" ]]; then
+        err "tag $tag does not match registry for spec-$spec_id (want v0.$reg_ordinal.<PATCH>-stage$reg_stage.$reg_ordinal)"
+        return 1
+    fi
+    if [[ -n "$tag_accepted" && "$reg_role" != "acceptance" ]]; then
+        err "tag $tag uses -accepted but spec-$spec_id role=$reg_role (want acceptance)"
         return 1
     fi
 
