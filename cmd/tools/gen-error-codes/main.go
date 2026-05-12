@@ -31,6 +31,7 @@ import (
 	_ "github.com/sqlrush/opendbx/internal/platform/logger"
 
 	_ "github.com/sqlrush/opendbx/internal/platform/config"
+	_ "github.com/sqlrush/opendbx/internal/platform/version" // spec-0.7 D-1
 )
 
 func main() {
