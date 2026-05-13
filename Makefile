@@ -114,8 +114,8 @@ bench: ## Run benchmarks -> bench.out (WARN; spec-0.11 -> FAIL)
 		echo "BENCH_WARN: no benchmarks present in this codebase (Stage 0 expected; spec-1.4+ adds perf baselines)" >&2; \
 	fi
 
-# gate-fast: skip the expensive coverage + bench steps for quick dev iteration
-# (does NOT replace push-time `make gate`; CI must use full gate).
+# gate-fast: skip the expensive coverage + bench steps for quick dev iteration.
+# It does NOT replace push-time `make gate`; spec-0.9 CI should use the full gate.
 .PHONY: gate-fast
 gate-fast: import-check dep-check golden ## Fast dev gate (skip coverage + bench; not for push)
 	@echo "=== gate-fast (no coverage / no bench) ==="
@@ -211,10 +211,12 @@ registry-drift-check: ## Detect drift vs opendbrb/specs/spec-registry.txt SSOT
 
 # spec-0.8 D-1 / T-4: enforce CLAUDE.md 规则 8 per-package coverage thresholds.
 #
-# Tiers (R2 用户拍板 CRIT-A):
+# Tiers (R2 用户拍板 CRIT-A + T-13 tool-tier errata):
 #   core (≥85%): errcode / logger / version
+#   tool (≥90%): coverage-gate / makefile-check
 #   other (≥75%): everything not core/exempt
-#   exempt: entrypoints / tools/* / cmd/opendbx / config / rpc
+#   exempt: entrypoints / import-rules-check / dep-allowlist-check /
+#           import-rules-check/rules / cmd/opendbx / config / rpc
 #   total (≥80%): aggregated over non-exempt packages
 #
 # coverage-gate runs `go test -race -coverprofile=...` internally — gate
