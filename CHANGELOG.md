@@ -8,6 +8,14 @@
 
 ## [Unreleased]
 
+### FROZEN 2026-05-13: spec-0.8-makefile-build — opendbx a7d4a09 + opendbrb 83bb2e0
+
+- [spec-0.8-makefile-build] FROZEN — tag `v0.8.0-stage0.8` (spec-0.7 D-2 dual-repo 自动化)
+- 7 deliverable: coverage-gate 四档 tier (core/tool/other/exempt) + bench WARN + 双仓 tag-spec wrapper + release stub + opendbrb top-level Makefile + makefile-check 7 violation kind + 双仓 doc 块
+- coverage-gate 91.7% / makefile-check 96.6% (Tool tier ≥90%)
+- R2 pre-impl 24 finding + T-13 post-impl 16 finding 全消化
+- 三路 trace: opendbrb `docs/reviews/{codex,claude-code-reviewer,go-reviewer}-spec-0.8-post-impl-review-2026-05-12.md`
+
 ### 2026-05-13: spec-0.8 T-13 errata — 三路 post-impl review 全消化 (16 finding, 单 PR)
 
 - [spec-0.8-makefile-build] T-13 — codex REQUEST-CHANGES + claude/go APPROVE-WITH-FIXES 共 16 finding 全消化（用户拍板"补 tool 包 ≥90% 独立门槛 + 单 PR 全消化"）
