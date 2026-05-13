@@ -248,7 +248,7 @@ func ParseProfile(path string) (map[string]*PackageCoverage, error) {
 // and returns the resulting import paths. T-13a codex MED-3 feeder for
 // InjectMissing.
 func ListPackages() ([]string, error) {
-	cmd := exec.Command("go", "list", "./...") //nolint:gosec // hardcoded args.
+	cmd := exec.Command("go", "list", "./...")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("go list: %w", err)
@@ -318,23 +318,23 @@ func Check(pkgs map[string]*PackageCoverage) (violations []Violation, totalPct f
 // output; lister enumerates packages for missing-injection (nil = skip).
 func run(profilePath string, verbose bool, w io.Writer, lister func() ([]string, error)) int {
 	if os.Getenv("COVERAGE_GATE_SKIP") == "1" {
-		fmt.Fprintln(w, "==============================================================")
-		fmt.Fprintln(w, "WARNING: COVERAGE_GATE_SKIP=1 — coverage threshold check bypassed")
-		fmt.Fprintln(w, "         (emergency override; CHANGELOG must note usage)")
-		fmt.Fprintln(w, "==============================================================")
+		_, _ = fmt.Fprintln(w, "==============================================================")
+		_, _ = fmt.Fprintln(w, "WARNING: COVERAGE_GATE_SKIP=1 — coverage threshold check bypassed")
+		_, _ = fmt.Fprintln(w, "         (emergency override; CHANGELOG must note usage)")
+		_, _ = fmt.Fprintln(w, "==============================================================")
 		return 0
 	}
 
 	pkgs, err := ParseProfile(profilePath)
 	if err != nil {
-		fmt.Fprintf(w, "coverage-gate: parse %s: %v\n", profilePath, err)
+		_, _ = fmt.Fprintf(w, "coverage-gate: parse %s: %v\n", profilePath, err)
 		return 2
 	}
 
 	if lister != nil {
 		all, lerr := lister()
 		if lerr != nil {
-			fmt.Fprintf(w, "coverage-gate: go list failed (continuing without missing-injection): %v\n", lerr)
+			_, _ = fmt.Fprintf(w, "coverage-gate: go list failed (continuing without missing-injection): %v\n", lerr)
 		} else {
 			InjectMissing(pkgs, all)
 		}
@@ -346,10 +346,10 @@ func run(profilePath string, verbose bool, w io.Writer, lister func() ([]string,
 			paths = append(paths, p)
 		}
 		sort.Strings(paths)
-		fmt.Fprintln(w, "coverage-gate per-package report:")
+		_, _ = fmt.Fprintln(w, "coverage-gate per-package report:")
 		for _, p := range paths {
 			pc := pkgs[p]
-			fmt.Fprintf(w, "  [%s] %s: %.1f%% (%d/%d)\n",
+			_, _ = fmt.Fprintf(w, "  [%s] %s: %.1f%% (%d/%d)\n",
 				classify(p), p, pc.Percent(), pc.CoveredStmts, pc.TotalStmts)
 		}
 	}
@@ -357,23 +357,23 @@ func run(profilePath string, verbose bool, w io.Writer, lister func() ([]string,
 	violations, totalPct, totalOK := Check(pkgs)
 
 	if len(violations) == 0 && totalOK {
-		fmt.Fprintf(w, "coverage-gate OK (total %.1f%% ≥ %.0f%%; %d packages checked)\n",
+		_, _ = fmt.Fprintf(w, "coverage-gate OK (total %.1f%% ≥ %.0f%%; %d packages checked)\n",
 			totalPct, totalThreshold, len(pkgs))
 		return 0
 	}
 
-	fmt.Fprintf(w, "coverage-gate FAIL\n")
+	_, _ = fmt.Fprintf(w, "coverage-gate FAIL\n")
 	if len(violations) > 0 {
-		fmt.Fprintf(w, "  per-package violations (%d):\n", len(violations))
+		_, _ = fmt.Fprintf(w, "  per-package violations (%d):\n", len(violations))
 		for _, v := range violations {
-			fmt.Fprintln(w, v)
+			_, _ = fmt.Fprintln(w, v)
 		}
 	}
 	if !totalOK {
-		fmt.Fprintf(w, "  total coverage %.1f%% < %.0f%% threshold\n", totalPct, totalThreshold)
+		_, _ = fmt.Fprintf(w, "  total coverage %.1f%% < %.0f%% threshold\n", totalPct, totalThreshold)
 	}
-	fmt.Fprintln(w, "  hint: see CLAUDE.md 规则 8 + spec-0.8 D-1 for tier definitions")
-	fmt.Fprintln(w, "  emergency bypass: COVERAGE_GATE_SKIP=1 (note in CHANGELOG)")
+	_, _ = fmt.Fprintln(w, "  hint: see CLAUDE.md 规则 8 + spec-0.8 D-1 for tier definitions")
+	_, _ = fmt.Fprintln(w, "  emergency bypass: COVERAGE_GATE_SKIP=1 (note in CHANGELOG)")
 	return 1
 }
 

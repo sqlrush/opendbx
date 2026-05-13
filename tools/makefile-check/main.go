@@ -106,7 +106,6 @@ type Violation struct {
 }
 
 // String renders a violation for stderr (indented; one per line).
-
 func (v Violation) String() string {
 	loc := v.File
 	if v.Line > 0 {
@@ -315,33 +314,33 @@ func checkDocBlock(path string, docLines []string) []Violation {
 // from main() so tests can drive it (T-13b coverage uplift).
 func run(paths []string, verbose bool, w io.Writer) int {
 	if len(paths) == 0 {
-		fmt.Fprintln(w, "usage: makefile-check <Makefile> [Makefile2 ...]")
+		_, _ = fmt.Fprintln(w, "usage: makefile-check <Makefile> [Makefile2 ...]")
 		return 3
 	}
 	totalViolations := 0
 	for _, p := range paths {
 		violations, err := Check(p)
 		if err != nil {
-			fmt.Fprintf(w, "makefile-check: %v\n", err)
+			_, _ = fmt.Fprintf(w, "makefile-check: %v\n", err)
 			return 3
 		}
 		if verbose {
-			fmt.Fprintf(w, "makefile-check: %s scanned\n", p)
+			_, _ = fmt.Fprintf(w, "makefile-check: %s scanned\n", p)
 		}
 		if len(violations) > 0 {
-			fmt.Fprintf(w, "makefile-check: %s — %d violation(s):\n", p, len(violations))
+			_, _ = fmt.Fprintf(w, "makefile-check: %s — %d violation(s):\n", p, len(violations))
 			for _, v := range violations {
-				fmt.Fprintln(w, v)
+				_, _ = fmt.Fprintln(w, v)
 			}
 			totalViolations += len(violations)
 		}
 	}
 	if totalViolations > 0 {
-		fmt.Fprintf(w, "makefile-check FAIL: %d total violation(s) across %d file(s)\n",
+		_, _ = fmt.Fprintf(w, "makefile-check FAIL: %d total violation(s) across %d file(s)\n",
 			totalViolations, len(paths))
 		return 1
 	}
-	fmt.Fprintf(w, "makefile-check OK (%d file(s) scanned)\n", len(paths))
+	_, _ = fmt.Fprintf(w, "makefile-check OK (%d file(s) scanned)\n", len(paths))
 	return 0
 }
 
