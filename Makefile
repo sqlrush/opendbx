@@ -25,7 +25,7 @@
 .PHONY: all build test test-cover gate gate-fast lint fmt bench clean help
 .PHONY: hooks-install hooks-status import-check dep-check
 .PHONY: golden golden-update gen-docs cc-help-diff
-.PHONY: coverage-gate makefile-check tag-spec release
+.PHONY: coverage-gate makefile-check tag-spec release registry-drift-check
 
 BIN_DIR := bin
 BIN_NAME := opendbx
@@ -91,14 +91,21 @@ fmt: ## Format code
 # WARN signal format (claude MED-5 + Q2 ★A): any anomaly (timeout, parse
 # error, no benchmarks) emits `BENCH_WARN: <reason>` to stderr and exits 0.
 # spec-0.11 will grep `BENCH_WARN:` to flip to FAIL semantics with baselines.
+# T-13c codex MED-2/LOW-2: BENCH_OUTPUT default aligned with spec D-2 (`bench.out`).
+# `*.out` is in .gitignore so this won't pollute the repo. Env override
+# allowed: `BENCH_OUTPUT=/tmp/foo.out make bench`.
 BENCH_TIMEOUT ?= 2m
-BENCH_OUTPUT  := /tmp/opendbx-bench.out
+BENCH_OUTPUT  ?= bench.out
 
-bench: ## Run benchmarks → /tmp/opendbx-bench.out (WARN-only; spec-0.11 flips FAIL)
+# T-13c codex MED-1: previous `| tee $(BENCH_OUTPUT)` made `rc=$$?` capture
+# tee's exit (≈ always 0), masking genuine `go test` failures. Redirect
+# first, then `cat` for visibility; rc now reflects `go test` truthfully.
+bench: ## Run benchmarks -> bench.out (WARN; spec-0.11 -> FAIL)
 	@echo "=== bench (BENCH_TIMEOUT=$(BENCH_TIMEOUT)) ==="
 	@set +e; \
-	$(GO) test -bench=. -benchmem -run=^$$$$ -count=1 -timeout=$(BENCH_TIMEOUT) ./... 2>&1 | tee $(BENCH_OUTPUT); \
+	$(GO) test -bench=. -benchmem -run=^$$$$ -count=1 -timeout=$(BENCH_TIMEOUT) ./... > $(BENCH_OUTPUT) 2>&1; \
 	rc=$$?; \
+	cat $(BENCH_OUTPUT); \
 	if [ $$rc -ne 0 ]; then \
 		echo "BENCH_WARN: bench exit code $$rc (timeout / parse error / runtime panic); see $(BENCH_OUTPUT)" >&2; \
 		exit 0; \
@@ -132,7 +139,7 @@ gate-fast: import-check dep-check golden ## Fast dev gate (skip coverage + bench
 #   make tag-spec SPEC=spec-0.16-stage0-acceptance STAGE_ACCEPTED=1
 #   make tag-spec SPEC=spec-0.8-... REPAIR_PEER=1 OPENDBX_TAG_REPAIR=1
 .PHONY: tag-spec
-tag-spec: ## Tag a spec FROZEN via opendbrb/scripts/release/tag-spec.sh (SPEC=spec-X.Y-... required)
+tag-spec: ## FROZEN-tag a spec via opendbrb tag-spec.sh (SPEC=... req)
 	@[ -n "$(SPEC)" ] || (echo "ERR: SPEC= required (e.g. make tag-spec SPEC=spec-0.8-makefile-build)" >&2; exit 1)
 	@[ -d "$(OPENDBRB_DIR)" ] || (echo "ERR: $(OPENDBRB_DIR) not found; clone opendbrb sibling or override OPENDBRB_DIR=..." >&2; exit 1)
 	@[ -x "$(OPENDBRB_DIR)/scripts/release/tag-spec.sh" ] || (echo "ERR: $(OPENDBRB_DIR)/scripts/release/tag-spec.sh missing or not executable" >&2; exit 1)
@@ -153,7 +160,7 @@ tag-spec: ## Tag a spec FROZEN via opendbrb/scripts/release/tag-spec.sh (SPEC=sp
 # Q4 ★A (R2): stub-fail vs no-op vs scaffold; stub-fail picked because
 # silent no-op breaks the worst (CI thinks release pipeline ran).
 .PHONY: release
-release: ## STUB — release pipeline lands in spec-5.1; fail-fast (do NOT call from CI)
+release: ## STUB - release lands in spec-5.1; CI must not call
 	@echo "ERROR: 'make release' is a stub. The real release pipeline" >&2
 	@echo "       (GoReleaser + multi-arch binary + GitHub Release body)" >&2
 	@echo "       lands in spec-5.1-release-pipeline." >&2
@@ -185,9 +192,22 @@ gate: import-check dep-check golden ## Local layer-2 gate (must pass before push
 	@command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout 5m || echo "golangci-lint not installed (skip in bootstrap)"
 	CGO_ENABLED=0 $(GO) build ./...
 	$(MAKE) makefile-check
+	$(MAKE) registry-drift-check
 	$(MAKE) coverage-gate
 	$(MAKE) bench
 	@echo "=== Layer-2 Gate PASSED ==="
+
+# T-13c codex HIGH-1 / claude HIGH-1: sibling-aware delegation to opendbrb's
+# registry-drift-check (data-row comparison between SSOT and hook-local copy).
+# Silently skipped if sibling absent — gate remains useful for opendbx-only
+# clones. spec-0.8 D-5 explicitly requires this in opendbx gate.
+registry-drift-check: ## Detect drift vs opendbrb/specs/spec-registry.txt SSOT
+	@echo "=== gate: registry-drift-check ==="
+	@if [ -f "$(OPENDBRB_DIR)/Makefile" ]; then \
+		$(MAKE) -C "$(OPENDBRB_DIR)" registry-drift-check OPENDBX_DIR="$(CURDIR)"; \
+	else \
+		echo "skip (sibling $(OPENDBRB_DIR) not present)"; \
+	fi
 
 # spec-0.8 D-1 / T-4: enforce CLAUDE.md 规则 8 per-package coverage thresholds.
 #
@@ -204,7 +224,7 @@ gate: import-check dep-check golden ## Local layer-2 gate (must pass before push
 # Emergency override: `COVERAGE_GATE_SKIP=1 make coverage-gate` (Q11 ★A;
 # usage MUST be noted in CHANGELOG).
 COVERAGE_PROFILE := /tmp/opendbx-coverage.out
-coverage-gate: ## Run go test -coverprofile + enforce per-package thresholds (spec-0.8 D-1)
+coverage-gate: ## Coverage gate: per-package thresholds (spec-0.8 D-1)
 	@echo "=== gate: coverage-gate ==="
 	$(GO) test -race -coverprofile=$(COVERAGE_PROFILE) ./...
 	$(GO) run ./tools/coverage-gate -profile=$(COVERAGE_PROFILE)
@@ -214,7 +234,7 @@ coverage-gate: ## Run go test -coverprofile + enforce per-package thresholds (sp
 # tools/makefile-check (help comment / .PHONY / kebab-lower / no-dup /
 # doc-block + .PHONY no-continuation). Sibling skip is silent — gate
 # remains useful for opendbx-only clones.
-makefile-check: ## Lint top-level Makefile(s) (this repo + sibling opendbrb if present)
+makefile-check: ## Lint top-level Makefile(s) + sibling if present
 	@echo "=== gate: makefile-check ==="
 	@files="Makefile"; \
 	if [ -f "$(OPENDBRB_DIR)/Makefile" ]; then files="$$files $(OPENDBRB_DIR)/Makefile"; fi; \
@@ -234,7 +254,7 @@ golden-update: ## Regenerate CLI golden files
 	TEST_UPDATE_GOLDEN=1 $(GO) test -run TestGolden ./cmd/opendbx/...
 	@echo "goldens updated. Review with 'git diff cmd/opendbx/testdata/golden/'"
 
-gen-docs: ## Regenerate opendbrb docs/error-codes.md from live errcode registry
+gen-docs: ## Regenerate opendbrb docs/error-codes.md from registry
 	$(GO) run cmd/tools/gen-error-codes/main.go --out=../opendbrb/docs/error-codes.md
 
 # spec-0.3 D-6: drift check vs CC v2.1.138 baseline. Doesn't fail; surfaces

@@ -4,28 +4,26 @@
 
 // Package main implements coverage-gate, enforcing CLAUDE.md 规则 8
 // per-package coverage thresholds against a `go test -coverprofile=...`
-// output file. spec-0.8 D-1 / T-3.
+// output file. spec-0.8 D-1 / T-3 / T-13a.
 //
-// Tiers (R2 用户拍板 CRIT-A):
+// Tiers (R2 用户拍板 CRIT-A + T-13a 用户拍板 codex CRIT-1):
 //
 //   - Core packages (≥ 85%):
 //     internal/platform/{errcode, logger, version}
-//   - Other packages (≥ 75%): everything not in core/exempt
-//   - Exempt (no threshold): entrypoints stub + tools/* lint tools +
+//   - Tool packages (≥ 90%): spec-0.8 引入的两个 lint 工具
+//     tools/{coverage-gate, makefile-check}（自测循环但仍要求覆盖）
+//   - Other packages (≥ 75%): everything not in core/tool/exempt
+//   - Exempt (no threshold): entrypoints stub + spec-0.7 era tools +
 //     cmd/opendbx + internal/platform/config + internal/platform/rpc
-//     (tech debt; spec-1.X UI 实施后单独升 core)
 //   - Total project (≥ 80%): aggregated across all non-exempt packages
 //
-// Profile parsing (claude T-12 H1 R2 修): `go tool cover -func` only emits
-// a single project-wide `total:` line — no per-package totals. We must
-// parse the raw profile format ourselves:
+// Missing-package handling (T-13a codex MED-3):
 //
-//	mode: <set|count|atomic>
-//	<pkg/file>:<startLine>.<col>,<endLine>.<col> <numStmts> <count>
-//	...
-//
-// Per-package coverage = sum(numStmts where count > 0) / sum(numStmts),
-// grouped by stripping the trailing `/<file>.go` portion of `pkg/file`.
+// `go test -coverprofile=out ./...` writes nothing to the profile for
+// packages without test files. Without explicit injection, a non-exempt
+// package with real code and no tests is invisible to the gate. We call
+// `go list ./...` to enumerate all packages, then inject a 0%-coverage
+// entry for any non-exempt package that is absent — guaranteed violation.
 //
 // Override: COVERAGE_GATE_SKIP=1 env (Q11 ★A) bypasses all checks but
 // emits a loud stderr warning. Use only for emergency hotfixes; CHANGELOG
@@ -42,15 +40,18 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
 )
 
-// Threshold constants per spec-0.8 D-1.
+// Threshold constants per spec-0.8 D-1 + T-13a.
 const (
 	coreThreshold  = 85.0
+	toolThreshold  = 90.0
 	otherThreshold = 75.0
 	totalThreshold = 80.0
 )
@@ -58,7 +59,17 @@ const (
 // modulePath prefix for grouping packages from profile entries.
 const modulePath = "github.com/sqlrush/opendbx"
 
-//nolint:gochecknoglobals // configuration constants by design.
+// Package-tier classification sets.
+//
+// These maps are treated as immutable lookup tables: written once at file
+// scope, read via classify() at runtime. They are NOT to be mutated by any
+// code path — tests should add new entries by editing this file. The
+// gochecknoglobals exemption is intentional for this configuration table;
+// converting to functions returning copies would only add allocation
+// overhead without changing semantics (Go has no first-class immutable
+// maps).
+//
+//nolint:gochecknoglobals // tier classification table; treat as const.
 var (
 	corePackages = map[string]bool{
 		modulePath + "/internal/platform/errcode": true,
@@ -66,13 +77,17 @@ var (
 		modulePath + "/internal/platform/version": true,
 	}
 
+	// T-13a codex CRIT-1: 自我覆盖率独立 tier ≥ 90%; 不再 exempt.
+	toolPackages = map[string]bool{
+		modulePath + "/tools/coverage-gate":  true,
+		modulePath + "/tools/makefile-check": true,
+	}
+
 	exemptPackages = map[string]bool{
 		modulePath + "/internal/entrypoints":           true,
-		modulePath + "/tools/import-rules-check":       true,
+		modulePath + "/tools/import-rules-check":       true, // spec-0.7 era; pending spec-0.10
 		modulePath + "/tools/import-rules-check/rules": true,
-		modulePath + "/tools/dep-allowlist-check":      true,
-		modulePath + "/tools/coverage-gate":            true, // self-exempt: assertion logic
-		modulePath + "/tools/makefile-check":           true, // spec-0.8 D-6 (lands in T-9)
+		modulePath + "/tools/dep-allowlist-check":      true, // spec-0.7 era; pending spec-0.10
 		modulePath + "/cmd/opendbx":                    true,
 		modulePath + "/internal/platform/config":       true,
 		modulePath + "/internal/platform/rpc":          true,
@@ -99,15 +114,19 @@ type Tier int
 
 // Tier values returned by classify().
 const (
-	TierCore Tier = iota
-	TierOther
-	TierExempt
+	TierCore   Tier = iota // ≥ 85%
+	TierTool               // ≥ 90% (T-13a)
+	TierOther              // ≥ 75%
+	TierExempt             // no threshold
 )
 
+// String returns the lowercase tier name used in violation output.
 func (t Tier) String() string {
 	switch t {
 	case TierCore:
 		return "core"
+	case TierTool:
+		return "tool"
 	case TierOther:
 		return "other"
 	case TierExempt:
@@ -124,6 +143,9 @@ func classify(pkg string) Tier {
 	if corePackages[pkg] {
 		return TierCore
 	}
+	if toolPackages[pkg] {
+		return TierTool
+	}
 	return TierOther
 }
 
@@ -131,6 +153,8 @@ func threshold(tier Tier) float64 {
 	switch tier {
 	case TierCore:
 		return coreThreshold
+	case TierTool:
+		return toolThreshold
 	case TierOther:
 		return otherThreshold
 	default:
@@ -146,6 +170,7 @@ type Violation struct {
 	Threshold float64
 }
 
+// String renders a violation for stderr (indented; one per line).
 func (v Violation) String() string {
 	return fmt.Sprintf("  [%s] %s: %.1f%% (< %.0f%%)",
 		v.Tier, v.Package, v.Percent, v.Threshold)
@@ -178,26 +203,22 @@ func ParseProfile(path string) (map[string]*PackageCoverage, error) {
 		if line == "" {
 			continue
 		}
-		// Format: <pkg/file>:<startLine>.<col>,<endLine>.<col> <numStmts> <count>
 		colon := strings.Index(line, ":")
 		if colon < 0 {
 			return nil, fmt.Errorf("line %d: missing ':' in %q", lineNum, line)
 		}
 		fileSpec := line[:colon]
-		// Strip trailing /<filename>.go
 		slash := strings.LastIndex(fileSpec, "/")
 		if slash < 0 {
 			return nil, fmt.Errorf("line %d: missing '/' in package path %q", lineNum, fileSpec)
 		}
 		pkgPath := fileSpec[:slash]
 
-		// Parse the trailing "<numStmts> <count>" portion.
 		rest := strings.TrimSpace(line[colon+1:])
 		fields := strings.Fields(rest)
 		if len(fields) < 3 {
 			return nil, fmt.Errorf("line %d: expected 3 fields after colon, got %d", lineNum, len(fields))
 		}
-		// fields[0] = "<start>.<col>,<end>.<col>" (range; we don't need it)
 		numStmts, err := strconv.Atoi(fields[1])
 		if err != nil {
 			return nil, fmt.Errorf("line %d: numStmts not integer: %w", lineNum, err)
@@ -223,12 +244,42 @@ func ParseProfile(path string) (map[string]*PackageCoverage, error) {
 	return pkgs, nil
 }
 
+// ListPackages invokes `go list ./...` in the current working directory
+// and returns the resulting import paths. T-13a codex MED-3 feeder for
+// InjectMissing.
+func ListPackages() ([]string, error) {
+	cmd := exec.Command("go", "list", "./...") //nolint:gosec // hardcoded args.
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("go list: %w", err)
+	}
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" {
+		return nil, nil
+	}
+	return strings.Split(trimmed, "\n"), nil
+}
+
+// InjectMissing adds zero-coverage entries for non-exempt packages in
+// allPackages that are absent from pkgs. T-13a codex MED-3: a package
+// with code but no test files is otherwise invisible to the gate.
+func InjectMissing(pkgs map[string]*PackageCoverage, allPackages []string) {
+	for _, p := range allPackages {
+		if _, exists := pkgs[p]; exists {
+			continue
+		}
+		if classify(p) == TierExempt {
+			continue
+		}
+		pkgs[p] = &PackageCoverage{Path: p}
+	}
+}
+
 // Check returns violations + (totalPct, totalThresholdMet) given parsed
 // package coverages. exemptPackages are excluded from the total calculation.
 func Check(pkgs map[string]*PackageCoverage) (violations []Violation, totalPct float64, totalOK bool) {
 	var totalStmts, totalCovered int
 
-	// Sort packages for deterministic output.
 	paths := make([]string, 0, len(pkgs))
 	for p := range pkgs {
 		paths = append(paths, p)
@@ -262,36 +313,43 @@ func Check(pkgs map[string]*PackageCoverage) (violations []Violation, totalPct f
 	return violations, totalPct, totalOK
 }
 
-func main() {
-	profilePath := flag.String("profile", "coverage.out", "path to `go test -coverprofile` output")
-	verbose := flag.Bool("v", false, "verbose: print all packages with their tier + coverage")
-	flag.Parse()
-
-	// Q11 ★A: emergency override env. Loud warning to stderr; exit 0.
+// run executes the gate logic and returns the desired exit code. Split
+// from main() for test coverage (T-13a). w receives stderr-equivalent
+// output; lister enumerates packages for missing-injection (nil = skip).
+func run(profilePath string, verbose bool, w io.Writer, lister func() ([]string, error)) int {
 	if os.Getenv("COVERAGE_GATE_SKIP") == "1" {
-		fmt.Fprintln(os.Stderr, "==============================================================")
-		fmt.Fprintln(os.Stderr, "WARNING: COVERAGE_GATE_SKIP=1 — coverage threshold check bypassed")
-		fmt.Fprintln(os.Stderr, "         (emergency override; CHANGELOG must note usage)")
-		fmt.Fprintln(os.Stderr, "==============================================================")
-		os.Exit(0)
+		fmt.Fprintln(w, "==============================================================")
+		fmt.Fprintln(w, "WARNING: COVERAGE_GATE_SKIP=1 — coverage threshold check bypassed")
+		fmt.Fprintln(w, "         (emergency override; CHANGELOG must note usage)")
+		fmt.Fprintln(w, "==============================================================")
+		return 0
 	}
 
-	pkgs, err := ParseProfile(*profilePath)
+	pkgs, err := ParseProfile(profilePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "coverage-gate: parse %s: %v\n", *profilePath, err)
-		os.Exit(2)
+		fmt.Fprintf(w, "coverage-gate: parse %s: %v\n", profilePath, err)
+		return 2
 	}
 
-	if *verbose {
+	if lister != nil {
+		all, lerr := lister()
+		if lerr != nil {
+			fmt.Fprintf(w, "coverage-gate: go list failed (continuing without missing-injection): %v\n", lerr)
+		} else {
+			InjectMissing(pkgs, all)
+		}
+	}
+
+	if verbose {
 		paths := make([]string, 0, len(pkgs))
 		for p := range pkgs {
 			paths = append(paths, p)
 		}
 		sort.Strings(paths)
-		fmt.Fprintln(os.Stderr, "coverage-gate per-package report:")
+		fmt.Fprintln(w, "coverage-gate per-package report:")
 		for _, p := range paths {
 			pc := pkgs[p]
-			fmt.Fprintf(os.Stderr, "  [%s] %s: %.1f%% (%d/%d)\n",
+			fmt.Fprintf(w, "  [%s] %s: %.1f%% (%d/%d)\n",
 				classify(p), p, pc.Percent(), pc.CoveredStmts, pc.TotalStmts)
 		}
 	}
@@ -299,22 +357,40 @@ func main() {
 	violations, totalPct, totalOK := Check(pkgs)
 
 	if len(violations) == 0 && totalOK {
-		fmt.Fprintf(os.Stderr, "coverage-gate OK (total %.1f%% ≥ %.0f%%; %d packages checked)\n",
+		fmt.Fprintf(w, "coverage-gate OK (total %.1f%% ≥ %.0f%%; %d packages checked)\n",
 			totalPct, totalThreshold, len(pkgs))
-		os.Exit(0)
+		return 0
 	}
 
-	fmt.Fprintf(os.Stderr, "coverage-gate FAIL\n")
+	fmt.Fprintf(w, "coverage-gate FAIL\n")
 	if len(violations) > 0 {
-		fmt.Fprintf(os.Stderr, "  per-package violations (%d):\n", len(violations))
+		fmt.Fprintf(w, "  per-package violations (%d):\n", len(violations))
 		for _, v := range violations {
-			fmt.Fprintln(os.Stderr, v)
+			fmt.Fprintln(w, v)
 		}
 	}
 	if !totalOK {
-		fmt.Fprintf(os.Stderr, "  total coverage %.1f%% < %.0f%% threshold\n", totalPct, totalThreshold)
+		fmt.Fprintf(w, "  total coverage %.1f%% < %.0f%% threshold\n", totalPct, totalThreshold)
 	}
-	fmt.Fprintln(os.Stderr, "  hint: see CLAUDE.md 规则 8 + spec-0.8 D-1 for tier definitions")
-	fmt.Fprintln(os.Stderr, "  emergency bypass: COVERAGE_GATE_SKIP=1 (note in CHANGELOG)")
-	os.Exit(1)
+	fmt.Fprintln(w, "  hint: see CLAUDE.md 规则 8 + spec-0.8 D-1 for tier definitions")
+	fmt.Fprintln(w, "  emergency bypass: COVERAGE_GATE_SKIP=1 (note in CHANGELOG)")
+	return 1
+}
+
+func main() {
+	profilePath := flag.String("profile", "coverage.out", "path to `go test -coverprofile` output")
+	verbose := flag.Bool("v", false, "verbose: print all packages with their tier + coverage")
+	// T-13a codex MED-3 — InjectMissing capability is opt-in via -enumerate.
+	// Off by default because Stage 0 has many `doc.go`-only scaffold packages
+	// (internal/app/services/* / internal/domain/* — Stage 1+) that would
+	// false-positive as 0%-coverage violations. Full enforcement deferred to
+	// the spec that introduces real code in those packages (spec-1.X+).
+	enumerate := flag.Bool("enumerate", false, "use `go list ./...` to inject 0% for non-exempt packages missing from profile")
+	flag.Parse()
+
+	var lister func() ([]string, error)
+	if *enumerate {
+		lister = ListPackages
+	}
+	os.Exit(run(*profilePath, *verbose, os.Stderr, lister))
 }
