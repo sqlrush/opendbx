@@ -5,11 +5,22 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// mustCheck runs Check and fails the test on parse error (T-13b go HIGH-2).
+func mustCheck(t *testing.T, path string) []Violation {
+	t.Helper()
+	violations, err := Check(path)
+	if err != nil {
+		t.Fatalf("Check(%s): %v", path, err)
+	}
+	return violations
+}
 
 // writeMakefile writes a temp Makefile with the given body. Caller-provided
 // "# ..." doc-block is preserved as-is; tests can opt out.
@@ -76,7 +87,7 @@ test: ## Run tests
 	@echo test
 `
 	path := writeMakefile(t, body)
-	violations, _ := Check(path)
+	violations := mustCheck(t, path)
 	found := false
 	for _, v := range violations {
 		if v.Kind == VMissingHelp && v.Target == "build" {
@@ -102,7 +113,7 @@ test: ## Run tests
 	@echo test
 `
 	path := writeMakefile(t, body)
-	violations, _ := Check(path)
+	violations := mustCheck(t, path)
 	found := false
 	for _, v := range violations {
 		if v.Kind == VPhonyMissing && v.Target == "test" {
@@ -125,7 +136,7 @@ Build_thing: ## Build (bad name)
 	@echo build
 `
 	path := writeMakefile(t, body)
-	violations, _ := Check(path)
+	violations := mustCheck(t, path)
 	found := false
 	for _, v := range violations {
 		if v.Kind == VNameNotKebab && v.Target == "Build_thing" {
@@ -151,7 +162,7 @@ build: ## Build second
 	@echo second
 `
 	path := writeMakefile(t, body)
-	violations, _ := Check(path)
+	violations := mustCheck(t, path)
 	found := false
 	for _, v := range violations {
 		if v.Kind == VDuplicateTarget && v.Target == "build" {
@@ -178,7 +189,7 @@ build: ## Build
 	@echo build
 `
 	path := writeMakefile(t, body)
-	violations, _ := Check(path)
+	violations := mustCheck(t, path)
 	found := false
 	for _, v := range violations {
 		if v.Kind == VDocBlock {
@@ -214,7 +225,7 @@ test: ## Test
 	@echo test
 `
 	path := writeMakefile(t, body)
-	violations, _ := Check(path)
+	violations := mustCheck(t, path)
 	found := false
 	for _, v := range violations {
 		if v.Kind == VPhonyContinue {
@@ -241,7 +252,7 @@ test: ## Test
 	@echo test
 `
 	path := writeMakefile(t, body)
-	violations, _ := Check(path)
+	violations := mustCheck(t, path)
 	// Filter out doc-block / unrelated violations; assert no phony-missing.
 	for _, v := range violations {
 		if v.Kind == VPhonyMissing {
@@ -272,7 +283,7 @@ build: ## Build
 	@echo build
 `
 	path := writeMakefile(t, body)
-	violations, _ := Check(path)
+	violations := mustCheck(t, path)
 	// `build` is the only top-level target; should not produce violations
 	// related to pattern rules or `ifeq`/`include`.
 	for _, v := range violations {
@@ -303,5 +314,146 @@ func TestCheck_ProductionFixturesNoCrash(t *testing.T) {
 		if _, err := Check(p); err != nil {
 			t.Errorf("Check(%s) crashed: %v", p, err)
 		}
+	}
+}
+
+// --- Path 11: help-text-too-long (T-13b codex LOW-1) -----------------
+
+func TestCheck_HelpTooLong(t *testing.T) {
+	t.Parallel()
+	longHelp := strings.Repeat("x", helpMaxLen+5) // 65 chars
+	body := minimalDocBlock + `
+.PHONY: build
+
+build: ## ` + longHelp + `
+	@echo build
+`
+	violations := mustCheck(t, writeMakefile(t, body))
+	found := false
+	for _, v := range violations {
+		if v.Kind == VHelpTooLong && v.Target == "build" {
+			found = true
+			if !strings.Contains(v.Message, "spec § 2.3 #4") {
+				t.Errorf("message missing spec reference: %s", v.Message)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected help-text-too-long for `build`; got %+v", violations)
+	}
+}
+
+func TestCheck_HelpExactlyAtLimit(t *testing.T) {
+	t.Parallel()
+	help := strings.Repeat("x", helpMaxLen) // exactly 60
+	body := minimalDocBlock + `
+.PHONY: build
+
+build: ## ` + help + `
+	@echo build
+`
+	violations := mustCheck(t, writeMakefile(t, body))
+	for _, v := range violations {
+		if v.Kind == VHelpTooLong {
+			t.Errorf("60 chars should be at limit (not violation): %s", v.Message)
+		}
+	}
+}
+
+// --- Path 12: Violation.String --------------------------------------
+
+func TestViolationString(t *testing.T) {
+	t.Parallel()
+	v := Violation{File: "Mk", Line: 5, Kind: VMissingHelp, Target: "build", Message: "missing"}
+	got := v.String()
+	if !strings.Contains(got, "missing-help-comment") || !strings.Contains(got, "Mk:5") ||
+		!strings.Contains(got, `"build"`) {
+		t.Errorf("unexpected: %q", got)
+	}
+	// Doc-block has empty target → omit target= portion.
+	v2 := Violation{File: "Mk", Kind: VDocBlock, Message: "incomplete"}
+	got2 := v2.String()
+	if strings.Contains(got2, "target=") {
+		t.Errorf("doc-block should omit target=: %q", got2)
+	}
+}
+
+// --- Path 13: run() exit paths ---------------------------------------
+
+func TestRun_NoArgs(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	code := run(nil, false, &buf)
+	if code != 3 {
+		t.Errorf("run nil paths exit = %d; want 3", code)
+	}
+	if !strings.Contains(buf.String(), "usage:") {
+		t.Errorf("expected usage hint: %s", buf.String())
+	}
+}
+
+func TestRun_OKQuiet(t *testing.T) {
+	t.Parallel()
+	body := minimalDocBlock + `
+.PHONY: build
+
+build: ## Build
+	@echo build
+`
+	path := writeMakefile(t, body)
+	var buf bytes.Buffer
+	code := run([]string{path}, false, &buf)
+	if code != 0 {
+		t.Errorf("run OK fixture exit = %d; want 0; out=%s", code, buf.String())
+	}
+	if !strings.Contains(buf.String(), "OK") {
+		t.Errorf("expected OK in output: %s", buf.String())
+	}
+}
+
+func TestRun_Verbose(t *testing.T) {
+	t.Parallel()
+	body := minimalDocBlock + `
+.PHONY: build
+
+build: ## Build
+	@echo build
+`
+	path := writeMakefile(t, body)
+	var buf bytes.Buffer
+	code := run([]string{path}, true, &buf)
+	if code != 0 {
+		t.Errorf("verbose OK fixture exit = %d; want 0", code)
+	}
+	if !strings.Contains(buf.String(), "scanned") {
+		t.Errorf("expected scanned in verbose output: %s", buf.String())
+	}
+}
+
+func TestRun_Fail(t *testing.T) {
+	t.Parallel()
+	body := minimalDocBlock + `
+.PHONY: build
+
+build:
+	@echo build
+`
+	path := writeMakefile(t, body)
+	var buf bytes.Buffer
+	code := run([]string{path}, false, &buf)
+	if code != 1 {
+		t.Errorf("run fixture with missing-help exit = %d; want 1", code)
+	}
+	if !strings.Contains(buf.String(), "FAIL") {
+		t.Errorf("expected FAIL output: %s", buf.String())
+	}
+}
+
+func TestRun_OpenError(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	code := run([]string{"/no/such/Makefile-xyz"}, false, &buf)
+	if code != 3 {
+		t.Errorf("run with missing file exit = %d; want 3", code)
 	}
 }

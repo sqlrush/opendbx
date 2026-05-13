@@ -3,9 +3,9 @@
 // Author: sqlrush
 
 // Package main implements makefile-check, a lint tool that enforces the
-// opendbx + opendbrb Makefile conventions (spec-0.8 D-6 / T-9).
+// opendbx + opendbrb Makefile conventions (spec-0.8 D-6 / T-9 / T-13b).
 //
-// Checks (5 rules):
+// Checks (6 rules):
 //
 //  1. Every rule target has a `## help-text` doc comment on its definition
 //     line (consumed by `make help`).
@@ -14,7 +14,8 @@
 //     spec § 2.3 — recipes must use single-line `.PHONY:` form).
 //  3. Target names match `lower-kebab-case`: `^[a-z][a-z0-9-]*$`.
 //  4. No duplicate target names.
-//  5. Doc-block (spec-0.8 D-7 binary criterion): the file begins with a
+//  5. Help-text length ≤ 60 chars (spec § 2.3 #4; T-13b codex LOW-1).
+//  6. Doc-block (spec-0.8 D-7 binary criterion): the file begins with a
 //     comment block (lines starting `#`) containing:
 //     - ≥ 3 distinct category headings (e.g., "用户日常", "CI", "release", "维护")
 //     - ≥ 1 line mentioning a cross-repo path (`../opendbx` or `../opendbrb`)
@@ -43,6 +44,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"sort"
@@ -77,7 +79,7 @@ var (
 	continuationRE = regexp.MustCompile(`\\\s*$`)
 )
 
-// VKind enumerates the 5 violation classes.
+// VKind enumerates the violation classes emitted by Check.
 type VKind string
 
 // Violation kind tags emitted in output.
@@ -88,9 +90,13 @@ const (
 	VDuplicateTarget VKind = "duplicate-target"
 	VDocBlock        VKind = "doc-block-incomplete"
 	VPhonyContinue   VKind = "phony-line-continuation" // MED-1: rejected
+	VHelpTooLong     VKind = "help-text-too-long"      // T-13b codex LOW-1
 )
 
-// Violation describes one finding.
+// helpMaxLen is the spec § 2.3 #4 limit for `## <description>` text.
+const helpMaxLen = 60
+
+// Violation describes one Makefile-lint finding.
 type Violation struct {
 	File    string
 	Line    int
@@ -99,6 +105,7 @@ type Violation struct {
 	Message string
 }
 
+// String renders a violation for stderr (indented; one per line).
 func (v Violation) String() string {
 	loc := v.File
 	if v.Line > 0 {
@@ -233,6 +240,11 @@ func Check(path string) ([]Violation, error) {
 				File: path, Line: info.Line, Kind: VMissingHelp, Target: name,
 				Message: "missing `## <one-line description>` comment on definition line",
 			})
+		} else if len(info.Help) > helpMaxLen {
+			violations = append(violations, Violation{
+				File: path, Line: info.Line, Kind: VHelpTooLong, Target: name,
+				Message: fmt.Sprintf("help text length %d > %d (spec § 2.3 #4)", len(info.Help), helpMaxLen),
+			})
 		}
 		if !phony[name] {
 			violations = append(violations, Violation{
@@ -298,38 +310,42 @@ func checkDocBlock(path string, docLines []string) []Violation {
 	}}
 }
 
-func main() {
-	verbose := flag.Bool("v", false, "verbose: list parsed targets per file")
-	flag.Parse()
-	paths := flag.Args()
+// run executes the lint logic and returns the desired exit code. Split
+// from main() so tests can drive it (T-13b coverage uplift).
+func run(paths []string, verbose bool, w io.Writer) int {
 	if len(paths) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: makefile-check <Makefile> [Makefile2 ...]")
-		os.Exit(3)
+		_, _ = fmt.Fprintln(w, "usage: makefile-check <Makefile> [Makefile2 ...]")
+		return 3
 	}
-
 	totalViolations := 0
 	for _, p := range paths {
 		violations, err := Check(p)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "makefile-check: %v\n", err)
-			os.Exit(3)
+			_, _ = fmt.Fprintf(w, "makefile-check: %v\n", err)
+			return 3
 		}
-		if *verbose {
-			fmt.Fprintf(os.Stderr, "makefile-check: %s scanned\n", p)
+		if verbose {
+			_, _ = fmt.Fprintf(w, "makefile-check: %s scanned\n", p)
 		}
 		if len(violations) > 0 {
-			fmt.Fprintf(os.Stderr, "makefile-check: %s — %d violation(s):\n", p, len(violations))
+			_, _ = fmt.Fprintf(w, "makefile-check: %s — %d violation(s):\n", p, len(violations))
 			for _, v := range violations {
-				fmt.Fprintln(os.Stderr, v)
+				_, _ = fmt.Fprintln(w, v)
 			}
 			totalViolations += len(violations)
 		}
 	}
-
 	if totalViolations > 0 {
-		fmt.Fprintf(os.Stderr, "makefile-check FAIL: %d total violation(s) across %d file(s)\n",
+		_, _ = fmt.Fprintf(w, "makefile-check FAIL: %d total violation(s) across %d file(s)\n",
 			totalViolations, len(paths))
-		os.Exit(1)
+		return 1
 	}
-	fmt.Fprintf(os.Stderr, "makefile-check OK (%d file(s) scanned)\n", len(paths))
+	_, _ = fmt.Fprintf(w, "makefile-check OK (%d file(s) scanned)\n", len(paths))
+	return 0
+}
+
+func main() {
+	verbose := flag.Bool("v", false, "verbose: list parsed targets per file")
+	flag.Parse()
+	os.Exit(run(flag.Args(), *verbose, os.Stderr))
 }
