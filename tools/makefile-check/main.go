@@ -126,7 +126,7 @@ type targetInfo struct {
 
 // Check parses path as a Makefile and returns all violations found.
 func Check(path string) ([]Violation, error) {
-	f, err := os.Open(path) //nolint:gosec // operator-supplied lint tool path
+	f, err := os.Open(path) // #nosec G304 -- spec-0.9 D-2: operator-supplied lint tool path
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}

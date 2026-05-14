@@ -103,7 +103,7 @@ func mainWriteFunc(logPath string, debugToStderr bool) writeFunc {
 		if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 			return err
 		}
-		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // debug path is operator-controlled
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) // #nosec G304 -- spec-0.9 D-2: debug path is operator-controlled
 		if err != nil {
 			return err
 		}

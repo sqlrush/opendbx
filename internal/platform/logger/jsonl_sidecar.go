@@ -107,7 +107,7 @@ func sidecarWriteFunc(path string) writeFunc {
 			warnSidecar("mkdir", path, err)
 			return err
 		}
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // path resolved from session id under config home
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) // #nosec G304 -- spec-0.9 D-2: path resolved from session id under config home
 		if err != nil {
 			warnSidecar("open", path, err)
 			return err

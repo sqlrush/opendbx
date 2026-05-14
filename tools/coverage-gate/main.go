@@ -184,7 +184,7 @@ func (v Violation) String() string {
 //
 // We strip the trailing /<filename>.go to get the package import path.
 func ParseProfile(path string) (map[string]*PackageCoverage, error) {
-	f, err := os.Open(path) //nolint:gosec // operator-supplied lint tool path
+	f, err := os.Open(path) // #nosec G304 -- spec-0.9 D-2: operator-supplied lint tool path
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
