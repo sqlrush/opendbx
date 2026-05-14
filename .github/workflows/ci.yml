@@ -222,3 +222,30 @@ jobs:
       # Allowlist SSOT: tools/vuln-allowlist/allowlist.json (每条必含 spec_ref).
       - name: Run vuln-check (govulncheck + OSV allowlist)
         run: make vuln-check
+
+  # spec-0.9 T-4 / D-3: perf-smoke job — `make bench` WARN-only.
+  #
+  # 非 required at T-4 (branch protection 不引用 until T-8 cutover).
+  # Stage 0 codebase 无 Benchmark → spec-0.8 D-2 emit `BENCH_WARN: no
+  # benchmarks present` 到 stderr 但 exit 0 (不阻 PR).
+  # spec-0.11 落 baseline 后 grep `BENCH_WARN:` 翻 FAIL (forward).
+  perf-smoke:
+    name: perf-smoke
+    runs-on: ubuntu-latest
+    needs: validate
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: "Run bench (spec-0.8 D-2 WARN-only; BENCH_WARN stderr 信号)"
+        run: make bench
+      - name: Upload bench.out artifact
+        if: ${{ always() && hashFiles('bench.out') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-output
+          path: bench.out
+          retention-days: 30
