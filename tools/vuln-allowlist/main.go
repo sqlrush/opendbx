@@ -85,7 +85,7 @@ type allowlistFile struct {
 type exemption struct {
 	OSVID   string `json:"osv_id"`
 	Module  string `json:"module"`
-	Expiry  string `json:"expiry"`   // YYYY-MM-DD
+	Expiry  string `json:"expiry"` // YYYY-MM-DD
 	Reason  string `json:"reason"`
 	SpecRef string `json:"spec_ref"`
 }
