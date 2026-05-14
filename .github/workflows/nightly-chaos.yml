@@ -1,0 +1,72 @@
+# opendbx Nightly Chaos — spec-0.9 D-4 / T-6
+#
+# 4 stub job 骨架 (network-partition / disk-full / oom / llm-empty-response).
+# 实际 chaos 引擎在 spec-2.X-sentinel + spec-3.6-chaos-engineering 落地;
+# 本 spec 仅 ship workflow 文件 + cron / workflow_dispatch trigger 验证.
+#
+# Trigger:
+# - schedule cron 0 2 * * * UTC (= 10:00 Asia/Shanghai)
+#   用户工作时段 catch failure 立即处理 (spec § 8 Q6 ★A)
+# - workflow_dispatch 手动跑 (调试 / chaos engineer dry-run)
+#
+# 行为:
+# - 每 stub job 跑 `echo "CHAOS_STUB: <scenario> deferred to spec-X.Y"` + exit 0
+# - 信号格式与 spec-0.8 D-2 `BENCH_WARN:` 同风格 (CI 易 parse)
+# - 不是 required (非 PR 触发 + nightly only); 不阻 PR / merge
+#
+# 失败处理 (spec-3.6 落地后):
+# - 失败时 GitHub issue auto-create (待 issue-bot 加, 推 spec-3.6)
+# - 本 spec 仅 echo + exit 0, 永不 fail
+#
+# Design refs:
+# - spec-0.9-ci-github-actions.md § 2.3 nightly-chaos.yml 骨架
+# - spec-0.9-ci-github-actions.md § 8 Q6 cron 时机决策
+# - CLAUDE.md § 4 Job 6 Chaos (nightly only)
+# - CLAUDE.md 规则 8 测试 Layer 4 故障注入
+
+name: Nightly Chaos
+
+on:
+  schedule:
+    - cron: '0 2 * * *'                    # UTC 02:00 = 北京 10:00
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  network-partition:
+    name: network-partition
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "CHAOS_STUB: network-partition deferred to spec-2.X-sentinel + spec-3.6-chaos"
+          echo "(本 spec-0.9 仅 ship cron + workflow_dispatch 骨架; 实际故障注入待 spec-3.6 落)"
+
+  disk-full:
+    name: disk-full
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "CHAOS_STUB: disk-full deferred to spec-3.6-chaos"
+          echo "(本 spec-0.9 仅 ship cron + workflow_dispatch 骨架; 实际故障注入待 spec-3.6 落)"
+
+  oom:
+    name: oom
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "CHAOS_STUB: oom deferred to spec-3.6-chaos"
+          echo "(本 spec-0.9 仅 ship cron + workflow_dispatch 骨架; 实际故障注入待 spec-3.6 落)"
+
+  llm-empty-response:
+    name: llm-empty-response
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "CHAOS_STUB: llm-empty-response deferred to spec-1.X-llm-engine + spec-3.6-chaos"
+          echo "(本 spec-0.9 仅 ship cron + workflow_dispatch 骨架; 实际故障注入待 spec-3.6 落)"
