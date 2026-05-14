@@ -1,9 +1,21 @@
-# Bootstrap CI for opendbx — Stage 0
-# 完整 7 job 流水线在 spec-0.9-ci-github-actions 中正式定稿。
-# spec-0.2 阶段：4 → 7 jobs（追加 import-check / dep-check / cli-golden）。
+# opendbx CI — spec-0.9 D-1 / T-5 (compatibility-PR mode)
 #
-# Design: opendbrb/docs/cicd-and-methodology.md § 3,
-#         opendbrb/specs/stage-0/spec-0.2-go-module-layout.md § 7 DoD
+# 9 stable-name required jobs (validate / build-linux / build-macos /
+# unit-test / import-rules / dependency-policy / cli-golden / security /
+# perf-smoke) do real work. 7 legacy-name placeholder jobs (Validate ... /
+# Build (matrix) ... / Unit Test ... / Import Rules Check ... / Dep
+# Allowlist Check ... / CLI Text Golden ... / pre-push hook ...) echo + exit
+# 0 to keep current branch-protection contexts green during T-5 → T-8
+# transition.
+#
+# T-8 cutover: `scripts/ci/sync-branch-protection.sh --apply` flips required
+# contexts to the 9 stable names; T-9 deletes the 7 placeholders.
+#
+# Design refs:
+# - spec-0.9-ci-github-actions.md § 2.1 stable-rename matrix
+# - spec-0.9-ci-github-actions.md § 2.2 ci.yml scaffold
+# - spec-0.9-ci-github-actions.md § 3.1 (T-5 兼容 PR 模式) + § 3.2
+# - spec-0.9-ci-github-actions.md § 7 DoD + § 9 timeline
 
 name: CI
 
@@ -12,22 +24,36 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:
+  workflow_dispatch:                       # R2 codex MED / claude HIGH-3: 保留手动重跑
 
 env:
-  GO_VERSION: '1.23'
+  GO_VERSION: '1.23'                       # R2 codex CRIT-1: align go.mod (was 1.22 in R1 draft)
+
+# R2 codex HIGH-7: PR 用 ref 同 group → cancel-in-progress；
+# main push 用 run_id 让每个 run 独立 group 不互 cancel（防 burst 丢 pending run）.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read                           # R2 codex MED-1: 顶层最小化；security job 自行 elevate
+
+# =============================================================================
+# 9 stable-name required jobs (REAL work — T-8 cutover 后 protection 引用这些)
+# =============================================================================
 
 jobs:
   validate:
-    name: Validate (lint / fmt / vet)
+    name: validate
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - name: gofmt check
+      - name: gofmt check (spec-0.1 D-2)
         run: |
           out=$(gofmt -l .)
           if [ -n "$out" ]; then echo "gofmt failed for: $out"; exit 1; fi
@@ -36,31 +62,30 @@ jobs:
       - name: go mod tidy clean
         run: |
           go mod tidy
-          if ! git diff --exit-code go.mod go.sum; then
-            echo "go.mod/go.sum dirty after tidy"
-            exit 1
-          fi
+          git diff --exit-code go.mod go.sum
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.0.2
           args: --timeout 5m
+      # R2 codex HIGH-4: shellcheck pre-push hook 不丢，移入 validate job
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends shellcheck
+      - name: shellcheck git-hooks/pre-push (spec-0.7 D-5)
+        run: shellcheck git-hooks/pre-push
 
-  build:
-    name: Build (matrix)
-    runs-on: ${{ matrix.os }}
+  build-linux:
+    name: build-linux
+    runs-on: ubuntu-latest
     needs: validate
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - name: Build
+      - name: Build (spec-0.1 D-2)
         run: make build
       - name: CGO_ENABLED=0 smoke build (spec § 3.3)
         run: CGO_ENABLED=0 go build -o /tmp/opendbx-cgo0 ./cmd/opendbx
@@ -71,53 +96,77 @@ jobs:
           out=$(./bin/opendbx interact)
           echo "$out" | grep -q "not yet implemented" || (echo "stub did not print expected text"; exit 1)
 
-  test:
-    name: Unit Test (race + cover)
-    runs-on: ubuntu-latest
+  build-macos:
+    name: build-macos
+    runs-on: macos-latest
     needs: validate
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - name: Run tests
-        run: go test -race -coverprofile=coverage.out ./...
-      - name: Upload coverage
-        uses: codecov/codecov-action@v4
-        with:
-          files: ./coverage.out
-          flags: unittests
-        continue-on-error: true
+      - name: Build
+        run: make build
 
-  import-check:
-    name: Import Rules Check (spec-0.2 D-5)
+  # R2 codex NIT-3: unit-test 不留"同形"，具体 step 完整化。
+  # R2 codex HIGH-4: git-hooks go-test 也在此 job (pre-push-hook 合并入).
+  unit-test:
+    name: unit-test
     runs-on: ubuntu-latest
     needs: validate
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - name: Build import-rules-check
+      - name: Run tests with race + coverage
+        run: go test -race -coverprofile=coverage.out ./...
+      - name: Run coverage-gate (spec-0.8 D-1)
+        run: go run ./tools/coverage-gate -profile=coverage.out
+      - name: Run git-hooks test suite (spec-0.7 D-5)
+        run: cd git-hooks/test && go test -race ./...
+      - name: Upload coverage artifact
+        if: ${{ always() && hashFiles('coverage.out') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-out
+          path: coverage.out
+          retention-days: 30
+
+  import-rules:
+    name: import-rules
+    runs-on: ubuntu-latest
+    needs: validate
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Build import-rules-check (spec-0.2 D-5)
         run: go build -o /tmp/import-rules-check ./tools/import-rules-check
       - name: Run import-rules-check
         run: /tmp/import-rules-check -v .
       - name: Run import-rules-check unit tests
         run: go test -race ./tools/import-rules-check/...
 
-  dep-check:
-    name: Dep Allowlist Check (spec-0.2 D-6)
+  dependency-policy:
+    name: dependency-policy
     runs-on: ubuntu-latest
     needs: validate
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - name: Build dep-allowlist-check
+      - name: Build dep-allowlist-check (spec-0.2 D-6)
         run: go build -o /tmp/dep-allowlist-check ./tools/dep-allowlist-check
       - name: Run dep-allowlist-check
         run: /tmp/dep-allowlist-check -v .
@@ -125,16 +174,17 @@ jobs:
         run: go test -race ./tools/dep-allowlist-check/...
 
   cli-golden:
-    name: CLI Text Golden (spec-0.2 D-3)
+    name: cli-golden
     runs-on: ubuntu-latest
     needs: validate
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - name: Run CLI golden tests
+      - name: Run CLI golden tests (spec-0.2 D-3)
         run: go test -race -run 'TestGolden|TestSubcommandStubs' ./cmd/opendbx/...
       - name: Verify goldens are committed (no drift)
         run: |
@@ -146,53 +196,22 @@ jobs:
             exit 1
           fi
 
-  pre-push-hook:
-    name: pre-push hook (spec-0.7 D-5)
-    runs-on: ubuntu-latest
-    needs: validate
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          # stdlib-only test module; cache on go.mod.
-          cache-dependency-path: git-hooks/test/go.mod
-      - name: Install shellcheck
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends shellcheck
-      - name: shellcheck git-hooks/pre-push
-        run: shellcheck git-hooks/pre-push
-      - name: Run pre-push hook test suite
-        run: |
-          cd git-hooks/test
-          go test -race ./...
-
-  # spec-0.9 T-3 / D-2: security job — gosec + govulncheck + SARIF upload.
-  #
-  # 非 required at T-3 (branch protection 不引用此 context until T-8 cutover).
-  # T-3.5 后续加 vuln-allowlist 包装 (govulncheck → make vuln-check 替换).
-  #
-  # 设计要点 (spec-0.9 R2):
-  # - gosec @v2.21.4 锁版本 (R2 codex HIGH-9: 不再 @master 防供应链漂移)
-  # - govulncheck @v1.1.4 source mode (R2 codex CRIT-1: 不用 binary mode)
-  # - SARIF upload `if: always()` + 末步 fail check (R2 codex HIGH-1: gosec
-  #   fail 不阻断 upload step)
-  # - permissions job-level scope (R2 codex MED-1: 不污染其他 job 权限)
+  # spec-0.9 T-3 / D-2: security job — gosec + SARIF + (T-3.5) vuln-allowlist
   security:
     name: security
     runs-on: ubuntu-latest
     needs: validate
+    timeout-minutes: 10
     permissions:
       contents: read
-      security-events: write    # SARIF upload to GH Security tab
-      actions: read             # SARIF private repo 必需
+      security-events: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      # R2 codex HIGH-1: continue-on-error 让 SARIF upload 步骤先跑;
-      # 末步根据 steps.gosec.outcome 决定 fail.
       - name: Run gosec
         id: gosec
         continue-on-error: true
@@ -216,19 +235,10 @@ jobs:
         run: |
           echo "gosec reported issues (see GH Security tab + gosec-sarif artifact)"
           exit 1
-      # spec-0.9 T-3.5 (D-2.5): vuln-allowlist 包装 govulncheck.
-      # make vuln-check 调用 `govulncheck -json -test ./...` 后 pipe 给
-      # tools/vuln-allowlist 包装脚本; OSV ID + expiry 过滤已豁免 finding.
-      # Allowlist SSOT: tools/vuln-allowlist/allowlist.json (每条必含 spec_ref).
       - name: Run vuln-check (govulncheck + OSV allowlist)
         run: make vuln-check
 
-  # spec-0.9 T-4 / D-3: perf-smoke job — `make bench` WARN-only.
-  #
-  # 非 required at T-4 (branch protection 不引用 until T-8 cutover).
-  # Stage 0 codebase 无 Benchmark → spec-0.8 D-2 emit `BENCH_WARN: no
-  # benchmarks present` 到 stderr 但 exit 0 (不阻 PR).
-  # spec-0.11 落 baseline 后 grep `BENCH_WARN:` 翻 FAIL (forward).
+  # spec-0.9 T-4 / D-3: perf-smoke — make bench WARN-only
   perf-smoke:
     name: perf-smoke
     runs-on: ubuntu-latest
@@ -249,3 +259,84 @@ jobs:
           name: bench-output
           path: bench.out
           retention-days: 30
+
+  # ===========================================================================
+  # 7 legacy-name placeholder jobs (T-5 兼容 PR 模式 — T-9 删除)
+  #
+  # 当前 branch protection 引用这些旧 context 字符串. T-5 阶段保留 echo + exit 0
+  # placeholder 让 protection gate 通过, 真实验证由上面 9 个 stable-name job 跑.
+  # T-8 cutover 后 protection 切到 9 stable names; T-9 PR 删除以下所有 placeholder.
+  # ===========================================================================
+
+  legacy-validate:
+    name: Validate (lint / fmt / vet)        # protection-required legacy context
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - run: |
+          echo "Placeholder for T-5→T-8 transition; real work moved to job 'validate'."
+          echo "See spec-0.9-ci-github-actions.md § 3.2; deleted in T-9."
+
+  legacy-build-ubuntu:
+    name: Build (matrix) (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - run: |
+          echo "Placeholder for T-5→T-8 transition; real work in job 'build-linux'."
+          echo "See spec-0.9-ci-github-actions.md § 3.2; deleted in T-9."
+
+  legacy-build-macos:
+    name: Build (matrix) (macos-latest)
+    runs-on: ubuntu-latest                   # run on linux (placeholder; no real macos work needed)
+    timeout-minutes: 1
+    steps:
+      - run: |
+          echo "Placeholder for T-5→T-8 transition; real work in job 'build-macos'."
+          echo "See spec-0.9-ci-github-actions.md § 3.2; deleted in T-9."
+
+  legacy-unit-test:
+    name: Unit Test (race + cover)
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - run: |
+          echo "Placeholder for T-5→T-8 transition; real work in job 'unit-test'."
+          echo "See spec-0.9-ci-github-actions.md § 3.2; deleted in T-9."
+
+  legacy-import-check:
+    name: Import Rules Check (spec-0.2 D-5)
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - run: |
+          echo "Placeholder for T-5→T-8 transition; real work in job 'import-rules'."
+          echo "See spec-0.9-ci-github-actions.md § 3.2; deleted in T-9."
+
+  legacy-dep-check:
+    name: Dep Allowlist Check (spec-0.2 D-6)
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - run: |
+          echo "Placeholder for T-5→T-8 transition; real work in job 'dependency-policy'."
+          echo "See spec-0.9-ci-github-actions.md § 3.2; deleted in T-9."
+
+  legacy-cli-golden:
+    name: CLI Text Golden (spec-0.2 D-3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - run: |
+          echo "Placeholder for T-5→T-8 transition; real work in job 'cli-golden'."
+          echo "See spec-0.9-ci-github-actions.md § 3.2; deleted in T-9."
+
+  legacy-pre-push-hook:
+    name: pre-push hook (spec-0.7 D-5)
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - run: |
+          echo "Placeholder for T-5→T-8 transition; real work merged into jobs"
+          echo "'validate' (shellcheck) + 'unit-test' (git-hooks/test go test)."
+          echo "See spec-0.9-ci-github-actions.md § 3.2; deleted in T-9."
