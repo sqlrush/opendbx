@@ -46,6 +46,15 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# T-13 claude MED-1: command precheck so operator gets clear missing-tool
+# message instead of cryptic shell failure.
+for cmd in gh jq; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "ERR: required tool '$cmd' not on PATH (install via brew / apt)" >&2
+    exit 1
+  fi
+done
+
 REPO="${REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG="$SCRIPT_DIR/branch-protection-required-checks.json"
