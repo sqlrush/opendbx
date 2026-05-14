@@ -260,10 +260,12 @@ GOVULN_VERSION ?= v1.1.4
 vuln-check: ## Run govulncheck filtered by OSV allowlist (spec-0.9 D-2.5)
 	@command -v govulncheck >/dev/null 2>&1 || $(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULN_VERSION)
 	@bash -c ' \
-		set -e; \
 		tmp=$$(mktemp -t opendbx-govuln.XXXXXX); \
 		trap "rm -f $$tmp" EXIT; \
-		govulncheck -json -test ./... > $$tmp; gv_rc=$$?; \
+		set +e; \
+		govulncheck -json -test ./... > $$tmp; \
+		gv_rc=$$?; \
+		set -e; \
 		if [ $$gv_rc -ne 0 ] && [ $$gv_rc -ne 3 ]; then \
 			echo "vuln-check: govulncheck exit $$gv_rc (analysis error; not just findings)" >&2; \
 			exit $$gv_rc; \

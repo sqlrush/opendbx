@@ -349,6 +349,14 @@ func TestRun_AllowlistNotFound(t *testing.T) {
 
 // --- Path 11: shipped allowlist.json sanity --------------------------
 
+// TestShippedAllowlist_Parses intentionally uses time.Now() (not fixedTime).
+// This is a safety-net test: it MUST fail when the shipped allowlist has
+// entries already past their expiry — that prompts renewal. Replacing
+// time.Now() with a pinned reference (T-12 Round 2 claude HIGH-1 suggestion)
+// would let expired allowlist entries silently rot in CI; the existing
+// behavior is desired. T-13 codex MED-1 / go-reviewer MED ensures the
+// comparison is timezone-stable so the test fires on the correct calendar
+// day across UTC and UTC-negative hosts.
 func TestShippedAllowlist_Parses(t *testing.T) {
 	t.Parallel()
 	list, err := loadAllowlist("allowlist.json")
@@ -358,8 +366,6 @@ func TestShippedAllowlist_Parses(t *testing.T) {
 	if _, ok := list["GO-2026-4602"]; !ok {
 		t.Errorf("shipped allowlist must include GO-2026-4602 (Go 1.23 stdlib os.FileInfo escape; T-3.5)")
 	}
-	// T-7.5 codex HIGH-1 + claude HIGH: use date-only comparison so on the
-	// expiry date itself the test does not falsely flag entries as expired.
 	today := dateOnly(time.Now())
 	for id, ex := range list {
 		if ex.SpecRef == "" {
@@ -368,5 +374,53 @@ func TestShippedAllowlist_Parses(t *testing.T) {
 		if ex.expiryParsed.Before(today) {
 			t.Errorf("%s expiry %s is already in the past — renew or remove", id, ex.Expiry)
 		}
+	}
+}
+
+// TestExpiry_TimezonePortable verifies T-13 codex MED-1 + go-reviewer MED fix:
+// an exemption with expiry=2026-08-14 must remain valid at midnight LOCAL
+// 2026-08-14 in any timezone, not flip to expired in UTC-negative locales.
+// Pre-T-13 code preserved t.Location() in dateOnly, causing premature expiry
+// in UTC-negative zones.
+func TestExpiry_TimezonePortable(t *testing.T) {
+	t.Parallel()
+	allow := writeAllowlist(t, `{"exemptions":[
+		{"osv_id":"GO-2026-4602","module":"stdlib","expiry":"2026-08-14","reason":"r","spec_ref":"s"}
+	]}`)
+	stream := `{"finding":{"osv":"GO-2026-4602","trace":[
+		{"module":"stdlib","function":"f"},{"function":"main"}
+	]}}`
+
+	// 3 timezones: UTC, Asia/Shanghai (UTC+8), America/Los_Angeles (UTC-8).
+	la, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Skipf("tz America/Los_Angeles unavailable: %v", err)
+	}
+	sh, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Skipf("tz Asia/Shanghai unavailable: %v", err)
+	}
+
+	// On expiry date local 00:00 → must stay valid (calendar match).
+	for _, tc := range []struct {
+		name string
+		now  time.Time
+	}{
+		{"utc_midnight", time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)},
+		{"shanghai_midnight", time.Date(2026, 8, 14, 0, 0, 0, 0, sh)},
+		{"la_midnight", time.Date(2026, 8, 14, 0, 0, 0, 0, la)},
+		{"la_noon", time.Date(2026, 8, 14, 12, 0, 0, 0, la)},
+		{"shanghai_endofday", time.Date(2026, 8, 14, 23, 59, 59, 0, sh)},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var out bytes.Buffer
+			code := run(allow, strings.NewReader(stream), &out, tc.now)
+			if code != 0 {
+				t.Errorf("exempt must remain valid on expiry date in %s; got %d; out=%s",
+					tc.name, code, out.String())
+			}
+		})
 	}
 }

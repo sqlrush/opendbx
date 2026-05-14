@@ -125,7 +125,11 @@ func loadAllowlist(path string) (map[string]exemption, error) {
 		if e.SpecRef == "" {
 			return nil, fmt.Errorf("exemption[%d] %s: spec_ref required (no anonymous exemptions)", i, e.OSVID)
 		}
-		expiryParsed, err := time.Parse("2006-01-02", e.Expiry)
+		// T-13 codex MED-1 + go-reviewer MED: parse expiry in UTC explicitly
+		// (else default Parse returns UTC but compared against local-zone now,
+		// causing premature expiry in UTC-negative timezones — e.g.
+		// America/Los_Angeles flips at start of expiry day instead of end).
+		expiryParsed, err := time.ParseInLocation("2006-01-02", e.Expiry, time.UTC)
 		if err != nil {
 			return nil, fmt.Errorf("exemption[%d] %s: invalid expiry %q (want YYYY-MM-DD): %w", i, e.OSVID, e.Expiry, err)
 		}
@@ -138,13 +142,17 @@ func loadAllowlist(path string) (map[string]exemption, error) {
 	return out, nil
 }
 
-// dateOnly truncates t to YYYY-MM-DD 00:00 in its location, dropping
-// time-of-day. T-7.5 codex HIGH-1 修: expiry contract is "expiry < today",
-// so an exemption with expiry=2026-08-14 must stay valid all day on
-// 2026-08-14 and fail only on 2026-08-15+. Comparing midnight-vs-now
-// caused expiry to fire at 00:00 of the expiry date itself.
+// dateOnly truncates t to YYYY-MM-DD 00:00 UTC, dropping time-of-day and
+// normalizing to UTC. T-7.5 codex HIGH-1 修 + T-13 codex MED-1 + go-reviewer
+// MED 修: expiry contract is "expiry < today" by *calendar date*. Both sides
+// MUST be expressed in the same timezone or the comparison drifts by ±24h
+// depending on host zone. Allowlist expiries are loaded with
+// ParseInLocation(..., time.UTC), so today must also be UTC-normalized.
+// Earlier implementation preserved t.Location() and caused premature expiry
+// in UTC-negative zones (LA flipped at start of expiry day rather than end).
 func dateOnly(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	u := t.UTC()
+	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 // isCalled returns true when the trace shows a function-level entry,
