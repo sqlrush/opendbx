@@ -23,7 +23,7 @@ import (
 // unexported versionRegex variable below.
 const VersionPattern = `^v(\d+)\.(\d+)\.(\d+)-stage(\d+)\.(\d+)(-accepted)?$`
 
-//nolint:gochecknoglobals // compile-once regex for hot-path Parse calls.
+//nolint:gochecknoglobals // spec-0.7 D-1: compile-once regex for hot-path Parse calls.
 var versionRegex = regexp.MustCompile(VersionPattern)
 
 // MaxStage is the upper bound on the Stage segment. Per the roadmap, stage

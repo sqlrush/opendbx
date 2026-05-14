@@ -21,6 +21,20 @@ func BadFmtWrap(root error) error {
 	return fmt.Errorf("bad: %w", root)
 }
 
+// BadLocalBareErrors stores errors.New in a local then returns it. T-13
+// codex HIGH-1: errcode-lint must trace reaching assignment, not just
+// direct call returns.
+func BadLocalBareErrors() error {
+	err := errors.New("bad: local-var bare errors.New")
+	return err
+}
+
+// BadLocalFmtErrorf — same pattern with fmt.Errorf → EC-2.
+func BadLocalFmtErrorf() error {
+	err := fmt.Errorf("bad: local-var fmt.Errorf")
+	return err
+}
+
 // privateBareErrors is unexported → must be skipped (returns error).
 func privateBareErrors() error {
 	return errors.New("private: ok to skip")

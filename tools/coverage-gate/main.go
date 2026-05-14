@@ -69,7 +69,7 @@ const modulePath = "github.com/sqlrush/opendbx"
 // overhead without changing semantics (Go has no first-class immutable
 // maps).
 //
-//nolint:gochecknoglobals // tier classification table; treat as const.
+//nolint:gochecknoglobals // spec-0.8 T-13a: tier classification table; treat as const.
 var (
 	corePackages = map[string]bool{
 		modulePath + "/internal/platform/errcode": true,

@@ -6,10 +6,12 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"go/types"
+	"os"
 	"strings"
 	"testing"
 )
@@ -256,16 +258,19 @@ func TestLint_BadFixture(t *testing.T) {
 	if err != nil {
 		t.Skipf("fixture load unavailable: %v", err)
 	}
-	if len(vs) != 3 {
-		t.Errorf("expected 3 violations; got %d", len(vs))
+	// T-13 codex HIGH-1: now also catches BadLocalBareErrors + BadLocalFmtErrorf.
+	if len(vs) != 5 {
+		t.Errorf("expected 5 violations; got %d", len(vs))
 		for _, v := range vs {
 			t.Logf("  %s", v)
 		}
 	}
 	wantByFn := map[string]Code{
-		"BadBareErrors": EC1,
-		"BadFmtErrorf":  EC2,
-		"BadFmtWrap":    EC2,
+		"BadBareErrors":      EC1,
+		"BadFmtErrorf":       EC2,
+		"BadFmtWrap":         EC2,
+		"BadLocalBareErrors": EC1,
+		"BadLocalFmtErrorf":  EC2,
 	}
 	for _, v := range vs {
 		want, ok := wantByFn[v.Function]
@@ -339,6 +344,40 @@ type MyErr interface { Error() string }
 }
 
 // --- Path 10: funcReturnsError text-based fallback ------------------
+
+// TestAuditManifest_Consistency cross-checks tools/errcode-lint/testdata/
+// audit-errcode-sites.json against the live errcode-lint behavior on the
+// opendbx module (T-13 codex MED-1).
+//
+// The manifest declares expected_violations_today; this test asserts the
+// production scan reports exactly that count, providing a machine gate
+// against silent regression of the spec-0.6 D-4 contract.
+func TestAuditManifest_Consistency(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("testdata/audit-errcode-sites.json")
+	if err != nil {
+		t.Skipf("manifest unavailable: %v", err)
+	}
+	var manifest struct {
+		InvariantCheck struct {
+			ExpectedViolations int `json:"expected_violations_today"`
+		} `json:"invariant_check"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	vs, err := Lint("../..", []string{"./..."})
+	if err != nil {
+		t.Skipf("production lint unavailable: %v", err)
+	}
+	if len(vs) != manifest.InvariantCheck.ExpectedViolations {
+		t.Errorf("audit manifest expects %d violations; got %d",
+			manifest.InvariantCheck.ExpectedViolations, len(vs))
+		for _, v := range vs {
+			t.Logf("  %s", v)
+		}
+	}
+}
 
 func TestFuncReturnsError_TextFallback(t *testing.T) {
 	t.Parallel()
