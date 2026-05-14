@@ -1,0 +1,14 @@
+{
+  "strict": true,
+  "contexts": [
+    "validate",
+    "build-linux",
+    "build-macos",
+    "unit-test",
+    "import-rules",
+    "dependency-policy",
+    "cli-golden",
+    "security",
+    "perf-smoke"
+  ]
+}
