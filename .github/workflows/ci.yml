@@ -1,14 +1,17 @@
-# opendbx CI — spec-0.9 D-1 / T-5 (compatibility-PR mode)
+# opendbx CI — spec-0.9 D-1 (final state after T-9)
 #
 # 9 stable-name required jobs (validate / build-linux / build-macos /
 # unit-test / import-rules / dependency-policy / cli-golden / security /
-# perf-smoke) do real work. 8 legacy-name placeholder jobs echo + exit 0
-# to keep current branch-protection contexts green during T-5 → T-8
-# transition (the matrix Build splits into two contexts ubuntu / macos,
-# making it 8 legacy placeholders for 7 conceptual old jobs).
+# perf-smoke). All branch protection contexts reference these stable names
+# 1:1 (scripts/ci/branch-protection-required-checks.json SSOT enforced by
+# tools/ci-protection-check; see `make ci-script-check`).
 #
-# T-8 cutover: `scripts/ci/sync-branch-protection.sh --apply` flips required
-# contexts to the 9 stable names; T-9 deletes the 7 placeholders.
+# T-5 / T-7 / T-8 / T-9 history (兼容 PR 模式):
+#   T-5: 17 jobs (9 stable + 8 legacy placeholders) shipped in one PR;
+#        old branch protection still gated on legacy contexts.
+#   T-7: sync-branch-protection.sh + ci-protection-check tool shipped.
+#   T-8: protection PATCH'd to require new 9 stable contexts.
+#   T-9: legacy placeholders deleted (this file's current state).
 #
 # Design refs:
 # - spec-0.9-ci-github-actions.md § 2.1 stable-rename matrix
@@ -259,85 +262,3 @@ jobs:
           path: bench.out
           retention-days: 30
 
-  # ===========================================================================
-  # 8 legacy-name placeholder jobs (T-5 兼容 PR 模式 — T-9 删除)
-  # 注: 旧 build matrix 生成 ubuntu + macos 两 context, 故 placeholder 8 个对应
-  # 7 个 conceptual 旧 job + 1 个 matrix 切片.
-  #
-  # 当前 branch protection 引用这些旧 context 字符串. T-5 阶段保留 echo + exit 0
-  # placeholder 让 protection gate 通过, 真实验证由上面 9 个 stable-name job 跑.
-  # T-8 cutover 后 protection 切到 9 stable names; T-9 PR 删除以下所有 placeholder.
-  # ===========================================================================
-
-  legacy-validate:
-    name: Validate (lint / fmt / vet)        # protection-required legacy context
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    steps:
-      - run: |
-          echo "Placeholder for T-5→T-8 transition; real work moved to job 'validate'."
-          echo "See spec-0.9-ci-github-actions.md § 3.2; deleted in T-9."
-
-  legacy-build-ubuntu:
-    name: Build (matrix) (ubuntu-latest)
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    steps:
-      - run: |
-          echo "Placeholder for T-5→T-8 transition; real work in job 'build-linux'."
-          echo "See spec-0.9-ci-github-actions.md § 3.2; deleted in T-9."
-
-  legacy-build-macos:
-    name: Build (matrix) (macos-latest)
-    runs-on: ubuntu-latest                   # run on linux (placeholder; no real macos work needed)
-    timeout-minutes: 1
-    steps:
-      - run: |
-          echo "Placeholder for T-5→T-8 transition; real work in job 'build-macos'."
-          echo "See spec-0.9-ci-github-actions.md § 3.2; deleted in T-9."
-
-  legacy-unit-test:
-    name: Unit Test (race + cover)
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    steps:
-      - run: |
-          echo "Placeholder for T-5→T-8 transition; real work in job 'unit-test'."
-          echo "See spec-0.9-ci-github-actions.md § 3.2; deleted in T-9."
-
-  legacy-import-check:
-    name: Import Rules Check (spec-0.2 D-5)
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    steps:
-      - run: |
-          echo "Placeholder for T-5→T-8 transition; real work in job 'import-rules'."
-          echo "See spec-0.9-ci-github-actions.md § 3.2; deleted in T-9."
-
-  legacy-dep-check:
-    name: Dep Allowlist Check (spec-0.2 D-6)
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    steps:
-      - run: |
-          echo "Placeholder for T-5→T-8 transition; real work in job 'dependency-policy'."
-          echo "See spec-0.9-ci-github-actions.md § 3.2; deleted in T-9."
-
-  legacy-cli-golden:
-    name: CLI Text Golden (spec-0.2 D-3)
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    steps:
-      - run: |
-          echo "Placeholder for T-5→T-8 transition; real work in job 'cli-golden'."
-          echo "See spec-0.9-ci-github-actions.md § 3.2; deleted in T-9."
-
-  legacy-pre-push-hook:
-    name: pre-push hook (spec-0.7 D-5)
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    steps:
-      - run: |
-          echo "Placeholder for T-5→T-8 transition; real work merged into jobs"
-          echo "'validate' (shellcheck) + 'unit-test' (git-hooks/test go test)."
-          echo "See spec-0.9-ci-github-actions.md § 3.2; deleted in T-9."
