@@ -26,7 +26,7 @@
 .PHONY: hooks-install hooks-status import-check dep-check
 .PHONY: golden golden-update gen-docs cc-help-diff
 .PHONY: coverage-gate makefile-check tag-spec release registry-drift-check
-.PHONY: vuln-check ci-script-check sync-branch-protection suppression-check errcode-check
+.PHONY: vuln-check ci-script-check sync-branch-protection suppression-check errcode-check lint-all
 
 BIN_DIR := bin
 BIN_NAME := opendbx
@@ -350,7 +350,7 @@ clean: ## Remove build artifacts
 GIT_HOOKS_DIR := $(shell git rev-parse --git-dir 2>/dev/null)/hooks
 SRC_HOOKS := $(wildcard git-hooks/*)
 
-hooks-install: ## Install repo git hooks into .git/hooks/ (idempotent)
+hooks-install: ## Install repo git hooks + build lint binaries (spec-0.10 D-5)
 	@if [ -z "$(GIT_HOOKS_DIR)" ]; then \
 		echo "ERR: not in a git repo"; exit 1; \
 	fi
@@ -361,10 +361,26 @@ hooks-install: ## Install repo git hooks into .git/hooks/ (idempotent)
 		echo "linked $$h -> $$dest"; \
 	done
 	@echo ""
+	@echo "building lint binaries (spec-0.10 D-5 R2 claude H1: precompile防 cold go run)..."
+	@mkdir -p $(BIN_DIR)
+	@$(GO) build -o $(BIN_DIR)/errcode-lint ./tools/errcode-lint
+	@$(GO) build -o $(BIN_DIR)/import-rules-check ./tools/import-rules-check
+	@$(GO) build -o $(BIN_DIR)/suppression-lint ./tools/suppression-lint
+	@echo "  bin/errcode-lint / bin/import-rules-check / bin/suppression-lint"
+	@echo ""
 	@echo "git hooks installed."
 	@echo "next: build commit-lint binary so the hook can find it:"
 	@echo "  cd ../opendbrb/scripts/opendbrb-commit-lint && go install ."
-	@echo "  (or build to /tmp/opendbrb-commit-lint as a fallback)"
+
+lint-all: ## Run all lint checks (gate-fast subset; spec-0.10 D-5)
+	@echo "=== lint-all (spec-0.10 D-5; fast subset of gate) ==="
+	@$(MAKE) import-check
+	@$(MAKE) dep-check
+	@$(MAKE) errcode-check
+	@$(MAKE) suppression-check
+	@$(MAKE) ci-script-check
+	@$(MAKE) makefile-check
+	@echo "=== lint-all OK ==="
 
 hooks-status: ## Show installed git hooks
 	@if [ -z "$(GIT_HOOKS_DIR)" ]; then \

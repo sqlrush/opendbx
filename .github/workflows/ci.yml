@@ -73,8 +73,14 @@ jobs:
       # R2 codex HIGH-4: shellcheck pre-push hook 不丢，移入 validate job
       - name: Install shellcheck
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends shellcheck
-      - name: shellcheck git-hooks/pre-push (spec-0.7 D-5)
-        run: shellcheck git-hooks/pre-push
+      - name: shellcheck git-hooks (spec-0.7 D-5 + spec-0.10 D-5)
+        run: |
+          shellcheck git-hooks/pre-push
+          shellcheck git-hooks/pre-commit
+      - name: errcode-lint (spec-0.10 D-2)
+        run: go run ./tools/errcode-lint ./...
+      - name: suppression-lint (spec-0.10 D-2.5)
+        run: go run ./tools/suppression-lint .
 
   build-linux:
     name: build-linux
