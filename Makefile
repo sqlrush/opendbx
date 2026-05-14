@@ -26,7 +26,7 @@
 .PHONY: hooks-install hooks-status import-check dep-check
 .PHONY: golden golden-update gen-docs cc-help-diff
 .PHONY: coverage-gate makefile-check tag-spec release registry-drift-check
-.PHONY: vuln-check ci-script-check sync-branch-protection
+.PHONY: vuln-check ci-script-check sync-branch-protection suppression-check
 
 BIN_DIR := bin
 BIN_NAME := opendbx
@@ -195,6 +195,7 @@ gate: import-check dep-check golden ## Local layer-2 gate (must pass before push
 	$(MAKE) makefile-check
 	$(MAKE) registry-drift-check
 	$(MAKE) ci-script-check
+	$(MAKE) suppression-check
 	$(MAKE) coverage-gate
 	$(MAKE) bench
 	@echo "=== Layer-2 Gate PASSED ==="
@@ -292,6 +293,12 @@ ci-script-check: ## Detect ci.yml vs branch-protection JSON drift (D-5)
 # spec-0.9 D-5 / T-7: PATCH /required_status_checks 窄端点同步.
 sync-branch-protection: ## Sync branch protection contexts (dry-run; APPLY=1)
 	@bash scripts/ci/sync-branch-protection.sh $(if $(filter 1,$(APPLY)),--apply,--dry-run)
+
+# spec-0.10 D-2.5 / T-3.5: suppression-lint enforces every `//nolint`,
+# `// #nosec`, `// errcode-lint:exempt`, `// govulncheck-exempt` comment
+# carries a `spec-X.Y[-tN]` reference (lint-policy.md § 3).
+suppression-check: ## Verify all suppression comments carry spec_ref
+	@$(GO) run ./tools/suppression-lint .
 
 # spec-0.2 governance gates (D-5 / D-6 / D-3) — see docs/cicd-and-methodology.md
 import-check: ## Run import-rules-check (spec-0.2 D-5)

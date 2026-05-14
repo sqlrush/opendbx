@@ -260,6 +260,7 @@ func TestClassify(t *testing.T) {
 		{modulePath + "/tools/makefile-check", TierTool},
 		{modulePath + "/tools/vuln-allowlist", TierTool},
 		{modulePath + "/tools/ci-protection-check", TierTool},
+		{modulePath + "/tools/suppression-lint", TierTool},
 		{modulePath + "/internal/platform/profileutil", TierOther},
 		{modulePath + "/internal/platform/nonexistent", TierOther},
 	}
