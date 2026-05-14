@@ -87,6 +87,7 @@ var (
 		modulePath + "/tools/vuln-allowlist":      true,
 		modulePath + "/tools/ci-protection-check": true,
 		modulePath + "/tools/suppression-lint":    true,
+		modulePath + "/tools/errcode-lint":        true,
 	}
 
 	exemptPackages = map[string]bool{

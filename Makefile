@@ -26,7 +26,7 @@
 .PHONY: hooks-install hooks-status import-check dep-check
 .PHONY: golden golden-update gen-docs cc-help-diff
 .PHONY: coverage-gate makefile-check tag-spec release registry-drift-check
-.PHONY: vuln-check ci-script-check sync-branch-protection suppression-check
+.PHONY: vuln-check ci-script-check sync-branch-protection suppression-check errcode-check
 
 BIN_DIR := bin
 BIN_NAME := opendbx
@@ -196,6 +196,7 @@ gate: import-check dep-check golden ## Local layer-2 gate (must pass before push
 	$(MAKE) registry-drift-check
 	$(MAKE) ci-script-check
 	$(MAKE) suppression-check
+	$(MAKE) errcode-check
 	$(MAKE) coverage-gate
 	$(MAKE) bench
 	@echo "=== Layer-2 Gate PASSED ==="
@@ -299,6 +300,12 @@ sync-branch-protection: ## Sync branch protection contexts (dry-run; APPLY=1)
 # carries a `spec-X.Y[-tN]` reference (lint-policy.md § 3).
 suppression-check: ## Verify all suppression comments carry spec_ref
 	@$(GO) run ./tools/suppression-lint .
+
+# spec-0.10 D-2 / T-4: errcode-lint permanent enforcement of spec-0.6 D-4
+# contract — exported error-returning functions must use errcode, not
+# bare errors.New / fmt.Errorf (lint-policy.md § 2).
+errcode-check: ## Verify exported public API errors use errcode (D-2)
+	@$(GO) run ./tools/errcode-lint ./...
 
 # spec-0.2 governance gates (D-5 / D-6 / D-3) — see docs/cicd-and-methodology.md
 import-check: ## Run import-rules-check (spec-0.2 D-5)
