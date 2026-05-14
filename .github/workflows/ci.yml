@@ -165,3 +165,61 @@ jobs:
         run: |
           cd git-hooks/test
           go test -race ./...
+
+  # spec-0.9 T-3 / D-2: security job — gosec + govulncheck + SARIF upload.
+  #
+  # 非 required at T-3 (branch protection 不引用此 context until T-8 cutover).
+  # T-3.5 后续加 vuln-allowlist 包装 (govulncheck → make vuln-check 替换).
+  #
+  # 设计要点 (spec-0.9 R2):
+  # - gosec @v2.21.4 锁版本 (R2 codex HIGH-9: 不再 @master 防供应链漂移)
+  # - govulncheck @v1.1.4 source mode (R2 codex CRIT-1: 不用 binary mode)
+  # - SARIF upload `if: always()` + 末步 fail check (R2 codex HIGH-1: gosec
+  #   fail 不阻断 upload step)
+  # - permissions job-level scope (R2 codex MED-1: 不污染其他 job 权限)
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    needs: validate
+    permissions:
+      contents: read
+      security-events: write    # SARIF upload to GH Security tab
+      actions: read             # SARIF private repo 必需
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      # R2 codex HIGH-1: continue-on-error 让 SARIF upload 步骤先跑;
+      # 末步根据 steps.gosec.outcome 决定 fail.
+      - name: Run gosec
+        id: gosec
+        continue-on-error: true
+        uses: securego/gosec@v2.21.4
+        with:
+          args: '-quiet -fmt=sarif -out=gosec.sarif ./...'
+      - name: Upload SARIF to GitHub Security tab
+        if: ${{ always() && hashFiles('gosec.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gosec.sarif
+      - name: Upload SARIF artifact (forensic)
+        if: ${{ always() && hashFiles('gosec.sarif') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gosec-sarif
+          path: gosec.sarif
+          retention-days: 30
+      - name: Fail if gosec found issues
+        if: ${{ steps.gosec.outcome == 'failure' }}
+        run: |
+          echo "gosec reported issues (see GH Security tab + gosec-sarif artifact)"
+          exit 1
+      # govulncheck @v1.1.4 source mode (R2 codex CRIT-1 + HIGH-9 修).
+      # T-3.5 后将 `govulncheck -test ./...` 替换为 `make vuln-check`
+      # (vuln-allowlist 包装提供 OSV ID + expiry 豁免).
+      - name: Install govulncheck v1.1.4
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+      - name: Run govulncheck (source mode)
+        run: govulncheck -test ./...
