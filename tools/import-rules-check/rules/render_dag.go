@@ -2,9 +2,11 @@
 //
 // Author: sqlrush
 
-// Render subpackage strict DAG (spec-0.2 § 2.2 重要细则 #3, CLAUDE.md § 3.1).
+// IMP-6 render-cascade (retrofit of spec-0.2 render strict DAG; spec-0.10
+// D-3 R2 codex H5 修：原 spec-0.10 R1 描述"9 层"是 typo，实际 10 层).
 //
-// Order:
+// Render subpackage strict DAG (spec-0.2 § 2.2 重要细则 #3, CLAUDE.md § 3.1).
+// 10 layers, ordered:
 //
 //	terminal → buffer → layout → optimizer → scheduler → scrollback → streaming → block → style → width
 //
