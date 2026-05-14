@@ -1,0 +1,11 @@
+{
+  "exemptions": [
+    {
+      "osv_id": "GO-2026-4602",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go 1.23 stdlib os.FileInfo escape from Root (filepath.WalkDir chain). Fix landed in Go 1.25.8; opendbx Stage 0 locks Go 1.23 per spec-0.9 R2 / opendbx go.mod. Reachable only via tools/import-rules-check (operator-supplied repo paths, not user-untrusted input). Re-evaluate at Stage 1 toolchain bump.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5"
+    }
+  ]
+}
