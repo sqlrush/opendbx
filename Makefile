@@ -244,16 +244,32 @@ makefile-check: ## Lint top-level Makefile(s) + sibling if present
 	if [ -f "$(OPENDBRB_DIR)/Makefile" ]; then files="$$files $(OPENDBRB_DIR)/Makefile"; fi; \
 	$(GO) run ./tools/makefile-check $$files
 
-# spec-0.9 D-2.5 / T-3.5: govulncheck + OSV allowlist 包装 (R2 codex HIGH-3 修).
+# spec-0.9 D-2.5 / T-3.5 / T-7.5: govulncheck + OSV allowlist 包装.
 #
 # govulncheck 本身无 inline 豁免机制; 直 fail on first finding 不可接受 (Stage 0
 # Go 1.23 lock vs Go 1.25.8 fix for GO-2026-4602 stdlib vuln). 包装脚本读
-# tools/vuln-allowlist/allowlist.json (OSV ID + expiry + spec_ref) 过滤已知豁免.
-# 过期或未豁免 finding 强制 fail.
+# tools/vuln-allowlist/allowlist.json (OSV ID + module + expiry + spec_ref) 过滤
+# 已知豁免. 过期 / 未豁免 / module mismatch 强制 fail.
+#
+# T-7.5 codex CRIT-1 修: 旧版用裸 pipe `govulncheck ... | wrapper`. 在 POSIX shell
+# 无 pipefail 时, pipeline 退出码只看 wrapper, govulncheck 分析失败 (rc != 0/3,
+# 如 build error / module load error) 被 wrapper 吞掉返回 0 → security required
+# job 假绿. 修法: temp file + 显式 rc 检查; govulncheck rc=0 (clean) 或 rc=3
+# (called vulns) 都正常投 wrapper; 其他 rc 直接 fail.
 GOVULN_VERSION ?= v1.1.4
 vuln-check: ## Run govulncheck filtered by OSV allowlist (spec-0.9 D-2.5)
 	@command -v govulncheck >/dev/null 2>&1 || $(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULN_VERSION)
-	@govulncheck -json -test ./... | $(GO) run ./tools/vuln-allowlist
+	@bash -c ' \
+		set -e; \
+		tmp=$$(mktemp -t opendbx-govuln.XXXXXX); \
+		trap "rm -f $$tmp" EXIT; \
+		govulncheck -json -test ./... > $$tmp; gv_rc=$$?; \
+		if [ $$gv_rc -ne 0 ] && [ $$gv_rc -ne 3 ]; then \
+			echo "vuln-check: govulncheck exit $$gv_rc (analysis error; not just findings)" >&2; \
+			exit $$gv_rc; \
+		fi; \
+		$(GO) run ./tools/vuln-allowlist < $$tmp \
+	'
 
 # spec-0.9 D-5 / T-7: ci.yml ↔ branch-protection JSON 1:1 drift check.
 ci-script-check: ## Detect ci.yml vs branch-protection JSON drift (D-5)

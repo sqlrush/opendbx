@@ -88,9 +88,17 @@ type exemption struct {
 	Expiry  string `json:"expiry"` // YYYY-MM-DD
 	Reason  string `json:"reason"`
 	SpecRef string `json:"spec_ref"`
+
+	// expiryParsed is cached from Expiry during loadAllowlist (T-7.5
+	// codex HIGH-1 + go-reviewer MED-2 修): single parse, no silent
+	// `_ =` discard at classify time.
+	expiryParsed time.Time
 }
 
 // loadAllowlist reads and validates the allowlist file.
+//
+// T-7.5 codex HIGH-2 修: module + reason are mandatory per spec § 1.1 D-2.5;
+// previous version only required osv_id / expiry / spec_ref.
 func loadAllowlist(path string) (map[string]exemption, error) {
 	raw, err := os.ReadFile(path) // #nosec G304 -- spec-0.9 D-2.5: operator-supplied allowlist path
 	if err != nil {
@@ -105,21 +113,38 @@ func loadAllowlist(path string) (map[string]exemption, error) {
 		if e.OSVID == "" {
 			return nil, fmt.Errorf("exemption[%d]: osv_id required", i)
 		}
+		if e.Module == "" {
+			return nil, fmt.Errorf("exemption[%d] %s: module required (spec § 1.1 D-2.5)", i, e.OSVID)
+		}
 		if e.Expiry == "" {
 			return nil, fmt.Errorf("exemption[%d] %s: expiry required (YYYY-MM-DD)", i, e.OSVID)
+		}
+		if e.Reason == "" {
+			return nil, fmt.Errorf("exemption[%d] %s: reason required (no anonymous exemptions)", i, e.OSVID)
 		}
 		if e.SpecRef == "" {
 			return nil, fmt.Errorf("exemption[%d] %s: spec_ref required (no anonymous exemptions)", i, e.OSVID)
 		}
-		if _, err := time.Parse("2006-01-02", e.Expiry); err != nil {
-			return nil, fmt.Errorf("exemption[%d] %s: invalid expiry %q (want YYYY-MM-DD)", i, e.OSVID, e.Expiry)
+		expiryParsed, err := time.Parse("2006-01-02", e.Expiry)
+		if err != nil {
+			return nil, fmt.Errorf("exemption[%d] %s: invalid expiry %q (want YYYY-MM-DD): %w", i, e.OSVID, e.Expiry, err)
 		}
 		if _, dup := out[e.OSVID]; dup {
 			return nil, fmt.Errorf("exemption[%d] %s: duplicate OSV ID", i, e.OSVID)
 		}
+		e.expiryParsed = expiryParsed
 		out[e.OSVID] = e
 	}
 	return out, nil
+}
+
+// dateOnly truncates t to YYYY-MM-DD 00:00 in its location, dropping
+// time-of-day. T-7.5 codex HIGH-1 修: expiry contract is "expiry < today",
+// so an exemption with expiry=2026-08-14 must stay valid all day on
+// 2026-08-14 and fail only on 2026-08-15+. Comparing midnight-vs-now
+// caused expiry to fire at 00:00 of the expiry date itself.
+func dateOnly(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 }
 
 // isCalled returns true when the trace shows a function-level entry,
@@ -135,13 +160,33 @@ func isCalled(f *vulnFinding) bool {
 	return false
 }
 
+// calledFinding pairs an OSV with the top-of-trace module (vulnerable
+// frame). T-7.5 codex HIGH-2 修: classifier matches by both OSV and
+// module so an allowlist entry for stdlib does not silently exempt the
+// same OSV showing up in a third-party module re-publish.
+type calledFinding struct {
+	OSV    string
+	Module string
+}
+
+// findingModule returns the module of the top-most (vulnerable) frame
+// in the trace. trace[0] is the deepest vulnerable symbol per
+// govulncheck schema; later frames are the call chain up to user code.
+// Empty if no module info present.
+func findingModule(f *vulnFinding) string {
+	if len(f.Trace) == 0 {
+		return ""
+	}
+	return f.Trace[0].Module
+}
+
 // uniqueCalledFindings reads the govulncheck JSON stream and returns
-// each called-vuln OSV ID seen, in stable order. Govulncheck emits one
-// finding per trace; we collapse duplicates per OSV.
-func uniqueCalledFindings(r io.Reader) ([]string, error) {
+// each called-vuln (OSV, module) pair seen, in stable order. Govulncheck
+// emits one finding per trace; we collapse duplicates per (OSV, module).
+func uniqueCalledFindings(r io.Reader) ([]calledFinding, error) {
 	dec := json.NewDecoder(r)
 	seen := make(map[string]bool)
-	var order []string
+	var order []calledFinding
 	for {
 		var msg govulnMessage
 		if err := dec.Decode(&msg); err != nil {
@@ -156,13 +201,20 @@ func uniqueCalledFindings(r io.Reader) ([]string, error) {
 		if !isCalled(msg.Finding) {
 			continue
 		}
-		if seen[msg.Finding.OSV] {
+		cf := calledFinding{OSV: msg.Finding.OSV, Module: findingModule(msg.Finding)}
+		key := cf.OSV + "\x00" + cf.Module
+		if seen[key] {
 			continue
 		}
-		seen[msg.Finding.OSV] = true
-		order = append(order, msg.Finding.OSV)
+		seen[key] = true
+		order = append(order, cf)
 	}
-	sort.Strings(order) // determinism
+	sort.Slice(order, func(i, j int) bool {
+		if order[i].OSV != order[j].OSV {
+			return order[i].OSV < order[j].OSV
+		}
+		return order[i].Module < order[j].Module
+	})
 	return order, nil
 }
 
@@ -171,11 +223,12 @@ type verdict int
 
 const (
 	verdictOK      verdict = iota // exempted, non-expired
-	verdictBlocked                // no exemption / expired exemption
+	verdictBlocked                // no exemption / expired / module mismatch
 )
 
 type result struct {
 	OSV      string
+	Module   string // module reported by govulncheck (vulnerable frame)
 	Verdict  verdict
 	Reason   string // populated when blocked
 	Exempt   exemption
@@ -183,26 +236,37 @@ type result struct {
 }
 
 // classifyFindings cross-references called findings against the allowlist
-// using `now` as today.
-func classifyFindings(called []string, list map[string]exemption, now time.Time) []result {
+// using `now` as today. T-7.5 modifications:
+//   - codex HIGH-1: date-only comparison; expiry valid until end-of-day.
+//   - codex HIGH-2: match by (OSV, module) tuple; module mismatch blocks.
+//   - go-reviewer MED-2: use cached expiryParsed; no second silent _ parse.
+func classifyFindings(called []calledFinding, list map[string]exemption, now time.Time) []result {
+	today := dateOnly(now)
 	out := make([]result, 0, len(called))
-	for _, osv := range called {
-		ex, ok := list[osv]
+	for _, f := range called {
+		ex, ok := list[f.OSV]
 		if !ok {
-			out = append(out, result{OSV: osv, Verdict: verdictBlocked, Reason: "no exemption in allowlist"})
+			out = append(out, result{OSV: f.OSV, Module: f.Module, Verdict: verdictBlocked, Reason: "no exemption in allowlist"})
 			continue
 		}
-		expiry, _ := time.Parse("2006-01-02", ex.Expiry)
-		if now.After(expiry) {
+		if ex.Module != f.Module {
 			out = append(out, result{
-				OSV: osv, Verdict: verdictBlocked,
-				Reason:   fmt.Sprintf("exemption expired on %s", ex.Expiry),
-				Exempt:   ex,
-				ExpiryAt: expiry,
+				OSV: f.OSV, Module: f.Module, Verdict: verdictBlocked,
+				Reason: fmt.Sprintf("module mismatch (allowlist=%q, finding=%q)", ex.Module, f.Module),
+				Exempt: ex,
 			})
 			continue
 		}
-		out = append(out, result{OSV: osv, Verdict: verdictOK, Exempt: ex, ExpiryAt: expiry})
+		if ex.expiryParsed.Before(today) {
+			out = append(out, result{
+				OSV: f.OSV, Module: f.Module, Verdict: verdictBlocked,
+				Reason:   fmt.Sprintf("exemption expired on %s", ex.Expiry),
+				Exempt:   ex,
+				ExpiryAt: ex.expiryParsed,
+			})
+			continue
+		}
+		out = append(out, result{OSV: f.OSV, Module: f.Module, Verdict: verdictOK, Exempt: ex, ExpiryAt: ex.expiryParsed})
 	}
 	return out
 }
@@ -222,8 +286,8 @@ func report(results []result, w io.Writer) int {
 	if blocked == 0 {
 		_, _ = fmt.Fprintf(w, "vuln-allowlist OK: %d called vuln(s) all covered by valid exemption(s)\n", len(results))
 		for _, r := range results {
-			_, _ = fmt.Fprintf(w, "  [exempt] %s — expires %s — %s (%s)\n",
-				r.OSV, r.Exempt.Expiry, r.Exempt.Reason, r.Exempt.SpecRef)
+			_, _ = fmt.Fprintf(w, "  [exempt] %s @ %s — expires %s — %s (%s)\n",
+				r.OSV, r.Module, r.Exempt.Expiry, r.Exempt.Reason, r.Exempt.SpecRef)
 		}
 		return 0
 	}
@@ -231,13 +295,14 @@ func report(results []result, w io.Writer) int {
 	for _, r := range results {
 		switch r.Verdict {
 		case verdictOK:
-			_, _ = fmt.Fprintf(w, "  [exempt] %s — expires %s — %s\n", r.OSV, r.Exempt.Expiry, r.Exempt.SpecRef)
+			_, _ = fmt.Fprintf(w, "  [exempt] %s @ %s — expires %s — %s\n",
+				r.OSV, r.Module, r.Exempt.Expiry, r.Exempt.SpecRef)
 		case verdictBlocked:
 			if r.Exempt.OSVID != "" {
-				_, _ = fmt.Fprintf(w, "  [BLOCK]  %s — %s (was exempted via %s; renew or fix)\n",
-					r.OSV, r.Reason, r.Exempt.SpecRef)
+				_, _ = fmt.Fprintf(w, "  [BLOCK]  %s @ %s — %s (was exempted via %s; renew or fix)\n",
+					r.OSV, r.Module, r.Reason, r.Exempt.SpecRef)
 			} else {
-				_, _ = fmt.Fprintf(w, "  [BLOCK]  %s — %s\n", r.OSV, r.Reason)
+				_, _ = fmt.Fprintf(w, "  [BLOCK]  %s @ %s — %s\n", r.OSV, r.Module, r.Reason)
 			}
 		}
 	}

@@ -55,9 +55,10 @@ if [ ! -f "$CONFIG" ]; then
   exit 1
 fi
 
-# Validate config JSON shape.
-if ! jq -e '.strict and (.contexts | type == "array" and length > 0)' "$CONFIG" >/dev/null 2>&1; then
-  echo "ERR: $CONFIG missing required keys (.strict bool, .contexts non-empty array)" >&2
+# Validate config JSON shape — strict types (T-7.5 codex LOW-1 修):
+# 旧 jq predicate 只看 .strict truthiness, 接受 "yes" 字符串; 现要求精确类型.
+if ! jq -e '(.strict|type=="boolean") and (.contexts|type=="array" and length>0 and all(.[]; type=="string" and length>0))' "$CONFIG" >/dev/null 2>&1; then
+  echo "ERR: $CONFIG schema invalid (want .strict: bool, .contexts: non-empty array of non-empty strings)" >&2
   exit 1
 fi
 
