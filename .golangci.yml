@@ -1,10 +1,21 @@
 # golangci-lint v2 config for opendbx
 #
-# spec-0.2 D-7 baseline: enables a minimal set of linters + revive
-# package-naming rules. spec-0.10-lint-static-analysis will expand to the
-# full ruleset.
-#
+# spec-0.10 D-1: 9 精选 business linter + nolintlint meta-linter (10 total).
 # Schema reference: https://golangci-lint.run/usage/configuration/
+#
+# 9 业务 linter (errcheck/govet/staticcheck/gosec/revive/errorlint/ineffassign/
+# nilnil/unused) + nolintlint meta. 选用理由见 opendbrb/docs/lint-policy.md § 1.
+#
+# 推迟 linter (spec-0.10 § 5.1 + spec-0.11 test-framework forward):
+#   - gofumpt / gci (stricter formatters → spec-0.11)
+#   - gocyclo / funlen / nestif (复杂度阈值 → spec-0.11 with 5-layer test)
+#   - 全 ~80 个其他 linter → 永不全开 (噪音哲学 spec-0.10 ❌-5)
+#
+# Suppression policy (spec-0.10 D-6 / lint-policy.md § 3):
+#   每条 //nolint / // #nosec / // errcode-lint:exempt 注释必含
+#   `-- spec-X.Y D-N: <reason>` 后缀。suppression-lint (spec-0.10 D-2.5) 自动 enforce.
+#
+# Version lock: golangci-lint v2.0.2 (spec-0.9 D-2 ci.yml pinned).
 
 version: "2"
 
@@ -12,21 +23,27 @@ run:
   timeout: 5m
 
 linters:
+  # spec-0.10 R2 codex LOW-3 + DoD #1: `default: none` 是机器可比对的 drift 防御.
+  # Schema 自动 + drift 双保, 不需额外 `disable:` 列表 (LOW-3 推荐).
   default: none
   enable:
-    - errcheck
-    - govet
-    - staticcheck
-    - gosec
-    - revive
-    - errorlint
-    - ineffassign
-    - nilnil
-    - unused
-    - nolintlint
+    # === 9 business linters (spec-0.10 D-1) ===
+    - errcheck       # unchecked error return (CLAUDE.md 规则 7 错误三件套基础)
+    - govet          # Go vet (printf / shift / unreachable)
+    - staticcheck    # SA series code quality (dead store / unused / wrong wrap)
+    - gosec          # security G series (CLAUDE.md 规则 6; spec-0.9 D-2 落地)
+    - revive         # 替代 deprecated golint
+    - errorlint      # error wrapping correctness (spec-0.6 errcode 链 Unwrap 配套)
+    - ineffassign    # ineffective assignment
+    - nilnil         # `return nil, nil` 反模式 (CLAUDE.md 规则 5 无半实现)
+    - unused         # unused identifiers (dead code)
+    # === 1 meta-linter ===
+    - nolintlint     # //nolint 注释自洽 (与 spec-0.10 D-2.5 suppression-lint 互补)
 
   settings:
     revive:
+      # spec-0.10 R2 codex LOW-2: 仅 3 子规则白名单, 不全开 revive.
+      # 复杂度/风格类规则推 spec-0.11 (gocyclo/funlen/nestif) 同期定阈值.
       rules:
         - name: package-comments
         - name: var-naming
