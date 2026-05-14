@@ -106,7 +106,7 @@ func ValidateFile(path string) error {
 	if !fileExists(path) {
 		return errcode.Newf(ErrLoadFailed.Code(), "validate: file not found: %s", path)
 	}
-	raw, err := os.ReadFile(path) //nolint:gosec // user-supplied admin tool path
+	raw, err := os.ReadFile(path) // #nosec G304 -- spec-0.9 D-2: user-supplied admin tool path
 	if err != nil {
 		return errcode.Wrap(ErrLoadFailed.Code(), err, fmt.Sprintf("read %s", path), "")
 	}

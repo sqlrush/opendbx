@@ -151,7 +151,7 @@ func mergeFile(cfg *Config, path string, src SettingSource) error {
 	if path == "" || !fileExists(path) {
 		return nil
 	}
-	raw, err := os.ReadFile(path) //nolint:gosec // operator-supplied config path
+	raw, err := os.ReadFile(path) // #nosec G304 -- spec-0.9 D-2: operator-supplied config path
 	if err != nil {
 		return fmt.Errorf("read %s (%s source): %w", path, src, err)
 	}

@@ -168,7 +168,7 @@ func check(root string, verbose bool) ([]string, error) {
 // Keys starting with "_" are ignored (used for inline comments since JSON
 // has no native comment syntax). All other unknown top-level keys fail.
 func loadAllowlist(path string) (*allowlist, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) // #nosec G304 -- spec-0.9 D-2: operator-supplied allowlist path
 	if err != nil {
 		return nil, err
 	}
