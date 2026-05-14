@@ -8,6 +8,15 @@
 
 ## [Unreleased]
 
+### FROZEN 2026-05-14: spec-0.9-ci-github-actions — opendbx + opendbrb (post-T13)
+
+- [spec-0.9-ci-github-actions] FROZEN — tag `v0.9.0-stage0.9` (spec-0.7 D-2 dual-repo 自动化)
+- 8 deliverable: D-1 ci.yml 9 stable-name required job + D-2 security gosec @v2.21.4 + SARIF + D-2.5 vuln-allowlist Go 工具 + D-3 perf-smoke WARN-only + D-4 nightly-chaos 4 stub + D-5 sync-branch-protection + ci-protection-check + D-6 opendbrb docs/cicd-required-jobs.md + D-7 retention 规约
+- 9 required stable contexts: validate / build-linux / build-macos / unit-test / import-rules / dependency-policy / cli-golden / security / perf-smoke
+- 双 Go 工具覆盖率：vuln-allowlist 92.6% / ci-protection-check 92.6% (Tool tier ≥90%)
+- R2 pre-impl 27 + T-7.5 Round 1 mid-impl 11 + T-13 Round 2 post-impl 6 = **44 finding 全消化**（三路 reviewer × 3 轮 review）
+- 三路 trace: opendbrb `docs/reviews/{codex,claude-code-reviewer,go-reviewer}-spec-0.9-{pre,mid,post}-impl-review-2026-05-14.md` (8 trace 全集)
+
 ### FROZEN 2026-05-13: spec-0.8-makefile-build — opendbx a7d4a09 + opendbrb 83bb2e0
 
 - [spec-0.8-makefile-build] FROZEN — tag `v0.8.0-stage0.8` (spec-0.7 D-2 dual-repo 自动化)
