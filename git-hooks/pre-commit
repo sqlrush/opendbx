@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# opendbx pre-commit hook (spec-0.10 D-5 / T-9).
+#
+# Best-effort early lint feedback. Runs against staged Go files only,
+# target latency < 5s on typical change (R2 codex H10: best-effort target,
+# not hard SLA).
+#
+# Install: make hooks-install (links .git/hooks/pre-commit → this file
+# and builds bin/errcode-lint + bin/import-rules-check + bin/suppression-lint).
+#
+# Bypass: git commit --no-verify  (emergency only; PR-level CI checker
+# enforces a Hook-Bypass-Reason: footer per spec-0.10 § 2.5).
+#
+# Design: spec-0.10-lint-static-analysis.md § 2.5 (R2 codex H1/H9/H10 + claude H1).
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+# Collect staged Go files (added / copied / modified), exclude tests so
+# the hook stays fast.
+STAGED_GO=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
+
+if [ -z "$STAGED_GO" ]; then
+  # No Go staged; nothing to do at this layer.
+  exit 0
+fi
+
+echo "=== pre-commit lint (Go files, $(echo "$STAGED_GO" | wc -l | tr -d ' ') staged) ==="
+
+# 1. gofmt — fast (~50ms per file)
+unformatted=$(echo "$STAGED_GO" | xargs gofmt -l 2>/dev/null || true)
+if [ -n "$unformatted" ]; then
+  echo "ERR: gofmt failed for:" >&2
+  echo "$unformatted" >&2
+  echo "  fix: gofmt -w \$file" >&2
+  exit 1
+fi
+
+# 2. errcode-lint — use pre-built binary (R2 claude H1: cold go run = 10-20s)
+# bin/ binaries are produced by `make hooks-install` which runs `go build`.
+if [ -x "$REPO_ROOT/bin/errcode-lint" ]; then
+  "$REPO_ROOT/bin/errcode-lint" ./... || exit 1
+else
+  # Fallback to `go run` if bin not present. Slow but still correct.
+  echo "WARN: bin/errcode-lint missing; falling back to 'go run' (slower)" >&2
+  go run ./tools/errcode-lint ./... || exit 1
+fi
+
+# 3. import-rules-check — same pattern.
+if [ -x "$REPO_ROOT/bin/import-rules-check" ]; then
+  "$REPO_ROOT/bin/import-rules-check" . || exit 1
+else
+  echo "WARN: bin/import-rules-check missing; falling back to 'go run' (slower)" >&2
+  go run ./tools/import-rules-check . || exit 1
+fi
+
+# 4. suppression-lint — same pattern.
+if [ -x "$REPO_ROOT/bin/suppression-lint" ]; then
+  "$REPO_ROOT/bin/suppression-lint" . || exit 1
+else
+  echo "WARN: bin/suppression-lint missing; falling back to 'go run' (slower)" >&2
+  go run ./tools/suppression-lint . || exit 1
+fi
+
+echo "=== pre-commit OK ==="
