@@ -8,6 +8,18 @@
 
 ## [Unreleased]
 
+### FROZEN 2026-05-14: spec-0.10-lint-static-analysis — opendbx be985bd + opendbrb 1580e71
+
+- [spec-0.10-lint-static-analysis] FROZEN — tag `v0.10.0-stage0.10` (spec-0.7 D-2 dual-repo 自动化)
+- 6 deliverable: D-1 `.golangci.yml` 9 精选 linters (errcheck/govet/staticcheck/gosec/revive/errorlint/ineffassign/nilnil/unused + nolintlint meta) + settings hardening + D-2 `tools/errcode-lint` Standalone Go binary (spec-0.6 D-4 forward, public API errcode permanent enforcement; AST-based reachingAssignSource local-var detection + classifyReturnExpr 3-way classification + audit manifest 40 sites + invariant test) + D-2.5 `tools/suppression-lint` AST-based (parser.ParseFile + ParseComments) 替代 nolintlint 局限 (4 family spec_ref protocol enforcement: nolint / nosec / errcode-lint:exempt / govulncheck-exempt) + D-3 import-rules-check 4 new rules (IMP-5 opendb-ban / IMP-6 render-cascade / IMP-7 llm-sdk-isolation with LLMSDKRoots boundary-safe / IMP-8 runewidth-wrap) + D-4 opendbrb-commit-lint 4 new check (Spec footer regex / scope regex / BREAKING CHANGE iff strict + BANG_NO_BREAKING_BODY / line-length) + D-5 pre-commit hook 调 bin/ binary + `make lint-all` + CI validate 接入 + D-6 opendbrb `docs/lint-policy.md` SSOT (~190 LOC, 6 节)
+- Tool tier 覆盖率 ≥90%: errcode-lint / suppression-lint / opendbrb-commit-lint 均满足 spec-0.8 D-1 四档 tier 门槛
+- 全程评审 4 round 共 46 unique finding 全消化:
+  - R1 b38baf7 — initial 13 节 draft (522 行)
+  - R2 1bdb5f7 — 双路 pre-impl review 33 finding (codex 11H/10M/8L/4N + claude 3H/3M/2L/2N dedup ≈ 33)
+  - T-13 1580e71 + be985bd — 三路 post-impl review 13 finding (go-reviewer CRIT-1 suppression-lint isRoot walker 静默 0 文件 / codex HIGH-1 errcode-lint local-var bare-error detection / 三路 HIGH-2 commit-lint 5 新 code exit 1 / codex MED-1 audit manifest / codex MED-2 BREAKING iff strict / go-reviewer MED-2 suppression-lint AST refactor 消除 6 false positive / codex LOW-1 LLMSDKRoots boundary-safe + 5 retrofit nolint spec_ref + 2 new bad fixtures)
+- 三路 trace: opendbrb `docs/reviews/{codex,claude-code-reviewer,go-reviewer}-spec-0.10-{pre,post}-impl-review-2026-05-14.md` (6 trace 全集)
+- CLAUDE.md § 9 双 trace 最小: T-13 提供 3 trace 满足要求
+
 ### 2026-05-14: spec-0.9 post-FROZEN review follow-up — CI hardening
 
 - `make vuln-check` now installs and verifies pinned `govulncheck@v1.1.4` before scanning, so CI cannot accidentally reuse a preinstalled scanner with a different version.
