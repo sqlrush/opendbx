@@ -216,33 +216,33 @@ func report(results []result, w io.Writer) int {
 		}
 	}
 	if len(results) == 0 {
-		fmt.Fprintln(w, "vuln-allowlist OK: no called vulnerabilities")
+		_, _ = fmt.Fprintln(w, "vuln-allowlist OK: no called vulnerabilities")
 		return 0
 	}
 	if blocked == 0 {
-		fmt.Fprintf(w, "vuln-allowlist OK: %d called vuln(s) all covered by valid exemption(s)\n", len(results))
+		_, _ = fmt.Fprintf(w, "vuln-allowlist OK: %d called vuln(s) all covered by valid exemption(s)\n", len(results))
 		for _, r := range results {
-			fmt.Fprintf(w, "  [exempt] %s — expires %s — %s (%s)\n",
+			_, _ = fmt.Fprintf(w, "  [exempt] %s — expires %s — %s (%s)\n",
 				r.OSV, r.Exempt.Expiry, r.Exempt.Reason, r.Exempt.SpecRef)
 		}
 		return 0
 	}
-	fmt.Fprintf(w, "vuln-allowlist FAIL: %d of %d called vuln(s) blocked\n", blocked, len(results))
+	_, _ = fmt.Fprintf(w, "vuln-allowlist FAIL: %d of %d called vuln(s) blocked\n", blocked, len(results))
 	for _, r := range results {
 		switch r.Verdict {
 		case verdictOK:
-			fmt.Fprintf(w, "  [exempt] %s — expires %s — %s\n", r.OSV, r.Exempt.Expiry, r.Exempt.SpecRef)
+			_, _ = fmt.Fprintf(w, "  [exempt] %s — expires %s — %s\n", r.OSV, r.Exempt.Expiry, r.Exempt.SpecRef)
 		case verdictBlocked:
 			if r.Exempt.OSVID != "" {
-				fmt.Fprintf(w, "  [BLOCK]  %s — %s (was exempted via %s; renew or fix)\n",
+				_, _ = fmt.Fprintf(w, "  [BLOCK]  %s — %s (was exempted via %s; renew or fix)\n",
 					r.OSV, r.Reason, r.Exempt.SpecRef)
 			} else {
-				fmt.Fprintf(w, "  [BLOCK]  %s — %s\n", r.OSV, r.Reason)
+				_, _ = fmt.Fprintf(w, "  [BLOCK]  %s — %s\n", r.OSV, r.Reason)
 			}
 		}
 	}
-	fmt.Fprintln(w, "  hint: edit tools/vuln-allowlist/allowlist.json to add/renew an exemption")
-	fmt.Fprintln(w, "        each exemption requires: osv_id, module, expiry (YYYY-MM-DD), reason, spec_ref")
+	_, _ = fmt.Fprintln(w, "  hint: edit tools/vuln-allowlist/allowlist.json to add/renew an exemption")
+	_, _ = fmt.Fprintln(w, "        each exemption requires: osv_id, module, expiry (YYYY-MM-DD), reason, spec_ref")
 	return 1
 }
 
@@ -250,12 +250,12 @@ func report(results []result, w io.Writer) int {
 func run(allowlistPath string, input io.Reader, w io.Writer, now time.Time) int {
 	list, err := loadAllowlist(allowlistPath)
 	if err != nil {
-		fmt.Fprintf(w, "vuln-allowlist: %v\n", err)
+		_, _ = fmt.Fprintf(w, "vuln-allowlist: %v\n", err)
 		return 2
 	}
 	called, err := uniqueCalledFindings(input)
 	if err != nil {
-		fmt.Fprintf(w, "vuln-allowlist: %v\n", err)
+		_, _ = fmt.Fprintf(w, "vuln-allowlist: %v\n", err)
 		return 2
 	}
 	return report(classifyFindings(called, list, now), w)
