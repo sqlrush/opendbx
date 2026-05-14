@@ -206,10 +206,10 @@ func Init(in InitInput) error {
 	//      so callers can detect "no-op success" vs "fresh init".
 	//   3. Earlier call failed → return the same initErr (best-effort).
 	if fired {
-		return initErr
+		return wrapLoggerError(initErr, "logger init failed")
 	}
 	if initErr != nil {
-		return initErr
+		return wrapLoggerError(initErr, "logger init failed")
 	}
 	return ErrAlreadyInitialised
 }
@@ -251,7 +251,7 @@ func Close() error {
 		}
 		err = impl.close()
 	})
-	return err
+	return wrapLoggerError(err, "logger close failed")
 }
 
 // L returns the global logger. Before Init has been called, it returns a

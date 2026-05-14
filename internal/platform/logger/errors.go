@@ -15,7 +15,11 @@
 
 package logger
 
-import "github.com/sqlrush/opendbx/internal/platform/errcode"
+import (
+	"errors"
+
+	"github.com/sqlrush/opendbx/internal/platform/errcode"
+)
 
 // Note: the existing var declarations of these sentinels in logger.go /
 // buffered_writer.go are removed in this commit and rewired to point at the
@@ -52,3 +56,14 @@ var (
 		"do not write to a disposed writer; use a fresh logger.Init or skip emission",
 	)
 )
+
+func wrapLoggerError(err error, msg string) error {
+	if err == nil {
+		return nil
+	}
+	var ec errcode.Error
+	if errors.As(err, &ec) {
+		return err
+	}
+	return errcode.Wrap(errcode.ErrInternal.Code(), err, msg, "")
+}

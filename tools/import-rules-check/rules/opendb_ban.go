@@ -27,11 +27,11 @@ import (
 // imports. Add entries as new opendb-hosted module names surface.
 // spec-0.10 D-3 IMP-5 / R2 codex MED-2: enumerate explicit list.
 var OpendbBannedPrefixes = []string{
-	"github.com/opendb/",
-	"github.com/opendb-project/",
-	"bitbucket.org/opendb/",
-	"gitlab.com/opendb/",
-	"gitee.com/opendb/",
+	"github.com/opendb",
+	"github.com/opendb-project",
+	"bitbucket.org/opendb",
+	"gitlab.com/opendb",
+	"gitee.com/opendb",
 }
 
 // CheckOpendbBan returns "" if the from→to edge is allowed, or a
@@ -41,11 +41,11 @@ var OpendbBannedPrefixes = []string{
 // (any opendbx code importing opendb is forbidden regardless of where
 // inside opendbx the import sits).
 func CheckOpendbBan(_, to string) string {
-	for _, prefix := range OpendbBannedPrefixes {
-		if strings.HasPrefix(to, prefix) {
+	for _, root := range OpendbBannedPrefixes {
+		if to == root || strings.HasPrefix(to, root+"/") {
 			return fmt.Sprintf(
 				"IMP-5 opendb-ban: import %q matches forbidden opendb prefix %q (AD-001 Greenfield rewrite; opendb is reference-only)",
-				to, prefix)
+				to, root)
 		}
 	}
 	return ""

@@ -8,6 +8,14 @@
 
 ## [Unreleased]
 
+### 2026-05-14: spec-0.10 post-FROZEN review follow-up — lint gate hardening
+
+- `errcode-lint` now resolves `errors.New` / `fmt.Errorf` / `errcode.*` through Go type info, so aliased imports cannot bypass the boundary error-code contract.
+- `errcode-lint` now emits `EC-3` for unproved public error returns instead of silently skipping helper calls / unknown locals; intentional cases must use a spec-referenced exemption.
+- `cmd/opendbx` is no longer exempt from errcode boundary enforcement.
+- `opendb-ban` now rejects exact root imports such as `github.com/opendb`, not only subpaths.
+- The pre-commit gofmt check now compares staged blobs instead of the working tree.
+
 ### FROZEN 2026-05-14: spec-0.10-lint-static-analysis — opendbx be985bd + opendbrb 1580e71
 
 - [spec-0.10-lint-static-analysis] FROZEN — tag `v0.10.0-stage0.10` (spec-0.7 D-2 dual-repo 自动化)

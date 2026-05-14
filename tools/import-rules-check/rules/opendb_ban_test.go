@@ -38,8 +38,10 @@ func TestCheckOpendbBan_Forbidden(t *testing.T) {
 		name string
 		to   string
 	}{
+		{"github-opendb-exact", "github.com/opendb"},
 		{"github-opendb-root", "github.com/opendb/core"},
 		{"github-opendb-deep", "github.com/opendb/core/internal/render"},
+		{"github-opendb-project-exact", "github.com/opendb-project"},
 		{"github-opendb-project", "github.com/opendb-project/something"},
 		{"bitbucket-opendb", "bitbucket.org/opendb/legacy-render"},
 		{"gitlab-opendb", "gitlab.com/opendb/fork"},

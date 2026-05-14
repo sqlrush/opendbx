@@ -4,6 +4,9 @@ package errcode
 // New constructs a sentinel error.
 func New(msg string) error { return &E{msg: msg} }
 
+// Newf constructs a formatted sentinel error.
+func Newf(msg string, _ ...any) error { return &E{msg: msg} }
+
 // Wrap constructs a wrapping error.
 func Wrap(_ error, msg string) error { return &E{msg: msg} }
 
