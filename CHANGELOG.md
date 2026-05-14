@@ -8,6 +8,11 @@
 
 ## [Unreleased]
 
+### 2026-05-14: spec-0.9 post-FROZEN review follow-up — CI hardening
+
+- `make vuln-check` now installs and verifies pinned `govulncheck@v1.1.4` before scanning, so CI cannot accidentally reuse a preinstalled scanner with a different version.
+- `sync-branch-protection.sh --dry-run` now fails loudly on GitHub API/network/permission errors and only treats explicit 404/not-protected responses as "no protection configured".
+
 ### FROZEN 2026-05-14: spec-0.9-ci-github-actions — opendbx + opendbrb (post-T13)
 
 - [spec-0.9-ci-github-actions] FROZEN — tag `v0.9.0-stage0.9` (spec-0.7 D-2 dual-repo 自动化)

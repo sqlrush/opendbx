@@ -258,12 +258,23 @@ makefile-check: ## Lint top-level Makefile(s) + sibling if present
 # (called vulns) 都正常投 wrapper; 其他 rc 直接 fail.
 GOVULN_VERSION ?= v1.1.4
 vuln-check: ## Run govulncheck filtered by OSV allowlist (spec-0.9 D-2.5)
-	@command -v govulncheck >/dev/null 2>&1 || $(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULN_VERSION)
 	@bash -c ' \
+		set -e; \
+		gobin=$$($(GO) env GOBIN); \
+		if [ -z "$$gobin" ]; then gobin=$$($(GO) env GOPATH)/bin; fi; \
+		mkdir -p "$$gobin"; \
+		$(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULN_VERSION); \
+		govulncheck_bin="$$gobin/govulncheck"; \
+		version_output=$$("$$govulncheck_bin" -version 2>&1 || true); \
+		if ! printf "%s\n" "$$version_output" | grep -q "Scanner: govulncheck@$(GOVULN_VERSION)"; then \
+			echo "vuln-check: expected govulncheck $(GOVULN_VERSION), got:" >&2; \
+			printf "%s\n" "$$version_output" >&2; \
+			exit 1; \
+		fi; \
 		tmp=$$(mktemp -t opendbx-govuln.XXXXXX); \
 		trap "rm -f $$tmp" EXIT; \
 		set +e; \
-		govulncheck -json -test ./... > $$tmp; \
+		"$$govulncheck_bin" -json -test ./... > $$tmp; \
 		gv_rc=$$?; \
 		set -e; \
 		if [ $$gv_rc -ne 0 ] && [ $$gv_rc -ne 3 ]; then \
@@ -276,6 +287,7 @@ vuln-check: ## Run govulncheck filtered by OSV allowlist (spec-0.9 D-2.5)
 # spec-0.9 D-5 / T-7: ci.yml ↔ branch-protection JSON 1:1 drift check.
 ci-script-check: ## Detect ci.yml vs branch-protection JSON drift (D-5)
 	@$(GO) run ./tools/ci-protection-check
+	@bash scripts/ci/test-sync-branch-protection.sh
 
 # spec-0.9 D-5 / T-7: PATCH /required_status_checks 窄端点同步.
 sync-branch-protection: ## Sync branch protection contexts (dry-run; APPLY=1)

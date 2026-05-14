@@ -58,6 +58,8 @@ done
 REPO="${REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG="$SCRIPT_DIR/branch-protection-required-checks.json"
+CURRENT_ERR="$(mktemp -t opendbx-branch-protection.XXXXXX)"
+trap 'rm -f "$CURRENT_ERR"' EXIT
 
 if [ ! -f "$CONFIG" ]; then
   echo "ERR: $CONFIG not found" >&2
@@ -78,10 +80,17 @@ echo "mode:   $([ "$APPLY" = "1" ] && echo apply || echo dry-run)"
 echo ""
 
 echo "current required_status_checks.contexts:"
-if current_json=$(gh api "repos/$REPO/branches/main/protection/required_status_checks" 2>/dev/null); then
-  echo "$current_json" | jq -r '.contexts[]' | sed 's/^/  - /'
+if current_json=$(gh api "repos/$REPO/branches/main/protection/required_status_checks" 2>"$CURRENT_ERR"); then
+  echo "$current_json" | jq -r '.contexts[]?' | sed 's/^/  - /'
 else
-  echo "  (none configured yet, or main not protected)"
+  current_rc=$?
+  if grep -qE '(HTTP 404|Not Found|Branch not protected)' "$CURRENT_ERR"; then
+    echo "  (none configured yet, or main not protected)"
+  else
+    echo "ERR: failed to read current required_status_checks for $REPO" >&2
+    sed 's/^/     /' "$CURRENT_ERR" >&2
+    exit "$current_rc"
+  fi
 fi
 echo ""
 
