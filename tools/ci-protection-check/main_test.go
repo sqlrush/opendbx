@@ -72,8 +72,8 @@ func TestRun_ExactMatch(t *testing.T) {
 
 func TestRun_MissingContext(t *testing.T) {
 	t.Parallel()
-	json := `{"strict":true,"contexts":["validate","build-linux","missing-job"]}`
-	ciPath, jsonPath := writeFiles(t, okCI, json)
+	jsonBody := `{"strict":true,"contexts":["validate","build-linux","missing-job"]}`
+	ciPath, jsonPath := writeFiles(t, okCI, jsonBody)
 	var out bytes.Buffer
 	code := run(ciPath, jsonPath, &out)
 	if code != 1 {
@@ -91,8 +91,8 @@ func TestRun_MissingContext(t *testing.T) {
 
 func TestRun_ExtraStableJob(t *testing.T) {
 	t.Parallel()
-	json := `{"strict":true,"contexts":["validate","build-linux"]}`
-	ciPath, jsonPath := writeFiles(t, okCI, json)
+	jsonBody := `{"strict":true,"contexts":["validate","build-linux"]}`
+	ciPath, jsonPath := writeFiles(t, okCI, jsonBody)
 	var out bytes.Buffer
 	code := run(ciPath, jsonPath, &out)
 	if code != 1 {
@@ -163,8 +163,8 @@ func TestRun_MalformedYAML(t *testing.T) {
 
 func TestRun_EmptyContexts(t *testing.T) {
 	t.Parallel()
-	json := `{"strict":true,"contexts":[]}`
-	ciPath, jsonPath := writeFiles(t, okCI, json)
+	jsonBody := `{"strict":true,"contexts":[]}`
+	ciPath, jsonPath := writeFiles(t, okCI, jsonBody)
 	var out bytes.Buffer
 	code := run(ciPath, jsonPath, &out)
 	if code != 2 {
@@ -179,8 +179,8 @@ func TestRun_EmptyContexts(t *testing.T) {
 
 func TestRun_EmptyContextString(t *testing.T) {
 	t.Parallel()
-	json := `{"strict":true,"contexts":["validate",""]}`
-	ciPath, jsonPath := writeFiles(t, okCI, json)
+	jsonBody := `{"strict":true,"contexts":["validate",""]}`
+	ciPath, jsonPath := writeFiles(t, okCI, jsonBody)
 	var out bytes.Buffer
 	code := run(ciPath, jsonPath, &out)
 	if code != 2 {
@@ -225,17 +225,59 @@ func TestRun_FilesNotFound(t *testing.T) {
 func TestRun_ProductionFiles(t *testing.T) {
 	t.Parallel()
 	ci := "../../.github/workflows/ci.yml"
-	json := "../../scripts/ci/branch-protection-required-checks.json"
+	jsonPath := "../../scripts/ci/branch-protection-required-checks.json"
 	if _, err := os.Stat(ci); err != nil {
 		t.Skipf("production ci.yml not reachable: %v", err)
 	}
-	if _, err := os.Stat(json); err != nil {
+	if _, err := os.Stat(jsonPath); err != nil {
 		t.Skipf("production rcc.json not reachable: %v", err)
 	}
 	var out bytes.Buffer
-	code := run(ci, json, &out)
-	// T-7 PR 自身 ship 此工具 + 9 stable jobs; should pass.
+	code := run(ci, jsonPath, &out)
 	if code != 0 {
 		t.Errorf("production ci.yml ↔ rcc.json must be 1:1; got %d; out=%s", code, out.String())
+	}
+}
+
+// --- Path 12: T-7.5 codex MED-1 — duplicate JSON contexts → exit 2 -----
+
+func TestRun_DuplicateJSONContext(t *testing.T) {
+	t.Parallel()
+	jsonBody := `{"strict":true,"contexts":["validate","build-linux","validate"]}`
+	ciPath, jsonPath := writeFiles(t, okCI, jsonBody)
+	var out bytes.Buffer
+	code := run(ciPath, jsonPath, &out)
+	if code != 2 {
+		t.Errorf("duplicate JSON context must exit 2; got %d", code)
+	}
+	if !strings.Contains(out.String(), `duplicate context "validate"`) {
+		t.Errorf("expected duplicate-context message; got %q", out.String())
+	}
+}
+
+// --- Path 13: T-7.5 codex MED-1 — duplicate stable job name → exit 2 ---
+
+func TestRun_DuplicateStableJobName(t *testing.T) {
+	t.Parallel()
+	// Two stable jobs with the same 'name:' produce a phantom GitHub context.
+	ci := `name: CI
+on: { push: { branches: [main] } }
+jobs:
+  validate:
+    name: validate
+    runs-on: ubuntu-latest
+    steps: [{ run: "true" }]
+  validate-extra:
+    name: validate
+    runs-on: ubuntu-latest
+    steps: [{ run: "true" }]`
+	ciPath, jsonPath := writeFiles(t, ci, `{"strict":true,"contexts":["validate"]}`)
+	var out bytes.Buffer
+	code := run(ciPath, jsonPath, &out)
+	if code != 2 {
+		t.Errorf("duplicate stable job name must exit 2; got %d", code)
+	}
+	if !strings.Contains(out.String(), "duplicate stable job name") {
+		t.Errorf("expected duplicate-job message; got %q", out.String())
 	}
 }

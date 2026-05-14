@@ -64,6 +64,11 @@ type ciJob struct {
 }
 
 // loadJSON reads + validates the required-checks JSON file.
+//
+// T-7.5 codex MED-1 修: reject duplicate contexts — the 1:1 invariant
+// breaks if the JSON list contains the same context twice (only one of
+// the GitHub status checks would actually gate; the other reports against
+// a phantom).
 func loadJSON(path string) ([]string, error) {
 	raw, err := os.ReadFile(path) // #nosec G304 -- spec-0.9 D-5: operator-supplied config path
 	if err != nil {
@@ -76,10 +81,15 @@ func loadJSON(path string) ([]string, error) {
 	if len(f.Contexts) == 0 {
 		return nil, fmt.Errorf("%s: .contexts is empty", path)
 	}
+	seen := make(map[string]struct{}, len(f.Contexts))
 	for i, c := range f.Contexts {
 		if strings.TrimSpace(c) == "" {
 			return nil, fmt.Errorf("%s: context[%d] is empty", path, i)
 		}
+		if _, dup := seen[c]; dup {
+			return nil, fmt.Errorf("%s: duplicate context %q at index %d", path, c, i)
+		}
+		seen[c] = struct{}{}
 	}
 	return f.Contexts, nil
 }
@@ -90,6 +100,10 @@ func loadJSON(path string) ([]string, error) {
 //
 // The 'name:' field of each job (not the job key) is what GitHub uses as
 // the status-check context, so we extract that.
+//
+// T-7.5 codex MED-1 修: reject duplicate stable-job 'name:' values — if
+// two jobs render the same GitHub context string, only one of them can
+// gate the PR, making the other a phantom.
 func loadCIJobNames(path string) (stableNames, legacyNames []string, err error) {
 	raw, err := os.ReadFile(path) // #nosec G304 -- spec-0.9 D-5: operator-supplied config path
 	if err != nil {
@@ -102,6 +116,7 @@ func loadCIJobNames(path string) (stableNames, legacyNames []string, err error) 
 	if len(doc.Jobs) == 0 {
 		return nil, nil, fmt.Errorf("%s: no jobs found", path)
 	}
+	stableSeen := make(map[string]string)
 	for key, job := range doc.Jobs {
 		name := strings.TrimSpace(job.Name)
 		if name == "" {
@@ -111,6 +126,11 @@ func loadCIJobNames(path string) (stableNames, legacyNames []string, err error) 
 			legacyNames = append(legacyNames, name)
 			continue
 		}
+		if prev, dup := stableSeen[name]; dup {
+			return nil, nil, fmt.Errorf("%s: duplicate stable job name %q (jobs %q and %q)",
+				path, name, prev, key)
+		}
+		stableSeen[name] = key
 		stableNames = append(stableNames, name)
 	}
 	sort.Strings(stableNames)

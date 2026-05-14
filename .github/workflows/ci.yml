@@ -2,11 +2,10 @@
 #
 # 9 stable-name required jobs (validate / build-linux / build-macos /
 # unit-test / import-rules / dependency-policy / cli-golden / security /
-# perf-smoke) do real work. 7 legacy-name placeholder jobs (Validate ... /
-# Build (matrix) ... / Unit Test ... / Import Rules Check ... / Dep
-# Allowlist Check ... / CLI Text Golden ... / pre-push hook ...) echo + exit
-# 0 to keep current branch-protection contexts green during T-5 → T-8
-# transition.
+# perf-smoke) do real work. 8 legacy-name placeholder jobs echo + exit 0
+# to keep current branch-protection contexts green during T-5 → T-8
+# transition (the matrix Build splits into two contexts ubuntu / macos,
+# making it 8 legacy placeholders for 7 conceptual old jobs).
 #
 # T-8 cutover: `scripts/ci/sync-branch-protection.sh --apply` flips required
 # contexts to the 9 stable names; T-9 deletes the 7 placeholders.
@@ -261,7 +260,9 @@ jobs:
           retention-days: 30
 
   # ===========================================================================
-  # 7 legacy-name placeholder jobs (T-5 兼容 PR 模式 — T-9 删除)
+  # 8 legacy-name placeholder jobs (T-5 兼容 PR 模式 — T-9 删除)
+  # 注: 旧 build matrix 生成 ubuntu + macos 两 context, 故 placeholder 8 个对应
+  # 7 个 conceptual 旧 job + 1 个 matrix 切片.
   #
   # 当前 branch protection 引用这些旧 context 字符串. T-5 阶段保留 echo + exit 0
   # placeholder 让 protection gate 通过, 真实验证由上面 9 个 stable-name job 跑.
