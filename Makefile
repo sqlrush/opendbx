@@ -26,7 +26,7 @@
 .PHONY: hooks-install hooks-status import-check dep-check
 .PHONY: golden golden-update gen-docs cc-help-diff
 .PHONY: coverage-gate makefile-check tag-spec release registry-drift-check
-.PHONY: vuln-check
+.PHONY: vuln-check ci-script-check sync-branch-protection
 
 BIN_DIR := bin
 BIN_NAME := opendbx
@@ -194,6 +194,7 @@ gate: import-check dep-check golden ## Local layer-2 gate (must pass before push
 	CGO_ENABLED=0 $(GO) build ./...
 	$(MAKE) makefile-check
 	$(MAKE) registry-drift-check
+	$(MAKE) ci-script-check
 	$(MAKE) coverage-gate
 	$(MAKE) bench
 	@echo "=== Layer-2 Gate PASSED ==="
@@ -253,6 +254,14 @@ GOVULN_VERSION ?= v1.1.4
 vuln-check: ## Run govulncheck filtered by OSV allowlist (spec-0.9 D-2.5)
 	@command -v govulncheck >/dev/null 2>&1 || $(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULN_VERSION)
 	@govulncheck -json -test ./... | $(GO) run ./tools/vuln-allowlist
+
+# spec-0.9 D-5 / T-7: ci.yml ↔ branch-protection JSON 1:1 drift check.
+ci-script-check: ## Detect ci.yml vs branch-protection JSON drift (D-5)
+	@$(GO) run ./tools/ci-protection-check
+
+# spec-0.9 D-5 / T-7: PATCH /required_status_checks 窄端点同步.
+sync-branch-protection: ## Sync branch protection contexts (dry-run; APPLY=1)
+	@bash scripts/ci/sync-branch-protection.sh $(if $(filter 1,$(APPLY)),--apply,--dry-run)
 
 # spec-0.2 governance gates (D-5 / D-6 / D-3) — see docs/cicd-and-methodology.md
 import-check: ## Run import-rules-check (spec-0.2 D-5)

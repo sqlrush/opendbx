@@ -259,6 +259,7 @@ func TestClassify(t *testing.T) {
 		{modulePath + "/tools/coverage-gate", TierTool},
 		{modulePath + "/tools/makefile-check", TierTool},
 		{modulePath + "/tools/vuln-allowlist", TierTool},
+		{modulePath + "/tools/ci-protection-check", TierTool},
 		{modulePath + "/internal/platform/profileutil", TierOther},
 		{modulePath + "/internal/platform/nonexistent", TierOther},
 	}
