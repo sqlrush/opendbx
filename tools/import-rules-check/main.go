@@ -146,7 +146,15 @@ func canonicalPath(p string) string {
 	return strings.TrimSuffix(p, ".test")
 }
 
-// checkEdge runs the three rule families against a single edge.
+// checkEdge runs every rule family against a single edge.
+//
+// Rule families (existing + spec-0.10 D-3 IMP-5/6/7/8 new):
+//   - CheckEdge:        layer matrix (spec-0.2 D-5)
+//   - CheckCluster:     domain cluster restrictions (spec-0.2 D-5)
+//   - CheckRenderDAG:   render/* 10-layer strict DAG (spec-0.2 D-5; IMP-6 per spec-0.10)
+//   - CheckOpendbBan:   IMP-5 (spec-0.10 D-3)
+//   - CheckLLMSDKIsolation: IMP-7 (spec-0.10 D-3, added T-7)
+//   - CheckRunewidthWrap:   IMP-8 (spec-0.10 D-3, added T-7)
 func checkEdge(from, to string) []string {
 	var out []string
 	if r := rules.CheckEdge(from, to); r != "" {
@@ -156,6 +164,15 @@ func checkEdge(from, to string) []string {
 		out = append(out, fmt.Sprintf("%s → %s: %s", from, to, r))
 	}
 	if r := rules.CheckRenderDAG(from, to); r != "" {
+		out = append(out, fmt.Sprintf("%s → %s: %s", from, to, r))
+	}
+	if r := rules.CheckOpendbBan(from, to); r != "" {
+		out = append(out, fmt.Sprintf("%s → %s: %s", from, to, r))
+	}
+	if r := rules.CheckLLMSDKIsolation(from, to); r != "" {
+		out = append(out, fmt.Sprintf("%s → %s: %s", from, to, r))
+	}
+	if r := rules.CheckRunewidthWrap(from, to); r != "" {
 		out = append(out, fmt.Sprintf("%s → %s: %s", from, to, r))
 	}
 	return out
