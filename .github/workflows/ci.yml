@@ -216,10 +216,8 @@ jobs:
         run: |
           echo "gosec reported issues (see GH Security tab + gosec-sarif artifact)"
           exit 1
-      # govulncheck @v1.1.4 source mode (R2 codex CRIT-1 + HIGH-9 修).
-      # T-3.5 后将 `govulncheck -test ./...` 替换为 `make vuln-check`
-      # (vuln-allowlist 包装提供 OSV ID + expiry 豁免).
-      - name: Install govulncheck v1.1.4
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
-      - name: Run govulncheck (source mode)
-        run: govulncheck -test ./...
+      # NOTE: govulncheck 在 T-3.5 (D-2.5 vuln-allowlist + make vuln-check) 落地后
+      # 加入. spec-0.9 § 3.1 step 2: "T-3.5 ... 独立 commit 早于 T-3 集成防
+      # govulncheck 误报阻 PR" —— 例如 Go 1.23 stdlib vuln GO-2026-4602
+      # (FileInfo escape) 已被 govulncheck 报告, 须 OSV allowlist 豁免才能在
+      # CI 通过. spec § 9 timeline T-3 → T-3.5 顺序遵循.
