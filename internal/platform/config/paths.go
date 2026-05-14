@@ -19,6 +19,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"github.com/sqlrush/opendbx/internal/platform/errcode"
 )
 
 // SourcePaths bundles the on-disk paths that Load() reads in priority order
@@ -40,7 +42,7 @@ type SourcePaths struct {
 func DefaultSourcePaths(cwd string) (SourcePaths, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return SourcePaths{}, err
+		return SourcePaths{}, errcode.Wrap(ErrLoadFailed.Code(), err, "resolve home directory", "")
 	}
 
 	var policy, user string

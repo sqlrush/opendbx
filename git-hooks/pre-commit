@@ -29,12 +29,33 @@ fi
 
 echo "=== pre-commit lint (Go files, $(echo "$STAGED_GO" | wc -l | tr -d ' ') staged) ==="
 
-# 1. gofmt — fast (~50ms per file)
-unformatted=$(echo "$STAGED_GO" | xargs gofmt -l 2>/dev/null || true)
-if [ -n "$unformatted" ]; then
+# 1. gofmt — fast (~50ms per file). Check the staged blob, not the
+# working tree, so "git add bad.go && gofmt -w bad.go" cannot commit the
+# stale staged content by accident.
+unformatted=()
+while IFS= read -r file; do
+  [ -n "$file" ] || continue
+  tmp="$(mktemp "${TMPDIR:-/tmp}/opendbx-precommit-gofmt.XXXXXX")"
+  trap 'rm -f "$tmp"' EXIT
+  if ! git show ":$file" >"$tmp"; then
+    echo "ERR: cannot read staged blob for $file" >&2
+    exit 1
+  fi
+  if ! gofmt -w "$tmp" 2>/dev/null; then
+    echo "ERR: gofmt failed for staged blob: $file" >&2
+    rm -f "$tmp"
+    exit 1
+  fi
+  if ! git show ":$file" | cmp -s "$tmp" -; then
+    unformatted+=("$file")
+  fi
+  rm -f "$tmp"
+  trap - EXIT
+done <<< "$STAGED_GO"
+if [ "${#unformatted[@]}" -ne 0 ]; then
   echo "ERR: gofmt failed for:" >&2
-  echo "$unformatted" >&2
-  echo "  fix: gofmt -w \$file" >&2
+  printf '  %s\n' "${unformatted[@]}" >&2
+  echo "  fix: gofmt -w \$file && git add \$file" >&2
   exit 1
 fi
 

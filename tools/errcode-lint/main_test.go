@@ -14,6 +14,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"golang.org/x/tools/go/packages"
 )
 
 // --- Path 1: isExempt prefix logic -----------------------------------
@@ -30,7 +32,7 @@ func TestIsExempt(t *testing.T) {
 		{"github.com/sqlrush/opendbx/tools/errcode-lint", true},
 		{"github.com/sqlrush/opendbx/tools/import-rules-check", true},
 		{"github.com/sqlrush/opendbx/tools/import-rules-check/rules", true},
-		{"github.com/sqlrush/opendbx/cmd/opendbx", true},
+		{"github.com/sqlrush/opendbx/cmd/opendbx", false},
 		{"github.com/sqlrush/opendbx/cmd/tools/gen-error-codes", true},
 		{"github.com/sqlrush/opendbx/internal/platform/logger", false},
 		{"github.com/sqlrush/opendbx/internal/platform/config", false},
@@ -123,13 +125,13 @@ func TestIsErrcodeConstructor(t *testing.T) {
 		`package x; import "errcode"; func _(){ errcode.Wrap() }`,
 	} {
 		ce := findFirstCall(t, src)
-		if !isErrcodeConstructor(ce) {
+		if !isErrcodeConstructor(ce, nil) {
 			t.Errorf("expected true for %q", src)
 		}
 	}
 	// Negative
 	ce := findFirstCall(t, `package x; import "errors"; func _(){ errors.New("x") }`)
-	if isErrcodeConstructor(ce) {
+	if isErrcodeConstructor(ce, nil) {
 		t.Errorf("errors.New must not be errcode constructor")
 	}
 }
@@ -147,7 +149,7 @@ func TestIsBareErrorConstructor(t *testing.T) {
 	}
 	for _, c := range cases {
 		ce := findFirstCall(t, c.src)
-		got, ok := isBareErrorConstructor(ce)
+		got, ok := isBareErrorConstructor(ce, nil)
 		if got != c.want || ok != c.ok {
 			t.Errorf("src=%q got (%q, %v); want (%q, %v)", c.src, got, ok, c.want, c.ok)
 		}
@@ -258,9 +260,10 @@ func TestLint_BadFixture(t *testing.T) {
 	if err != nil {
 		t.Skipf("fixture load unavailable: %v", err)
 	}
-	// T-13 codex HIGH-1: now also catches BadLocalBareErrors + BadLocalFmtErrorf.
-	if len(vs) != 5 {
-		t.Errorf("expected 5 violations; got %d", len(vs))
+	// T-13 codex HIGH-1 catches local bare errors; post-FROZEN codex
+	// follow-up also catches aliases and unproved helper/var returns.
+	if len(vs) != 9 {
+		t.Errorf("expected 9 violations; got %d", len(vs))
 		for _, v := range vs {
 			t.Logf("  %s", v)
 		}
@@ -271,6 +274,10 @@ func TestLint_BadFixture(t *testing.T) {
 		"BadFmtWrap":         EC2,
 		"BadLocalBareErrors": EC1,
 		"BadLocalFmtErrorf":  EC2,
+		"BadAliasErrors":     EC1,
+		"BadAliasFmt":        EC2,
+		"BadUnknownHelper":   EC3,
+		"BadVarDecl":         EC3,
 	}
 	for _, v := range vs {
 		want, ok := wantByFn[v.Function]
@@ -400,4 +407,254 @@ func Baz() {}
 	if !got["Foo"] || !got["Bar"] || got["Baz"] {
 		t.Errorf("returnsError fallback wrong; got %v", got)
 	}
+}
+
+func TestReceiverBaseNameAndPublicFuncDecl(t *testing.T) {
+	t.Parallel()
+	src := `package x
+type exported struct{}
+type Exported struct{}
+func Free() error { return nil }
+func (exported) Method() error { return nil }
+func (*Exported) Method() error { return nil }
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "x.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	got := map[string]bool{}
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		key := fn.Name.Name
+		if fn.Recv != nil {
+			key = receiverBaseName(fn.Recv.List[0].Type) + "." + key
+		}
+		got[key] = isPublicFuncDecl(fn)
+	}
+	if !got["Free"] {
+		t.Errorf("free exported function must be public: %v", got)
+	}
+	if got["exported.Method"] {
+		t.Errorf("method on unexported receiver must not be public: %v", got)
+	}
+	if !got["Exported.Method"] {
+		t.Errorf("method on exported receiver must be public: %v", got)
+	}
+}
+
+func TestReceiverBaseName_IndexForms(t *testing.T) {
+	t.Parallel()
+	src := `package x
+type Box[T any] struct{}
+func (Box[int]) Value() error { return nil }
+func (*Box[string]) Ptr() error { return nil }
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "x.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var names []string
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv == nil {
+			continue
+		}
+		names = append(names, receiverBaseName(fn.Recv.List[0].Type))
+	}
+	if strings.Join(names, ",") != "Box,Box" {
+		t.Errorf("receiver names = %v; want Box,Box", names)
+	}
+}
+
+func TestProofHelpers_DirectCoverage(t *testing.T) {
+	t.Parallel()
+	pkg := loadFixturePackage(t, "./goodpkg")
+	helpers := collectFunctionDecls(pkg)
+	_, helperFn := findFixtureFunc(t, pkg, "helperWrapped")
+	if !helperReturnsWrapped(pkg, helperFn, helpers, map[*types.Func]bool{}) {
+		t.Fatalf("helperWrapped must be proved wrapped")
+	}
+	_, goodFn := findFixtureFunc(t, pkg, "GoodHelperCall")
+	call := firstReturnExpr(t, goodFn).(*ast.CallExpr)
+	if !callReturnsWrapped(pkg, call, helpers, map[*types.Func]bool{}) {
+		t.Fatalf("GoodHelperCall call must be proved wrapped")
+	}
+	if callReturnsWrapped(pkg, call, helpers, map[*types.Func]bool{calledFunc(call, pkg.TypesInfo): true}) {
+		t.Fatalf("seen helper must not recurse forever")
+	}
+	if callReturnsWrapped(pkg, call, nil, map[*types.Func]bool{}) {
+		t.Fatalf("missing helper decl must not prove wrapped")
+	}
+	if calledFunc(call, nil) != nil {
+		t.Fatalf("calledFunc without type info must return nil")
+	}
+}
+
+func TestClassifyReturnExpr_UnknownAndExemptBranches(t *testing.T) {
+	t.Parallel()
+	pkg := loadFixturePackage(t, "./badpkg")
+	helpers := collectFunctionDecls(pkg)
+
+	file, badHelper := findFixtureFunc(t, pkg, "BadUnknownHelper")
+	vs := classifyReturnExpr(pkg, file, badHelper, nil, firstReturnExpr(t, badHelper), helpers)
+	if len(vs) != 1 || vs[0].Code != EC3 {
+		t.Fatalf("BadUnknownHelper = %#v; want one EC-3", vs)
+	}
+
+	file, exempt := findFixtureFunc(t, pkg, "ExemptComment")
+	vs = classifyReturnExpr(pkg, file, exempt, nil, firstReturnExpr(t, exempt), helpers)
+	if len(vs) != 0 {
+		t.Fatalf("ExemptComment must be skipped; got %#v", vs)
+	}
+}
+
+func TestIsProvedReturnExpr_Cases(t *testing.T) {
+	t.Parallel()
+	good := loadFixturePackage(t, "./goodpkg")
+	bad := loadFixturePackage(t, "./badpkg")
+	cases := []struct {
+		name string
+		pkg  *packages.Package
+		fn   string
+		want bool
+	}{
+		{"direct-errcode", good, "GoodErrcodeNew", true},
+		{"helper-call", good, "GoodHelperCall", true},
+		{"local-helper", good, "GoodLocalHelperCall", true},
+		{"selector-helper", good, "GoodSelectorHelper", true},
+		{"param", good, "GoodParamReturn", true},
+		{"direct-bare", bad, "BadBareErrors", false},
+		{"local-bare", bad, "BadLocalBareErrors", false},
+		{"unknown-helper", bad, "BadUnknownHelper", false},
+		{"var-decl-unknown", bad, "BadVarDecl", false},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			_, fn := findFixtureFunc(t, c.pkg, c.fn)
+			helpers := collectFunctionDecls(c.pkg)
+			got := isProvedReturnExpr(c.pkg, fn, paramNameSet(fn), firstReturnExpr(t, fn), helpers, map[*types.Func]bool{})
+			if got != c.want {
+				t.Fatalf("%s proved=%v want %v", c.fn, got, c.want)
+			}
+		})
+	}
+}
+
+func TestReceiverBaseName_SelectorAndDefault(t *testing.T) {
+	t.Parallel()
+	if got := receiverBaseName(&ast.SelectorExpr{Sel: ast.NewIdent("Remote")}); got != "Remote" {
+		t.Fatalf("selector receiver = %q, want Remote", got)
+	}
+	if got := receiverBaseName(&ast.ArrayType{}); got != "" {
+		t.Fatalf("unknown receiver = %q, want empty", got)
+	}
+}
+
+func TestInspectPackage_ExemptAndEmpty(t *testing.T) {
+	t.Parallel()
+	if vs := inspectPackage(&packages.Package{PkgPath: "github.com/sqlrush/opendbx/tools/example"}); len(vs) != 0 {
+		t.Fatalf("exempt tool package produced violations: %#v", vs)
+	}
+	if vs := inspectPackage(&packages.Package{PkgPath: "github.com/sqlrush/opendbx/internal/platform/logger"}); len(vs) != 0 {
+		t.Fatalf("empty package produced violations: %#v", vs)
+	}
+}
+
+func TestIsErrcodeType_NegativeInterface(t *testing.T) {
+	t.Parallel()
+	src := `package x
+type Almost interface {
+	Error() string
+	Code() string
+}
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "x.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	conf := types.Config{}
+	info := &types.Info{Defs: map[*ast.Ident]types.Object{}}
+	pkg, err := conf.Check("x", fset, []*ast.File{f}, info)
+	if err != nil {
+		t.Fatalf("typecheck: %v", err)
+	}
+	if isErrcodeType(pkg.Scope().Lookup("Almost").Type()) {
+		t.Fatalf("interface missing Message/Hint/Unwrap must not be errcode type")
+	}
+}
+
+func paramNameSet(fn *ast.FuncDecl) map[string]bool {
+	out := map[string]bool{}
+	if fn.Type.Params == nil {
+		return out
+	}
+	for _, p := range fn.Type.Params.List {
+		for _, n := range p.Names {
+			out[n.Name] = true
+		}
+	}
+	return out
+}
+
+func loadFixturePackage(t *testing.T, pattern string) *packages.Package {
+	t.Helper()
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
+			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedDeps |
+			packages.NeedImports,
+		Dir: "testdata/fixtures",
+	}
+	pkgs, err := packages.Load(cfg, pattern)
+	if err != nil {
+		t.Fatalf("load fixture: %v", err)
+	}
+	if len(pkgs) != 1 {
+		t.Fatalf("load fixture got %d packages, want 1", len(pkgs))
+	}
+	if len(pkgs[0].Errors) > 0 {
+		t.Fatalf("fixture package has errors: %v", pkgs[0].Errors)
+	}
+	return pkgs[0]
+}
+
+func findFixtureFunc(t *testing.T, pkg *packages.Package, name string) (*ast.File, *ast.FuncDecl) {
+	t.Helper()
+	for _, file := range pkg.Syntax {
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if ok && fn.Name != nil && fn.Name.Name == name {
+				return file, fn
+			}
+		}
+	}
+	t.Fatalf("func %s not found", name)
+	return nil, nil
+}
+
+func firstReturnExpr(t *testing.T, fn *ast.FuncDecl) ast.Expr {
+	t.Helper()
+	var expr ast.Expr
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if expr != nil {
+			return false
+		}
+		ret, ok := n.(*ast.ReturnStmt)
+		if !ok || len(ret.Results) == 0 {
+			return true
+		}
+		expr = ret.Results[len(ret.Results)-1]
+		return false
+	})
+	if expr == nil {
+		t.Fatalf("no return expr in %s", fn.Name.Name)
+	}
+	return expr
 }

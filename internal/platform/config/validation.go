@@ -60,7 +60,7 @@ func Validate(cfg *Config) error {
 	var errs ValidationErrors
 	walkValidate(reflect.ValueOf(cfg).Elem(), "", cfg, &errs)
 	if len(errs) > 0 {
-		return errs
+		return wrapValidationError(errs)
 	}
 	return nil
 }

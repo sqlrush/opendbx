@@ -31,6 +31,7 @@
 //   - return local var whose reaching assignment is errcode.X     → OK
 //   - return errors.New(...) / fmt.Errorf(...) bare construction  → EC-1
 //   - return fmt.Errorf("...: %w", root) without errcode outer     → EC-2
+//   - return an unproved error expression/helper/local             → EC-3
 //   - line above carries `// errcode-lint:exempt -- spec-X.Y D-N:` → skip
 //
 // Usage:
@@ -55,6 +56,12 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
+const (
+	errcodePackagePath = "github.com/sqlrush/opendbx/internal/platform/errcode"
+	errorsPackagePath  = "errors"
+	fmtPackagePath     = "fmt"
+)
+
 // exemptPrefixes lists package import path prefixes whose subtree is
 // exempt from public API errcode enforcement. These packages either:
 //   - implement the errcode contract itself (internal/platform/errcode);
@@ -69,7 +76,6 @@ var exemptPrefixes = []string{
 	"github.com/sqlrush/opendbx/internal/platform/errcode",
 	"github.com/sqlrush/opendbx/internal/entrypoints",
 	"github.com/sqlrush/opendbx/tools/",
-	"github.com/sqlrush/opendbx/cmd/opendbx",
 	"github.com/sqlrush/opendbx/cmd/tools/",
 }
 
@@ -90,6 +96,7 @@ type Code string
 const (
 	EC1 Code = "EC-1" // exported func returns bare errors.New / fmt.Errorf
 	EC2 Code = "EC-2" // exported func wraps with fmt.Errorf but outer is not errcode
+	EC3 Code = "EC-3" // exported func returns unproved error expression
 )
 
 // Violation describes a single rule transgression.
@@ -114,25 +121,12 @@ func isErrorType(typ types.Type) bool {
 	if typ == nil {
 		return false
 	}
-	// The predeclared error type is *types.Named "error" in the universe scope.
-	named, ok := typ.(*types.Named)
-	if ok && named.Obj() != nil && named.Obj().Name() == "error" && named.Obj().Pkg() == nil {
+	errorType := types.Universe.Lookup("error").Type()
+	if types.AssignableTo(typ, errorType) {
 		return true
 	}
-	// Or any type that implements error.
-	if iface, ok := typ.Underlying().(*types.Interface); ok {
-		// Check whether the interface declares Error() string.
-		for i := 0; i < iface.NumMethods(); i++ {
-			m := iface.Method(i)
-			if m.Name() == "Error" {
-				sig, ok := m.Type().(*types.Signature)
-				if ok && sig.Params().Len() == 0 && sig.Results().Len() == 1 {
-					return true
-				}
-			}
-		}
-	}
-	return false
+	errorIface, ok := errorType.Underlying().(*types.Interface)
+	return ok && types.Implements(typ, errorIface)
 }
 
 // funcReturnsError reports whether the FuncDecl's signature has any
@@ -172,27 +166,105 @@ func callExprName(ce *ast.CallExpr) string {
 	return ""
 }
 
+// selectorFunc reports the selected function's import path and name.
+// When type information is available, it uses the resolved object, so
+// aliases such as `e "errors"` still resolve to package path "errors".
+// Without type information it falls back to the textual selector prefix.
+func selectorFunc(ce *ast.CallExpr, info *types.Info) (pkgPath string, name string, ok bool) {
+	sel, ok := ce.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return "", callExprName(ce), false
+	}
+	if info != nil {
+		if fn, ok := info.Uses[sel.Sel].(*types.Func); ok {
+			if pkg := fn.Pkg(); pkg != nil {
+				return pkg.Path(), fn.Name(), true
+			}
+		}
+	}
+	if ident, ok := sel.X.(*ast.Ident); ok {
+		return ident.Name, sel.Sel.Name, false
+	}
+	return "", sel.Sel.Name, false
+}
+
+func calledFunc(ce *ast.CallExpr, info *types.Info) *types.Func {
+	if info == nil {
+		return nil
+	}
+	switch fn := ce.Fun.(type) {
+	case *ast.Ident:
+		if obj, ok := info.Uses[fn].(*types.Func); ok {
+			return obj
+		}
+	case *ast.SelectorExpr:
+		if obj, ok := info.Uses[fn.Sel].(*types.Func); ok {
+			return obj
+		}
+	}
+	return nil
+}
+
 // isErrcodeConstructor returns true if call is errcode.New / errcode.Newf
-// / errcode.Wrap. We use textual match on the selector (errcode pkg may
-// be aliased but convention in opendbx is unaliased import).
-func isErrcodeConstructor(ce *ast.CallExpr) bool {
-	name := callExprName(ce)
-	return name == "errcode.New" || name == "errcode.Newf" || name == "errcode.Wrap"
+// / errcode.Wrap from the canonical errcode package. Fixture modules may
+// use the same internal/platform/errcode suffix.
+func isErrcodeConstructor(ce *ast.CallExpr, info *types.Info) bool {
+	pkgPath, name, resolved := selectorFunc(ce, info)
+	if name != "New" && name != "Newf" && name != "Wrap" {
+		return false
+	}
+	if resolved {
+		return pkgPath == errcodePackagePath || strings.HasSuffix(pkgPath, "/internal/platform/errcode")
+	}
+	return pkgPath == "errcode"
 }
 
 // isBareErrorConstructor returns true if call is errors.New or fmt.Errorf
 // (without errcode being the outer wrapper). For fmt.Errorf we treat all
 // uses inside an exported error-returning function as suspect unless
 // wrapped by errcode at the caller.
-func isBareErrorConstructor(ce *ast.CallExpr) (Code, bool) {
-	name := callExprName(ce)
-	if name == "errors.New" {
+func isBareErrorConstructor(ce *ast.CallExpr, info *types.Info) (Code, bool) {
+	pkgPath, name, resolved := selectorFunc(ce, info)
+	if resolved && pkgPath == errorsPackagePath && name == "New" {
 		return EC1, true
 	}
-	if name == "fmt.Errorf" {
+	if resolved && pkgPath == fmtPackagePath && name == "Errorf" {
+		return EC2, true // could be %w wrapping; flag as EC-2
+	}
+	if !resolved && pkgPath == "errors" && name == "New" {
+		return EC1, true
+	}
+	if !resolved && pkgPath == "fmt" && name == "Errorf" {
 		return EC2, true // could be %w wrapping; flag as EC-2
 	}
 	return "", false
+}
+
+func isErrcodeType(typ types.Type) bool {
+	if typ == nil {
+		return false
+	}
+	hasMethod := func(name string) bool {
+		obj, _, _ := types.LookupFieldOrMethod(typ, true, nil, name)
+		fn, ok := obj.(*types.Func)
+		if !ok {
+			return false
+		}
+		sig, ok := fn.Type().(*types.Signature)
+		if !ok || sig.Params().Len() != 0 {
+			return false
+		}
+		switch name {
+		case "Code", "Message", "Hint", "Error":
+			return sig.Results().Len() == 1 && sig.Results().At(0).Type() == types.Typ[types.String]
+		case "Unwrap":
+			return sig.Results().Len() == 1 && isErrorType(sig.Results().At(0).Type())
+		default:
+			return false
+		}
+	}
+	return hasMethod("Error") && hasMethod("Code") && hasMethod("Message") &&
+		hasMethod("Hint") && hasMethod("Unwrap")
 }
 
 // hasExemptComment scans comment groups above lineN for an
@@ -225,8 +297,8 @@ func hasExemptComment(file *ast.File, fset *token.FileSet, lineN int) bool {
 // The analysis is intentionally simple: it walks the function body
 // linearly and tracks the latest single assignment per identifier. It is
 // safe (false-negatives possible if control flow is complex) but never
-// reports a violation it cannot prove — those land in EC-unknown which
-// requires an `errcode-lint:exempt` comment.
+// reports an EC-3 violation when it cannot prove the origin; callers can
+// use `errcode-lint:exempt` with a spec reference for intentional cases.
 func reachingAssignSource(fn *ast.FuncDecl, name string, before token.Pos) *ast.CallExpr {
 	if fn.Body == nil {
 		return nil
@@ -257,10 +329,125 @@ func reachingAssignSource(fn *ast.FuncDecl, name string, before token.Pos) *ast.
 	return found
 }
 
+func collectFunctionDecls(pkg *packages.Package) map[*types.Func]*ast.FuncDecl {
+	out := make(map[*types.Func]*ast.FuncDecl)
+	if pkg.TypesInfo == nil {
+		return out
+	}
+	for _, file := range pkg.Syntax {
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Name == nil {
+				continue
+			}
+			if obj, ok := pkg.TypesInfo.Defs[fn.Name].(*types.Func); ok {
+				out[obj] = fn
+			}
+		}
+	}
+	return out
+}
+
+func helperReturnsWrapped(pkg *packages.Package, fn *ast.FuncDecl,
+	helpers map[*types.Func]*ast.FuncDecl, seen map[*types.Func]bool) bool {
+	if fn == nil || fn.Body == nil {
+		return false
+	}
+	paramNames := map[string]bool{}
+	if fn.Type.Params != nil {
+		for _, p := range fn.Type.Params.List {
+			for _, n := range p.Names {
+				paramNames[n.Name] = true
+			}
+		}
+	}
+	proved := true
+	sawErrorReturn := false
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if !proved {
+			return false
+		}
+		ret, ok := n.(*ast.ReturnStmt)
+		if !ok {
+			return true
+		}
+		for _, expr := range ret.Results {
+			if pkg.TypesInfo != nil {
+				if t := pkg.TypesInfo.TypeOf(expr); t != nil && !isErrorType(t) {
+					continue
+				}
+			}
+			sawErrorReturn = true
+			if !isProvedReturnExpr(pkg, fn, paramNames, expr, helpers, seen) {
+				proved = false
+				return false
+			}
+		}
+		return true
+	})
+	return sawErrorReturn && proved
+}
+
+func callReturnsWrapped(pkg *packages.Package, ce *ast.CallExpr,
+	helpers map[*types.Func]*ast.FuncDecl, seen map[*types.Func]bool) bool {
+	obj := calledFunc(ce, pkg.TypesInfo)
+	if obj == nil {
+		return false
+	}
+	decl := helpers[obj]
+	if decl == nil {
+		return false
+	}
+	if seen[obj] {
+		return false
+	}
+	seen[obj] = true
+	ok := helperReturnsWrapped(pkg, decl, helpers, seen)
+	delete(seen, obj)
+	return ok
+}
+
+func isProvedReturnExpr(pkg *packages.Package, fn *ast.FuncDecl, paramNames map[string]bool,
+	expr ast.Expr, helpers map[*types.Func]*ast.FuncDecl, seen map[*types.Func]bool) bool {
+	if ident, ok := expr.(*ast.Ident); ok && ident.Name == "nil" {
+		return true
+	}
+	if pkg.TypesInfo != nil && isErrcodeType(pkg.TypesInfo.TypeOf(expr)) {
+		return true
+	}
+	if ce, ok := expr.(*ast.CallExpr); ok {
+		if isErrcodeConstructor(ce, pkg.TypesInfo) {
+			return true
+		}
+		if _, ok := isBareErrorConstructor(ce, pkg.TypesInfo); ok {
+			return false
+		}
+		return callReturnsWrapped(pkg, ce, helpers, seen)
+	}
+	if ident, ok := expr.(*ast.Ident); ok {
+		if paramNames[ident.Name] {
+			return true
+		}
+		src := reachingAssignSource(fn, ident.Name, ident.Pos())
+		if src == nil {
+			return false
+		}
+		if isErrcodeConstructor(src, pkg.TypesInfo) {
+			return true
+		}
+		if _, ok := isBareErrorConstructor(src, pkg.TypesInfo); ok {
+			return false
+		}
+		return callReturnsWrapped(pkg, src, helpers, seen)
+	}
+	return false
+}
+
 // inspectFunction walks fn body looking for return statements whose
 // error-position expressions violate the contract. T-13 codex HIGH-1:
 // handle local-var return via reaching-assignment analysis.
-func inspectFunction(pkg *packages.Package, file *ast.File, fn *ast.FuncDecl) []Violation {
+func inspectFunction(pkg *packages.Package, file *ast.File, fn *ast.FuncDecl,
+	helpers map[*types.Func]*ast.FuncDecl) []Violation {
 	if fn.Body == nil {
 		return nil
 	}
@@ -288,7 +475,7 @@ func inspectFunction(pkg *packages.Package, file *ast.File, fn *ast.FuncDecl) []
 					continue
 				}
 			}
-			vs = append(vs, classifyReturnExpr(pkg, file, fn, paramNames, expr)...)
+			vs = append(vs, classifyReturnExpr(pkg, file, fn, paramNames, expr, helpers)...)
 		}
 		return true
 	})
@@ -302,19 +489,27 @@ func inspectFunction(pkg *packages.Package, file *ast.File, fn *ast.FuncDecl) []
 //   - direct errors.New / fmt.Errorf call → EC-1 / EC-2
 //   - bare identifier (local var or param) → check reaching assignment
 //     or treat parameter as OK (caller-wrapped)
-//   - anything else → conservative skip
+//   - anything else → EC-3 unless exempt
 func classifyReturnExpr(pkg *packages.Package, file *ast.File, fn *ast.FuncDecl,
-	paramNames map[string]bool, expr ast.Expr) []Violation {
+	paramNames map[string]bool, expr ast.Expr, helpers map[*types.Func]*ast.FuncDecl) []Violation {
+	if ident, ok := expr.(*ast.Ident); ok && ident.Name == "nil" {
+		return nil
+	}
+	if pkg.TypesInfo != nil && isErrcodeType(pkg.TypesInfo.TypeOf(expr)) {
+		return nil
+	}
 	// Direct call expression case.
 	if ce, ok := expr.(*ast.CallExpr); ok {
-		if isErrcodeConstructor(ce) {
+		if isErrcodeConstructor(ce, pkg.TypesInfo) {
 			return nil
 		}
-		code, ok := isBareErrorConstructor(ce)
-		if !ok {
+		if code, ok := isBareErrorConstructor(ce, pkg.TypesInfo); ok {
+			return emitIfNotExempt(pkg, file, fn, ce.Pos(), code)
+		}
+		if callReturnsWrapped(pkg, ce, helpers, map[*types.Func]bool{}) {
 			return nil
 		}
-		return emitIfNotExempt(pkg, file, fn, ce.Pos(), code)
+		return emitIfNotExempt(pkg, file, fn, ce.Pos(), EC3)
 	}
 	// Bare identifier (local var or parameter) — trace its assignment.
 	if ident, ok := expr.(*ast.Ident); ok {
@@ -323,17 +518,20 @@ func classifyReturnExpr(pkg *packages.Package, file *ast.File, fn *ast.FuncDecl,
 		}
 		src := reachingAssignSource(fn, ident.Name, ident.Pos())
 		if src == nil {
-			return nil // can't prove; conservative skip
+			return emitIfNotExempt(pkg, file, fn, ident.Pos(), EC3)
 		}
-		if isErrcodeConstructor(src) {
+		if isErrcodeConstructor(src, pkg.TypesInfo) {
 			return nil
 		}
-		if code, ok := isBareErrorConstructor(src); ok {
+		if code, ok := isBareErrorConstructor(src, pkg.TypesInfo); ok {
 			return emitIfNotExempt(pkg, file, fn, src.Pos(), code)
 		}
-		return nil
+		if callReturnsWrapped(pkg, src, helpers, map[*types.Func]bool{}) {
+			return nil
+		}
+		return emitIfNotExempt(pkg, file, fn, src.Pos(), EC3)
 	}
-	return nil
+	return emitIfNotExempt(pkg, file, fn, expr.Pos(), EC3)
 }
 
 // emitIfNotExempt emits a violation unless an `errcode-lint:exempt`
@@ -345,8 +543,11 @@ func emitIfNotExempt(pkg *packages.Package, file *ast.File, fn *ast.FuncDecl,
 		return nil
 	}
 	msg := "exported function returns bare errors.New(...)"
-	if code == EC2 {
+	switch code {
+	case EC2:
 		msg = "exported function uses fmt.Errorf(...) for boundary error; use errcode.Wrap"
+	case EC3:
+		msg = "exported function returns unproved error expression; wrap with errcode or add an errcode-lint exemption"
 	}
 	return []Violation{{
 		Pkg:      pkg.PkgPath,
@@ -363,6 +564,7 @@ func inspectPackage(pkg *packages.Package) []Violation {
 	if isExempt(pkg.PkgPath) {
 		return nil
 	}
+	helpers := collectFunctionDecls(pkg)
 	var vs []Violation
 	for _, file := range pkg.Syntax {
 		// Skip test files at the AST level too (packages already filters).
@@ -374,16 +576,44 @@ func inspectPackage(pkg *packages.Package) []Violation {
 		}
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Name == nil || !fn.Name.IsExported() {
+			if !ok || !isPublicFuncDecl(fn) {
 				continue
 			}
 			if !funcReturnsError(pkg.TypesInfo, fn) {
 				continue
 			}
-			vs = append(vs, inspectFunction(pkg, file, fn)...)
+			vs = append(vs, inspectFunction(pkg, file, fn, helpers)...)
 		}
 	}
 	return vs
+}
+
+func isPublicFuncDecl(fn *ast.FuncDecl) bool {
+	if fn == nil || fn.Name == nil || !fn.Name.IsExported() {
+		return false
+	}
+	if fn.Recv == nil || len(fn.Recv.List) == 0 {
+		return true
+	}
+	name := receiverBaseName(fn.Recv.List[0].Type)
+	return name == "" || ast.IsExported(name)
+}
+
+func receiverBaseName(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.StarExpr:
+		return receiverBaseName(t.X)
+	case *ast.SelectorExpr:
+		return t.Sel.Name
+	case *ast.IndexExpr:
+		return receiverBaseName(t.X)
+	case *ast.IndexListExpr:
+		return receiverBaseName(t.X)
+	default:
+		return ""
+	}
 }
 
 // Lint runs errcode-lint on the given package patterns and returns all
