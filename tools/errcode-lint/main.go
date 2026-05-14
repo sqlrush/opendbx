@@ -55,10 +55,6 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-// errcodePkg is the canonical opendbx error package path. Calls to
-// errcode.New/Newf/Wrap from this path are considered OK constructions.
-const errcodePkg = "github.com/sqlrush/opendbx/internal/platform/errcode"
-
 // exemptPrefixes lists package import path prefixes whose subtree is
 // exempt from public API errcode enforcement. These packages either:
 //   - implement the errcode contract itself (internal/platform/errcode);
