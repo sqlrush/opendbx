@@ -16,7 +16,7 @@ import (
 // injection). Defaults are dev/unknown so `go run` and `go test` still
 // work without any build step.
 //
-//nolint:gochecknoglobals // linker -X injection requires package-level vars.
+//nolint:gochecknoglobals // spec-0.7 D-3: linker -X injection requires package-level vars.
 var (
 	// Version is the build version string (typically a tag from
 	// `git describe --tags --always`; see Makefile spec-0.7 § 2.3 T-5).

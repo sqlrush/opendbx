@@ -233,6 +233,9 @@ func TestRun_Mixed(t *testing.T) {
 
 func TestClassify(t *testing.T) {
 	t.Parallel()
+	// classify's contract (T-13 go-reviewer MED-2): caller must strip the
+	// comment marker first via stripCommentMarker. The test feeds raw
+	// comment text through the same pipeline scanFile uses.
 	cases := []struct {
 		in   string
 		want Family
@@ -248,7 +251,8 @@ func TestClassify(t *testing.T) {
 		c := c
 		t.Run(c.in, func(t *testing.T) {
 			t.Parallel()
-			if got := classify(c.in); got != c.want {
+			body := stripCommentMarker(c.in)
+			if got := classify(body); got != c.want {
 				t.Errorf("classify(%q) = %v; want %v", c.in, got, c.want)
 			}
 		})

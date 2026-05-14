@@ -23,17 +23,16 @@ import (
 	"strings"
 )
 
-// LLMSDKPrefixes are the known LLM SDK module path prefixes. Add entries
-// when adopting a new provider; the change must come with a spec or
-// errata referencing the new SDK and its allowed home package.
-// spec-0.10 D-3 IMP-7 / R2 codex MED-2: enumerate explicit list.
-var LLMSDKPrefixes = []string{
+// LLMSDKRoots are the known LLM SDK module roots. Add entries when
+// adopting a new provider; the change must come with a spec or errata
+// referencing the new SDK and its allowed home package. spec-0.10 D-3
+// IMP-7 / R2 codex MED-2 + T-13 codex LOW-1 (boundary-safe match):
+// we treat each entry as a bare module path and match with strict
+// suffix `/` to avoid catching lookalikes (e.g. `openai-go-v2`).
+var LLMSDKRoots = []string{
 	"github.com/anthropics/anthropic-sdk-go",
-	"github.com/anthropics/anthropic-sdk-go/",
 	"github.com/openai/openai-go",
-	"github.com/openai/openai-go/",
 	"github.com/sashabaranov/go-openai",
-	"github.com/sashabaranov/go-openai/",
 }
 
 // LLMSDKAllowedPrefixes are the only opendbx import-path prefixes
@@ -45,11 +44,11 @@ var LLMSDKAllowedPrefixes = []string{
 	ModulePrefix + "internal/domain/llm/openai",
 }
 
-// hasLLMSDKPrefix reports whether `to` matches any LLM SDK prefix.
+// hasLLMSDKPrefix reports whether `to` matches any LLM SDK root (boundary-
+// safe: only exact module or proper subpath, never lookalike).
 func hasLLMSDKPrefix(to string) bool {
-	for _, p := range LLMSDKPrefixes {
-		// Match either exactly the bare package or any subpackage.
-		if to == strings.TrimSuffix(p, "/") || strings.HasPrefix(to, p) {
+	for _, root := range LLMSDKRoots {
+		if to == root || strings.HasPrefix(to, root+"/") {
 			return true
 		}
 	}

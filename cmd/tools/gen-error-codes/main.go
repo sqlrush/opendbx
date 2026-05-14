@@ -75,7 +75,7 @@ func main() {
 		fmt.Print(content)
 		return
 	}
-	if err := os.WriteFile(*out, []byte(content), 0o644); err != nil { //nolint:gosec // operator-supplied path
+	if err := os.WriteFile(*out, []byte(content), 0o644); err != nil { //nolint:gosec // spec-0.6 D-6: operator-supplied output path
 		fmt.Fprintf(os.Stderr, "write %s: %v\n", *out, err)
 		os.Exit(1)
 	}

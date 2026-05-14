@@ -40,9 +40,10 @@
 package main
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -51,10 +52,16 @@ import (
 	"strings"
 )
 
-// suppressionRE matches the start of any of the 4 family prefixes.
-// Captures the whole line content from the comment onwards for spec_ref scan.
-var suppressionRE = regexp.MustCompile(
-	`(//\s*nolint:[a-zA-Z0-9_,-]+\b.*$|//\s*#nosec\b.*$|//\s*errcode-lint:exempt\b.*$|//\s*govulncheck-exempt:.*$)`)
+// directiveRE matches the prefix of a suppression directive when it
+// appears at the very START of a comment's textual content (after the
+// leading `//` slashes and optional whitespace). T-13 go-reviewer MED-2
+// fix: previous suppressionRE matched substrings anywhere on the line,
+// producing false positives inside string literals and doc-comment
+// references. We now parse Go source via go/parser and inspect only
+// *ast.Comment nodes; this regex applies to the comment's *Text*
+// without its leading `//` or `/*` markers.
+var directiveRE = regexp.MustCompile(
+	`^(nolint:[a-zA-Z0-9_,-]+|#nosec\b|errcode-lint:exempt|govulncheck-exempt:)`)
 
 // specRefRE matches a spec reference token: spec-N.M, optional letter
 // suffix (e.g. 0.15a), optional .X minor, optional -tN task id.
@@ -94,20 +101,36 @@ func (f Family) String() string {
 	}
 }
 
-// classify identifies which family a matched suppression belongs to.
-func classify(comment string) Family {
+// classify identifies which family a comment's normalized text belongs
+// to. The text must already have its `//` or `/*` prefix and leading
+// whitespace stripped. T-13 go-reviewer MED-2 fix: only directives at the
+// start of a comment qualify, eliminating string-literal false matches.
+func classify(text string) Family {
 	switch {
-	case strings.Contains(comment, "//nolint:") || strings.Contains(comment, "// nolint:"):
+	case strings.HasPrefix(text, "nolint:"):
 		return FamilyNolint
-	case strings.Contains(comment, "#nosec"):
+	case strings.HasPrefix(text, "#nosec"):
 		return FamilyNosec
-	case strings.Contains(comment, "errcode-lint:exempt"):
+	case strings.HasPrefix(text, "errcode-lint:exempt"):
 		return FamilyErrcodeLint
-	case strings.Contains(comment, "govulncheck-exempt"):
+	case strings.HasPrefix(text, "govulncheck-exempt:"):
 		return FamilyGovulncheck
 	default:
 		return Family(-1)
 	}
+}
+
+// stripCommentMarker strips `//` or `/* ... */` markers and surrounding
+// whitespace from a Go comment's Text field, returning the bare comment
+// body suitable for directive matching.
+func stripCommentMarker(text string) string {
+	if strings.HasPrefix(text, "//") {
+		return strings.TrimSpace(text[2:])
+	}
+	if strings.HasPrefix(text, "/*") && strings.HasSuffix(text, "*/") {
+		return strings.TrimSpace(text[2 : len(text)-2])
+	}
+	return strings.TrimSpace(text)
 }
 
 // Violation describes one missing-spec_ref suppression comment.
@@ -124,42 +147,39 @@ func (v Violation) String() string {
 		v.Family, v.File, v.Line, strings.TrimSpace(v.Comment))
 }
 
-// scanFile scans a single Go file for suppression comments lacking spec_ref.
-// Returns the violations found (possibly empty) and any I/O error.
+// scanFile parses a single Go file via go/parser and inspects its comment
+// nodes for suppression directives lacking spec_ref. T-13 go-reviewer
+// MED-2 fix: AST-based scanning eliminates false positives that the
+// previous line-regex variant produced for directive-shaped substrings
+// inside string literals and doc-comment references.
 func scanFile(path string) ([]Violation, error) {
-	f, err := os.Open(path) // #nosec G304 -- spec-0.10 D-2.5: operator-supplied path
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
+		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	defer func() { _ = f.Close() }()
-
 	var violations []Violation
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	lineNum := 0
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
-		m := suppressionRE.FindString(line)
-		if m == "" {
-			continue
+	for _, cg := range file.Comments {
+		for _, c := range cg.List {
+			body := stripCommentMarker(c.Text)
+			if !directiveRE.MatchString(body) {
+				continue
+			}
+			fam := classify(body)
+			if fam == Family(-1) {
+				continue
+			}
+			if specRefRE.MatchString(body) {
+				continue // spec_ref present, OK
+			}
+			pos := fset.Position(c.Pos())
+			violations = append(violations, Violation{
+				File:    path,
+				Line:    pos.Line,
+				Family:  fam,
+				Comment: c.Text,
+			})
 		}
-		if specRefRE.MatchString(m) {
-			continue // spec_ref present, OK
-		}
-		fam := classify(m)
-		if fam == Family(-1) {
-			continue
-		}
-		violations = append(violations, Violation{
-			File:    path,
-			Line:    lineNum,
-			Family:  fam,
-			Comment: line,
-		})
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan %s: %w", path, err)
 	}
 	return violations, nil
 }
@@ -167,7 +187,18 @@ func scanFile(path string) ([]Violation, error) {
 // shouldSkip returns true for paths that suppression-lint must not scan.
 // Skips: vendor/, testdata/ subtrees; non-.go files; _test.go files; hidden
 // directories (e.g. .git).
-func shouldSkip(path string, d fs.DirEntry) bool {
+//
+// T-13 go-reviewer CRIT-1: the root entry of WalkDir has d.Name()=="." or
+// "..", which previously triggered the "hidden directory" heuristic and
+// silently aborted the entire walk. We exempt the root explicitly via
+// `isRoot` (path matches one of the user-supplied roots) — the heuristic
+// only applies to deeper directories.
+func shouldSkip(path string, d fs.DirEntry, isRoot bool) bool {
+	if isRoot {
+		// Never skip the user-supplied root, even if its leaf name is "."
+		// or starts with ".".
+		return false
+	}
 	name := d.Name()
 	if d.IsDir() {
 		return name == "vendor" || name == "testdata" || strings.HasPrefix(name, ".")
@@ -188,7 +219,8 @@ func scanTree(root string) ([]Violation, error) {
 		if walkErr != nil {
 			return walkErr
 		}
-		if shouldSkip(path, d) {
+		isRoot := path == root
+		if shouldSkip(path, d, isRoot) {
 			if d.IsDir() {
 				return fs.SkipDir
 			}

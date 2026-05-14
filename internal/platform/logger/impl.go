@@ -37,7 +37,7 @@ type loggerImpl struct {
 	// Per-call derived state (clones via With* methods).
 	module string
 	attrs  []Attr
-	ctx    context.Context //nolint:containedctx // intentional: WithContext binds ctx into the logger value (T-8)
+	ctx    context.Context //nolint:containedctx // spec-0.5 T-8: WithContext binds ctx into the logger value
 }
 
 // newLoggerImpl constructs a fresh impl from the validated InitInput.

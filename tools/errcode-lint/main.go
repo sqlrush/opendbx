@@ -215,19 +215,72 @@ func hasExemptComment(file *ast.File, fset *token.FileSet, lineN int) bool {
 	return false
 }
 
+// reachingAssignSource returns the *ast.CallExpr that is the most recent
+// reaching assignment to the identifier `name` within the function body
+// before position `before`. Returns nil if not found or if the value was
+// reassigned in non-call ways (e.g. control flow merge). T-13 codex
+// HIGH-1: conservative reaching-assignment analysis to catch the common
+// pattern `err := errors.New("x"); return err`.
+//
+// The analysis is intentionally simple: it walks the function body
+// linearly and tracks the latest single assignment per identifier. It is
+// safe (false-negatives possible if control flow is complex) but never
+// reports a violation it cannot prove — those land in EC-unknown which
+// requires an `errcode-lint:exempt` comment.
+func reachingAssignSource(fn *ast.FuncDecl, name string, before token.Pos) *ast.CallExpr {
+	if fn.Body == nil {
+		return nil
+	}
+	var found *ast.CallExpr
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if n == nil || n.Pos() >= before {
+			return false
+		}
+		switch s := n.(type) {
+		case *ast.AssignStmt:
+			// Look for `name := <call>` or `name = <call>` patterns.
+			for i, lhs := range s.Lhs {
+				ident, ok := lhs.(*ast.Ident)
+				if !ok || ident.Name != name {
+					continue
+				}
+				if i >= len(s.Rhs) {
+					continue
+				}
+				if ce, ok := s.Rhs[i].(*ast.CallExpr); ok {
+					found = ce
+				}
+			}
+		}
+		return true
+	})
+	return found
+}
+
 // inspectFunction walks fn body looking for return statements whose
-// error-position expressions violate the contract.
+// error-position expressions violate the contract. T-13 codex HIGH-1:
+// handle local-var return via reaching-assignment analysis.
 func inspectFunction(pkg *packages.Package, file *ast.File, fn *ast.FuncDecl) []Violation {
 	if fn.Body == nil {
 		return nil
 	}
+	// Collect names of function parameters; returning a parameter is OK
+	// (caller already constructed / wrapped the error).
+	paramNames := map[string]bool{}
+	if fn.Type.Params != nil {
+		for _, p := range fn.Type.Params.List {
+			for _, n := range p.Names {
+				paramNames[n.Name] = true
+			}
+		}
+	}
+
 	var vs []Violation
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		ret, ok := n.(*ast.ReturnStmt)
 		if !ok {
 			return true
 		}
-		// For each return expression at an error-typed position, classify.
 		for _, expr := range ret.Results {
 			// Determine if the expression's type is error.
 			if pkg.TypesInfo != nil {
@@ -235,44 +288,74 @@ func inspectFunction(pkg *packages.Package, file *ast.File, fn *ast.FuncDecl) []
 					continue
 				}
 			}
-			ce, ok := expr.(*ast.CallExpr)
-			if !ok {
-				// Local var or function param. Conservative model: skip
-				// (errcode reaching-assignment proof inferred via types
-				// info — out of scope for v1, exempted via boundary
-				// caller pattern). spec-0.10 § 2.1 R2: "return local
-				// 变量，reaching assignment 是 errcode 构造器之一 → OK".
-				continue
-			}
-			if isErrcodeConstructor(ce) {
-				continue
-			}
-			code, ok := isBareErrorConstructor(ce)
-			if !ok {
-				// Unknown call (some library wrapper); skip — boundary
-				// detection by exemption comment for those rare paths.
-				continue
-			}
-			pos := pkg.Fset.Position(ce.Pos())
-			if hasExemptComment(file, pkg.Fset, pos.Line) {
-				continue
-			}
-			msg := "exported function returns bare errors.New(...)"
-			if code == EC2 {
-				msg = "exported function uses fmt.Errorf(...) for boundary error; use errcode.Wrap"
-			}
-			vs = append(vs, Violation{
-				Pkg:      pkg.PkgPath,
-				File:     pos.Filename,
-				Line:     pos.Line,
-				Function: fn.Name.Name,
-				Code:     code,
-				Message:  msg,
-			})
+			vs = append(vs, classifyReturnExpr(pkg, file, fn, paramNames, expr)...)
 		}
 		return true
 	})
 	return vs
+}
+
+// classifyReturnExpr decides whether a single return expression in an
+// exported error-returning function is OK or a violation. Handles four
+// shapes:
+//   - direct errcode constructor call → OK
+//   - direct errors.New / fmt.Errorf call → EC-1 / EC-2
+//   - bare identifier (local var or param) → check reaching assignment
+//     or treat parameter as OK (caller-wrapped)
+//   - anything else → conservative skip
+func classifyReturnExpr(pkg *packages.Package, file *ast.File, fn *ast.FuncDecl,
+	paramNames map[string]bool, expr ast.Expr) []Violation {
+	// Direct call expression case.
+	if ce, ok := expr.(*ast.CallExpr); ok {
+		if isErrcodeConstructor(ce) {
+			return nil
+		}
+		code, ok := isBareErrorConstructor(ce)
+		if !ok {
+			return nil
+		}
+		return emitIfNotExempt(pkg, file, fn, ce.Pos(), code)
+	}
+	// Bare identifier (local var or parameter) — trace its assignment.
+	if ident, ok := expr.(*ast.Ident); ok {
+		if paramNames[ident.Name] {
+			return nil // returning a parameter — caller wrapped already
+		}
+		src := reachingAssignSource(fn, ident.Name, ident.Pos())
+		if src == nil {
+			return nil // can't prove; conservative skip
+		}
+		if isErrcodeConstructor(src) {
+			return nil
+		}
+		if code, ok := isBareErrorConstructor(src); ok {
+			return emitIfNotExempt(pkg, file, fn, src.Pos(), code)
+		}
+		return nil
+	}
+	return nil
+}
+
+// emitIfNotExempt emits a violation unless an `errcode-lint:exempt`
+// comment is present near pos.
+func emitIfNotExempt(pkg *packages.Package, file *ast.File, fn *ast.FuncDecl,
+	pos token.Pos, code Code) []Violation {
+	p := pkg.Fset.Position(pos)
+	if hasExemptComment(file, pkg.Fset, p.Line) {
+		return nil
+	}
+	msg := "exported function returns bare errors.New(...)"
+	if code == EC2 {
+		msg = "exported function uses fmt.Errorf(...) for boundary error; use errcode.Wrap"
+	}
+	return []Violation{{
+		Pkg:      pkg.PkgPath,
+		File:     p.Filename,
+		Line:     p.Line,
+		Function: fn.Name.Name,
+		Code:     code,
+		Message:  msg,
+	}}
 }
 
 // inspectPackage walks every exported FuncDecl returning error.

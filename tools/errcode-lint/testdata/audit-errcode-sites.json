@@ -1,0 +1,59 @@
+{
+  "_": "spec-0.10 D-2 / T-13 codex MED-1 — audit manifest mapping spec-0.6 D-4 fmt.Errorf migration audit (docs/audit-errcode-migration.md) to errcode-lint expected behavior. 40 sites total per audit doc header. Schema: {file: file path, class: boundary|private|external|already-wrapped, expected: error|skip, note: free text}.",
+  "summary": {
+    "total_sites": 40,
+    "boundary": 18,
+    "private": 6,
+    "external": 4,
+    "already_wrapped": 3,
+    "uncategorized_followup": 9
+  },
+  "by_file": [
+    {
+      "file": "internal/platform/config/env.go",
+      "sites": 14,
+      "class": "boundary",
+      "expected": "skip",
+      "note": "spec-0.6 T-8 migrated to errcode.Wrap with CONFIG.ENV_PARSE_FAILED; errcode-lint must see these as OK now (already-wrapped at boundary)."
+    },
+    {
+      "file": "internal/platform/config/validation.go",
+      "sites": 7,
+      "class": "boundary",
+      "expected": "skip",
+      "note": "spec-0.6 T-8 migrated to CONFIG.VALIDATION_FAILED."
+    },
+    {
+      "file": "internal/platform/config/loader.go",
+      "sites": 7,
+      "class": "boundary",
+      "expected": "skip",
+      "note": "spec-0.6 T-8 migrated to CONFIG.LOAD_FAILED."
+    },
+    {
+      "file": "internal/platform/config/admin.go",
+      "sites": 7,
+      "class": "boundary",
+      "expected": "skip",
+      "note": "spec-0.6 T-8 migrated."
+    },
+    {
+      "file": "cmd/opendbx/root.go",
+      "sites": 4,
+      "class": "boundary",
+      "expected": "skip",
+      "note": "spec-0.6 T-8 migrated; cmd/opendbx is in errcode-lint exempt prefix list anyway."
+    },
+    {
+      "file": "internal/platform/logger/errcode_bridge.go",
+      "sites": 1,
+      "class": "already-wrapped",
+      "expected": "skip",
+      "note": "spec-0.5/0.6 bridge; returns errcode.Error chain."
+    }
+  ],
+  "invariant_check": {
+    "description": "After spec-0.6 T-8 migration completion, errcode-lint full-module scan must report 0 violations. Any new boundary errcode regression should appear here as expected=error before the spec lands.",
+    "expected_violations_today": 0
+  }
+}
