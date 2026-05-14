@@ -216,8 +216,9 @@ jobs:
         run: |
           echo "gosec reported issues (see GH Security tab + gosec-sarif artifact)"
           exit 1
-      # NOTE: govulncheck 在 T-3.5 (D-2.5 vuln-allowlist + make vuln-check) 落地后
-      # 加入. spec-0.9 § 3.1 step 2: "T-3.5 ... 独立 commit 早于 T-3 集成防
-      # govulncheck 误报阻 PR" —— 例如 Go 1.23 stdlib vuln GO-2026-4602
-      # (FileInfo escape) 已被 govulncheck 报告, 须 OSV allowlist 豁免才能在
-      # CI 通过. spec § 9 timeline T-3 → T-3.5 顺序遵循.
+      # spec-0.9 T-3.5 (D-2.5): vuln-allowlist 包装 govulncheck.
+      # make vuln-check 调用 `govulncheck -json -test ./...` 后 pipe 给
+      # tools/vuln-allowlist 包装脚本; OSV ID + expiry 过滤已豁免 finding.
+      # Allowlist SSOT: tools/vuln-allowlist/allowlist.json (每条必含 spec_ref).
+      - name: Run vuln-check (govulncheck + OSV allowlist)
+        run: make vuln-check

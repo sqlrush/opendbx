@@ -26,6 +26,7 @@
 .PHONY: hooks-install hooks-status import-check dep-check
 .PHONY: golden golden-update gen-docs cc-help-diff
 .PHONY: coverage-gate makefile-check tag-spec release registry-drift-check
+.PHONY: vuln-check
 
 BIN_DIR := bin
 BIN_NAME := opendbx
@@ -241,6 +242,17 @@ makefile-check: ## Lint top-level Makefile(s) + sibling if present
 	@files="Makefile"; \
 	if [ -f "$(OPENDBRB_DIR)/Makefile" ]; then files="$$files $(OPENDBRB_DIR)/Makefile"; fi; \
 	$(GO) run ./tools/makefile-check $$files
+
+# spec-0.9 D-2.5 / T-3.5: govulncheck + OSV allowlist 包装 (R2 codex HIGH-3 修).
+#
+# govulncheck 本身无 inline 豁免机制; 直 fail on first finding 不可接受 (Stage 0
+# Go 1.23 lock vs Go 1.25.8 fix for GO-2026-4602 stdlib vuln). 包装脚本读
+# tools/vuln-allowlist/allowlist.json (OSV ID + expiry + spec_ref) 过滤已知豁免.
+# 过期或未豁免 finding 强制 fail.
+GOVULN_VERSION ?= v1.1.4
+vuln-check: ## Run govulncheck filtered by OSV allowlist (spec-0.9 D-2.5)
+	@command -v govulncheck >/dev/null 2>&1 || $(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULN_VERSION)
+	@govulncheck -json -test ./... | $(GO) run ./tools/vuln-allowlist
 
 # spec-0.2 governance gates (D-5 / D-6 / D-3) — see docs/cicd-and-methodology.md
 import-check: ## Run import-rules-check (spec-0.2 D-5)

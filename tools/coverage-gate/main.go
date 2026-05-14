@@ -78,9 +78,11 @@ var (
 	}
 
 	// T-13a codex CRIT-1: 自我覆盖率独立 tier ≥ 90%; 不再 exempt.
+	// spec-0.9 T-3.5: vuln-allowlist 同列 Tool tier.
 	toolPackages = map[string]bool{
 		modulePath + "/tools/coverage-gate":  true,
 		modulePath + "/tools/makefile-check": true,
+		modulePath + "/tools/vuln-allowlist": true,
 	}
 
 	exemptPackages = map[string]bool{
