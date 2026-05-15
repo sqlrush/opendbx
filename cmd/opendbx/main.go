@@ -21,9 +21,12 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"os"
 
 	"github.com/sqlrush/opendbx/internal/entrypoints"
+	"github.com/sqlrush/opendbx/internal/platform/errcode"
 )
 
 func main() {
@@ -47,7 +50,13 @@ func main() {
 	var exitCode int
 	entrypoints.GuardLoggerPanic(func() {
 		if err := rootCmd.Execute(); err != nil {
-			// cobra already printed the user-facing error.
+			// cobra already printed `Error: [CODE] message`. T-13 codex M-7:
+			// surface errcode Hint() on a follow-on line so users have
+			// actionable guidance (spec § 2.4 contract: Code/Message/Hint).
+			var ecErr errcode.Error
+			if errors.As(err, &ecErr) && ecErr.Hint() != "" {
+				_, _ = fmt.Fprintf(os.Stderr, "  hint: %s\n", ecErr.Hint())
+			}
 			exitCode = 1
 		}
 	})

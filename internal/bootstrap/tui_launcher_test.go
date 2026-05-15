@@ -16,13 +16,14 @@ import (
 
 // TestLaunchInteractiveTUI_NewScreenFailure exercises the init-failure
 // path. Replaces the screen factory with a stub that always errors.
+// T-13 go M-2: factory mutation now via setNewScreenFn (mutex-guarded).
 func TestLaunchInteractiveTUI_NewScreenFailure(t *testing.T) {
-	// NOT t.Parallel — mutates newScreenFn package global.
-	orig := newScreenFn
-	newScreenFn = func() (tcell.Screen, error) {
+	// NOT t.Parallel — mutates package-global factory state.
+	orig := getNewScreenFn()
+	setNewScreenFn(func() (tcell.Screen, error) {
 		return nil, tcellpkg.ErrInitFailed
-	}
-	t.Cleanup(func() { newScreenFn = orig })
+	})
+	t.Cleanup(func() { setNewScreenFn(orig) })
 
 	err := LaunchInteractiveTUI(context.Background())
 	if !errors.Is(err, tcellpkg.ErrInitFailed) {
@@ -34,16 +35,16 @@ func TestLaunchInteractiveTUI_NewScreenFailure(t *testing.T) {
 // SimulationScreen and a Ctrl+C key injection that drives tui.Run to
 // return nil.
 func TestLaunchInteractiveTUI_HappyPath(t *testing.T) {
-	// NOT t.Parallel — mutates newScreenFn package global.
-	orig := newScreenFn
+	// NOT t.Parallel — mutates package-global factory state.
+	orig := getNewScreenFn()
 	sim := tcellpkg.NewSimulationScreen()
 	if err := sim.Init(); err != nil {
 		t.Fatalf("SimulationScreen.Init: %v", err)
 	}
-	newScreenFn = func() (tcell.Screen, error) {
+	setNewScreenFn(func() (tcell.Screen, error) {
 		return sim, nil
-	}
-	t.Cleanup(func() { newScreenFn = orig })
+	})
+	t.Cleanup(func() { setNewScreenFn(orig) })
 
 	go func() {
 		time.Sleep(30 * time.Millisecond)

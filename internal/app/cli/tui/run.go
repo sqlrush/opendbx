@@ -14,14 +14,22 @@ import (
 
 // NewScreen creates and initializes a real tcell screen. Wraps init
 // failures as ErrInitFailed so callers (cmd/opendbx) don't need to
-// import tcell — preserves IMP-9 strict 2-package whitelist.
+// import tcell — preserves IMP-9 tcell isolation. Layer chain:
+// cmd→entrypoints→bootstrap→tui; the 3 packages whitelisted for tcell
+// production imports are terminal / tui / bootstrap (T-13 L-5
+// reconciliation of R-13 spec letter vs impl).
 func NewScreen() (tcell.Screen, error) {
 	screen, err := tcell.NewScreen()
 	if err != nil {
-		return nil, errcode.Wrap("TERMINAL.INIT_FAILED", err, "tcell.NewScreen failed", "")
+		// T-13 N-2: non-empty Hint so users have actionable guidance.
+		return nil, errcode.Wrap("TERMINAL.INIT_FAILED", err,
+			"tcell.NewScreen failed",
+			"verify $TERM is set and the terminal supports ANSI escape sequences (e.g. xterm-256color)")
 	}
 	if err := screen.Init(); err != nil {
-		return nil, errcode.Wrap("TERMINAL.INIT_FAILED", err, "tcell.Screen.Init failed", "")
+		return nil, errcode.Wrap("TERMINAL.INIT_FAILED", err,
+			"tcell.Screen.Init failed",
+			"check $TERM and that stdout is a real terminal; running under sudo / inside CI may strip TTY access")
 	}
 	return screen, nil
 }

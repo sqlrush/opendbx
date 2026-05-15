@@ -28,12 +28,14 @@ import (
 const TcellModule = "github.com/gdamore/tcell/v2"
 
 // TcellAllowedPrefixes are the only opendbx package prefixes permitted
-// to import tcell from production source. spec-0.12 R3 H-4 user 拍板:
-// "strict 2-package whitelist" was the spec letter, but the T-6 layer
-// matrix forces a 3rd entry: bootstrap (entrypoints → bootstrap →
-// app/cli/tui is the only legal layer chain for cmd → tui, and
-// bootstrap's signature must accept tcell.Screen). spec-0.12 T-13 errata
-// will record this as a spec-vs-implementation reconciliation.
+// to import tcell from production source. spec-0.12 R3 H-4 + T-13 L-5
+// reconciliation: original spec letter said 2 packages (terminal + tui),
+// but the T-6 layer matrix forces a 3rd entry: bootstrap. Layer chain
+// cmd → entrypoints → bootstrap → app/cli/tui is the only legal route
+// for cmd to reach tui (LayerCmd matrix allows only Entrypoints; only
+// LayerBootstrap allows LayerApp). bootstrap's runTUI signature takes
+// tcell.Screen so bootstrap MUST be in this whitelist. spec § 2.5 +
+// § 12 history T-13 entry record this reconciliation.
 var TcellAllowedPrefixes = []string{
 	ModulePrefix + "internal/platform/terminal",
 	ModulePrefix + "internal/app/cli/tui",

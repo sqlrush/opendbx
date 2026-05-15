@@ -49,6 +49,7 @@ func TestLocaleIsUTF8(t *testing.T) {
 		{"LANG-utf8-lower", "", "", "en_US.utf8", true},
 		{"LANG-posix", "", "", "POSIX", false},
 		{"LC_CTYPE-utf8", "", "zh_CN.UTF-8", "en_US.UTF-8", true},
+		{"LC_CTYPE-posix-prevents-LANG", "", "POSIX", "en_US.UTF-8", false}, // T-13 L-1: LC_CTYPE set non-UTF-8 → return false, do not fall through to LANG
 		{"LC_ALL-overrides", "C", "zh_CN.UTF-8", "en_US.UTF-8", false}, // LC_ALL=C wins
 		{"all-empty", "", "", "", false},
 	}
@@ -83,6 +84,11 @@ func TestProbe_Smoke(t *testing.T) {
 }
 
 // TestProbe_TrueColor_Env ensures Probe picks up COLORTERM.
+// T-13 go H-1: t.Parallel + t.Setenv is FORBIDDEN (runtime panic);
+// fix direction is the opposite — strip t.Parallel from other env-
+// reading tests so they don't race with this one. See
+// TestProbe_Smoke / TestIsInteractiveTTY_Smoke below (t.Parallel
+// removed). The package now has zero parallel tests touching env.
 func TestProbe_TrueColor_Env(t *testing.T) {
 	t.Setenv("COLORTERM", "truecolor")
 	caps, err := Probe()
@@ -94,7 +100,8 @@ func TestProbe_TrueColor_Env(t *testing.T) {
 	}
 }
 
-// TestProbe_LocaleUTF8_Env ensures Probe picks up LANG.
+// TestProbe_LocaleUTF8_Env ensures Probe picks up LANG. T-13 go H-1:
+// no t.Parallel (Setenv conflict).
 func TestProbe_LocaleUTF8_Env(t *testing.T) {
 	t.Setenv("LC_ALL", "")
 	t.Setenv("LC_CTYPE", "")

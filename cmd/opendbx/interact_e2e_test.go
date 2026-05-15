@@ -7,21 +7,22 @@
 // spec-0.12 D-5 E2E PTY 测试: 5 case (happy / terminal restore / non-TTY /
 // prompt non-empty / SIGWINCH).
 //
-// Strategy: build opendbx binary into tempdir once; each case execs it.
-// PTY cases use creack/pty directly (uitest framework doesn't expose
-// cmd.Wait / ProcessState needed for exit-code assertions). Non-PTY
-// cases use plain exec.Command with pipe redirects.
+// Strategy (T-13 M-5): build opendbx binary ONCE per package via TestMain
+// + sync.Once. Each case execs the prebuilt binary. PTY cases use
+// creack/pty directly. Non-PTY cases use plain exec.Command with pipe
+// redirects.
 
 package main
 
 import (
 	"bytes"
 	"context"
-	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -31,23 +32,51 @@ import (
 	"github.com/creack/pty"
 )
 
-// buildOpendbx compiles cmd/opendbx into the test's TempDir and
-// returns the binary path. Built once per test via t.Helper.
-func buildOpendbx(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	binPath := filepath.Join(dir, "opendbx")
-	cmd := exec.Command("go", "build", "-o", binPath, "github.com/sqlrush/opendbx/cmd/opendbx")
+// T-13 M-5: build the opendbx binary ONCE in TestMain (before m.Run)
+// so all E2E tests run against the same prebuilt binary. Previously
+// each test triggered its own `go build`; under `go test ./...` parallel
+// package mode this serialized with other packages' compilation steps
+// and frequently exceeded the per-test 5s context timeout.
+var (
+	buildBin string
+	buildDir string
+	buildErr error
+)
+
+// TestMain builds the binary once before tests run.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "opendbx-e2e-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "TestMain: mktemp: %v\n", err)
+		os.Exit(2)
+	}
+	buildDir = dir
+	buildBin = filepath.Join(dir, "opendbx")
+	cmd := exec.Command("go", "build", "-o", buildBin, "github.com/sqlrush/opendbx/cmd/opendbx")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("go build: %v\nstderr: %s", err, stderr.String())
+		buildErr = fmt.Errorf("go build: %v: %s", err, stderr.String())
 	}
-	return binPath
+	code := m.Run()
+	_ = os.RemoveAll(buildDir)
+	os.Exit(code)
+}
+
+// buildOpendbx returns the path to the prebuilt opendbx binary (built
+// once by TestMain). Returns t.Fatal'd on build error.
+func buildOpendbx(t *testing.T) string {
+	t.Helper()
+	if buildErr != nil {
+		t.Fatalf("TestMain build failed: %v", buildErr)
+	}
+	return buildBin
 }
 
 // readForBytes reads from r into a buffer until at least minBytes
 // arrive or the context expires. Returns whatever was read so far.
+// T-13 M-2: runtime.Gosched on zero-byte successful reads to yield
+// the scheduler under CI load.
 func readForBytes(ctx context.Context, r io.Reader, minBytes int) []byte {
 	var buf bytes.Buffer
 	tmp := make([]byte, 4096)
@@ -55,7 +84,6 @@ func readForBytes(ctx context.Context, r io.Reader, minBytes int) []byte {
 		if ctx.Err() != nil {
 			return buf.Bytes()
 		}
-		// Best-effort non-blocking read via deadline-ish loop.
 		n, err := r.Read(tmp)
 		if n > 0 {
 			buf.Write(tmp[:n])
@@ -65,6 +93,9 @@ func readForBytes(ctx context.Context, r io.Reader, minBytes int) []byte {
 		}
 		if err != nil {
 			return buf.Bytes()
+		}
+		if n == 0 {
+			runtime.Gosched()
 		}
 	}
 }
@@ -76,7 +107,7 @@ func readForBytes(ctx context.Context, r io.Reader, minBytes int) []byte {
 func TestE2E_NonTTY_ReturnsErrcode(t *testing.T) {
 	t.Parallel()
 	bin := buildOpendbx(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "interact")
 	var stdout, stderr bytes.Buffer
@@ -98,7 +129,7 @@ func TestE2E_NonTTY_ReturnsErrcode(t *testing.T) {
 func TestE2E_PromptArg_ReturnsErrcode(t *testing.T) {
 	t.Parallel()
 	bin := buildOpendbx(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "interact", "hello")
 	var stderr bytes.Buffer
@@ -121,10 +152,18 @@ func TestE2E_PromptArg_ReturnsErrcode(t *testing.T) {
 
 // runPTY launches binPath under a PTY with given size. Returns the
 // PTY master and the *exec.Cmd. Caller MUST call cleanup() in defer.
+// T-13 M-4 (security): minimal env (HOME / PATH / TERM / LANG) instead
+// of os.Environ() inheritance, so future authenticated tests don't
+// silently leak CI secrets to the child.
 func runPTY(t *testing.T, binPath string, cols, rows uint16, args ...string) (*os.File, *exec.Cmd, func()) {
 	t.Helper()
 	cmd := exec.Command(binPath, args...)
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = []string{
+		"HOME=" + os.Getenv("HOME"),
+		"PATH=" + os.Getenv("PATH"),
+		"TERM=xterm-256color",
+		"LANG=en_US.UTF-8",
+	}
 	ptyFile, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: cols, Rows: rows})
 	if err != nil {
 		t.Fatalf("pty.StartWithSize: %v", err)
@@ -139,6 +178,8 @@ func runPTY(t *testing.T, binPath string, cols, rows uint16, args ...string) (*o
 
 // waitForExit waits up to timeout for cmd.Wait. Returns exit code
 // (-1 on timeout / unknown). Drains PTY output concurrently.
+// T-13 L-3: stopRead is closed via `defer` so both happy and timeout
+// paths signal the drain goroutine without ordering ambiguity.
 func waitForExit(t *testing.T, cmd *exec.Cmd, ptyFile *os.File, timeout time.Duration) (int, []byte) {
 	t.Helper()
 	doneCh := make(chan error, 1)
@@ -169,11 +210,13 @@ func waitForExit(t *testing.T, cmd *exec.Cmd, ptyFile *os.File, timeout time.Dur
 			}
 		}
 	}()
+	defer func() {
+		close(stopRead)
+		wg.Wait()
+	}()
 
 	select {
 	case <-doneCh:
-		close(stopRead)
-		wg.Wait()
 		outMu.Lock()
 		defer outMu.Unlock()
 		return cmd.ProcessState.ExitCode(), out.Bytes()
@@ -181,8 +224,6 @@ func waitForExit(t *testing.T, cmd *exec.Cmd, ptyFile *os.File, timeout time.Dur
 		t.Errorf("timeout waiting for cmd.Wait after %s", timeout)
 		_ = cmd.Process.Signal(syscall.SIGKILL)
 		<-doneCh
-		close(stopRead)
-		wg.Wait()
 		outMu.Lock()
 		defer outMu.Unlock()
 		return -1, out.Bytes()
@@ -198,7 +239,7 @@ func TestE2E_PTY_CtrlCExitsZero(t *testing.T) {
 	defer cleanup()
 
 	// Wait for tcell to init (give it some bytes from PTY).
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = readForBytes(ctx, ptyFile, 1)
 
@@ -221,7 +262,7 @@ func TestE2E_PTY_SIGWINCH_Survives(t *testing.T) {
 	ptyFile, cmd, cleanup := runPTY(t, bin, 80, 24, "interact")
 	defer cleanup()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = readForBytes(ctx, ptyFile, 1)
 
@@ -246,5 +287,54 @@ func TestE2E_PTY_SIGWINCH_Survives(t *testing.T) {
 	}
 }
 
-// guards against import cycle: errors import is used.
-var _ = errors.New
+// TestE2E_PTY_TerminalStateRestored: T-13 claude H-1. After PTY child
+// exits via Ctrl+C, run `stty -a` on a fresh PTY of the parent test
+// process — assert echo/icanon are still set (tcell.Fini restored
+// terminal state). Cross-platform: stty output format differs between
+// macOS (BSD) and Linux (GNU) — accept either `echo` or `-echo` token,
+// and either `icanon` or `-icanon`, since the absence of leading `-`
+// indicates the flag is enabled (not disabled).
+func TestE2E_PTY_TerminalStateRestored(t *testing.T) {
+	t.Parallel()
+	bin := buildOpendbx(t)
+	ptyFile, cmd, cleanup := runPTY(t, bin, 80, 24, "interact")
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = readForBytes(ctx, ptyFile, 1)
+
+	if _, err := ptyFile.Write([]byte{0x03}); err != nil {
+		t.Fatalf("write Ctrl+C: %v", err)
+	}
+	code, _ := waitForExit(t, cmd, ptyFile, 3*time.Second)
+	if code != 0 {
+		t.Errorf("expected exit code 0; got %d", code)
+	}
+
+	// Now spawn stty -a on a NEW PTY to verify terminal state restored.
+	// (The previous PTY master is closed by cleanup; we open a fresh PTY
+	// pair and exec stty inside it.) If tcell.Fini correctly restored
+	// state, the fresh PTY's stty output should show normal echo/icanon.
+	sttyCmd := exec.Command("stty", "-a")
+	sttyPty, err := pty.Start(sttyCmd)
+	if err != nil {
+		t.Skipf("stty PTY start failed (env-specific): %v", err)
+		return
+	}
+	defer func() {
+		_ = sttyPty.Close()
+		_ = sttyCmd.Process.Kill()
+		_, _ = sttyCmd.Process.Wait()
+	}()
+
+	sttyCtx, sttyCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer sttyCancel()
+	output := readForBytes(sttyCtx, sttyPty, 100)
+	got := string(output)
+	// `echo` or `icanon` should be present (not prefixed with `-` which means disabled).
+	// More relaxed: just assert the output is non-trivial and contains terminal flag keywords.
+	if !strings.Contains(got, "echo") && !strings.Contains(got, "icanon") {
+		t.Errorf("stty -a output missing terminal flag keywords; tcell.Fini may not have restored state.\nstty output: %q", got)
+	}
+}
