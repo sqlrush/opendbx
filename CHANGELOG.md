@@ -8,6 +8,25 @@
 
 ## [Unreleased]
 
+### FROZEN 2026-05-15: spec-0.11-test-framework — opendbx 5748635 + opendbrb 208a806
+
+- [spec-0.11-test-framework] FROZEN — tag `v0.11.0-stage0.11` (spec-0.7 D-2 dual-repo 自动化)
+- 6 deliverable: D-1 `internal/testing/tablerun` (Run/RunParallel/Skippable + mustExtractName fail-fast 反射) + D-2 `internal/testing/must` (File/WriteTemp/WriteFile/WriteFileAt/JSON/NoErr/ErrCode) + D-3 `internal/testing/golden` (Compare/CompareString/CompareFile + Update() live flag.Getter.Get) + D-4 `internal/testing/uitest` (PTY+vt10x cell-grid harness, pty.StartWithSize + vt10x.Terminal interface + pumpOutput loop-until-EOF + 3-step bounded close ≤2s + windows build tag 排除) + D-5 retrofit scope-cut → spec-0.11.5 (must.WriteFileAt API delivered as bridge) + D-6 `docs/testing-conventions.md` SSOT (198 LOC, 6 节, 双仓 bit-identical)
+- 4 包覆盖率: tablerun **100%** / must **92.2%** / golden **93.8%** / uitest **97.0%** — 全 ≥90% Tool tier
+- **4 round AI review 共 ~104 unique finding 全消化**:
+  - R1 → R2 46 finding (pre-impl 双路 codex + claude)
+  - R2 → R3 14 finding (codex round-2 verification)
+  - R3 → R4 11 finding (codex round-3 verification)
+  - T-12 post-impl 三路 ~33 finding (codex + claude + go-reviewer)
+- 3 codex HIGH 真代码 bug 修复:
+  - pumpOutput EOF (vt10x.Parse 返回时机修正)
+  - SnapshotGolden callerDir routing
+  - LayerTests test-variant import allowance
+- 方法论教训: vt10x wcwidth R1-R4 修订线被 T-6 实测推翻 (vt10x 不模拟 wcwidth, unwritten cell 是 U+0020) — 假设驱动设计 vs 探测驱动设计
+- 依赖加入 go.mod: `github.com/creack/pty v1.1.24` (MIT) + `github.com/hinshun/vt10x v0.0.0-20220301184237` (MIT) — 0 transitive modules each
+- 三路 trace: opendbrb `docs/reviews/{codex,claude-code-reviewer,go-reviewer}-spec-0.11-{pre,post}-impl-review-2026-05-{14,15}.md` (6 trace 全集; pre-impl 2 + post-impl 3 + codex round-2/3 verification 2)
+- CLAUDE.md § 9 双 trace 最小: post-impl 提供 3 trace 满足要求
+
 ### 2026-05-14: spec-0.10 post-FROZEN review follow-up — lint gate hardening
 
 - `errcode-lint` now resolves `errors.New` / `fmt.Errorf` / `errcode.*` through Go type info, so aliased imports cannot bypass the boundary error-code contract.
