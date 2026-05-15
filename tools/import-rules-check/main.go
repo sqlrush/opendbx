@@ -115,11 +115,18 @@ func scan(root string) ([]string, int, error) {
 			seen[fromPath] = true
 			scanned++
 		}
+		fromIsTestVariant := isTestVariant(pkg.PkgPath)
 		for _, imp := range pkg.Imports {
 			toPath := canonicalPath(imp.PkgPath)
 			// Skip self-edges (Tests:true synthesizes test variant of a
 			// package that imports itself; not a real Go import edge).
 			if fromPath == toPath {
+				continue
+			}
+			// Test-variant edges into internal/testing/* are always allowed:
+			// the production package itself doesn't gain a dependency on test
+			// helpers; only its _test.go files do. spec-0.11 T-13 codex HIGH-3.
+			if fromIsTestVariant && strings.HasPrefix(toPath, rules.ModulePrefix+"internal/testing/") {
 				continue
 			}
 			edges := checkEdge(fromPath, toPath)
@@ -144,6 +151,13 @@ func canonicalPath(p string) string {
 		return p[:i]
 	}
 	return strings.TrimSuffix(p, ".test")
+}
+
+// isTestVariant reports whether p is the synthesized test variant of a
+// package (so its imports include _test.go files only). spec-0.11 T-13
+// codex HIGH-3: needed to grant test-only edges to internal/testing/*.
+func isTestVariant(p string) bool {
+	return strings.HasSuffix(p, ".test") || strings.Contains(p, ".test]")
 }
 
 // checkEdge runs every rule family against a single edge.

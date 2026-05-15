@@ -206,6 +206,7 @@ type mockT struct {
 	testing.TB
 	fatalCalled bool
 	fatalMsg    string
+	tempDirs    []string // T-13 claude MED-5: drained by CleanupDirs
 }
 
 func (m *mockT) Helper() {}
@@ -216,14 +217,25 @@ func (m *mockT) Fatalf(format string, args ...any) {
 }
 
 // TempDir is required because WriteTemp calls it; we route to a fresh
-// os.MkdirTemp so mockT-based negative tests can exercise WriteTemp's
-// internal write path under controlled conditions.
+// os.MkdirTemp and track the path so the outer test (which created the
+// mockT) can defer cleanup. T-13 claude MED-5: previously leaked temp
+// dirs across negative-path runs.
 func (m *mockT) TempDir() string {
 	dir, err := os.MkdirTemp("", "must-mock-")
 	if err != nil {
 		panic("mockT.TempDir: " + err.Error())
 	}
+	m.tempDirs = append(m.tempDirs, dir)
 	return dir
+}
+
+// CleanupDirs is called by tests after they exercise mockT to drop the
+// tempdirs that the mock allocated. (Outer testing.T doesn't see them.)
+func (m *mockT) CleanupDirs() {
+	for _, d := range m.tempDirs {
+		_ = os.RemoveAll(d)
+	}
+	m.tempDirs = nil
 }
 
 // bytesEqual avoids importing bytes for a single comparison.

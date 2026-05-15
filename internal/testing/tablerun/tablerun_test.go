@@ -160,6 +160,32 @@ func TestRunParallel_SkippableNonEmpty(t *testing.T) {
 	}
 }
 
+// --- BenchmarkTablerun_Reflect_1000 (spec § 7 DoD) ------------------
+
+// BenchmarkTablerun_Reflect_1000 measures the reflective Name-extract
+// path cost. spec § 7 DoD: 1000 cases × ns/op should keep total < 50ms
+// (single-iteration). T-13 errata: spec listed this benchmark but
+// T-3 didn't implement it.
+func BenchmarkTablerun_Reflect_1000(b *testing.B) {
+	cases := make([]basicCase, 1000)
+	for i := range cases {
+		cases[i] = basicCase{Name: fmt.Sprintf("case-%d", i), In: i, Want: i * 2}
+	}
+	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		for i, c := range cases {
+			_ = mustExtractName(silentTB{}, i, c)
+		}
+	}
+}
+
+// silentTB is a no-op testing.TB for benchmark use; mustExtractName
+// only calls Helper() on the happy path so this is sufficient.
+type silentTB struct{ testing.TB }
+
+func (silentTB) Helper()                  {}
+func (silentTB) Fatalf(string, ...any)    {}
+
 // --- mockT: minimal *testing.T stand-in for negative-path coverage --
 
 // mockT only stubs Helper + Fatalf since mustExtractName is what we test.

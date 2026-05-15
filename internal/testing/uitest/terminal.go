@@ -75,10 +75,24 @@ func Term(t testing.TB, cmd *exec.Cmd, cols, rows int) *Terminal {
 }
 
 // pumpOutput reads PTY bytes into the vt10x parser until EOF.
-// On EOF, closes pumpDone so close() can synchronize.
+//
+// vt10x's Parse drains the reader buffer then returns (NOT until EOF),
+// so a single call only handles the first output burst — leaving
+// later output from the child unread (e.g., responses to Send).
+// Loop until Parse returns an EOF-class error from the underlying
+// PTY close. Other errors (read-after-close, EINTR transients) also
+// terminate the loop to avoid spinning.
+//
+// On exit, closes pumpDone so close() can synchronize.
+// spec-0.11 T-13 codex HIGH-1 fix.
 func (term *Terminal) pumpOutput() {
 	defer close(term.pumpDone)
-	_ = term.vt.Parse(bufio.NewReader(term.pty))
+	reader := bufio.NewReader(term.pty)
+	for {
+		if err := term.vt.Parse(reader); err != nil {
+			return
+		}
+	}
 }
 
 // pumpExit blocks on cmd.Wait and forwards its error to waitCh.
