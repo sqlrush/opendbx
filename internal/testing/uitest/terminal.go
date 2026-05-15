@@ -46,9 +46,12 @@ func Term(t testing.TB, cmd *exec.Cmd, cols, rows int) *Terminal {
 		t.Fatalf("uitest.Term: cols/rows out of uint16 range (%d, %d)", cols, rows)
 		return nil
 	}
+	// gosec G115 conservative: bounds check above (cols/rows in 1..65535)
+	// makes the conversion safe, but gosec G115 doesn't trace if-return
+	// preconditions; explicit #nosec with spec_ref.
 	ptyFile, err := pty.StartWithSize(cmd, &pty.Winsize{
-		Cols: uint16(cols),
-		Rows: uint16(rows),
+		Cols: uint16(cols), //nolint:gosec // spec-0.11 T-6: range-checked 1..65535
+		Rows: uint16(rows), //nolint:gosec // spec-0.11 T-6: range-checked 1..65535
 	})
 	if err != nil {
 		t.Fatalf("uitest: pty.StartWithSize: %v", err)
