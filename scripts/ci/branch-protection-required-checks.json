@@ -11,6 +11,7 @@
     "security",
     "perf-smoke",
     "ui-visual",
+    "ui-screenshots",
     "ci-ui-review"
   ]
 }

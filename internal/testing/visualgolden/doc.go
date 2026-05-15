@@ -15,13 +15,14 @@
 //  3. visualgolden.Compare(t, name, got, maxMismatchFraction) — diffs
 //     against testdata/visual/<TestName>[/<sub>].png golden; uses
 //     pixelSensitivity YIQ-distance for per-pixel decision; reports
-//     fraction of differing pixels. On -update-visual flag, writes
-//     golden + sidecar metadata.json (font/freeze/rsvg versions).
+//     fraction of differing pixels. On -update-visual flag, writes the
+//     PNG golden.
 //
-// Metadata sidecar (spec § 2.3 R4 codex HIGH-3): goldens carry a
-// metadata.json with the rendering toolchain version. Compare verifies
-// metadata first; drift fails before any pixel diff to avoid false
-// positives from font/converter upgrades.
+// Metadata sidecar is intentionally not implemented in this package yet:
+// spec-0.11.5 T-13 carries it forward because reliable freeze/rsvg/font
+// version probes need a separate CI-portable design. Until that lands,
+// CI's blessed Linux image + pinned freeze version are the determinism
+// boundary.
 //
 // CI requirement (spec § 5.1 + § D-5 ui-visual job; user CRIT-1 R5):
 // VISUALGOLDEN_REQUIRED=1 promotes Skipf → Fatalf when freeze binary

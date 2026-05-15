@@ -8,6 +8,7 @@ package visualgolden
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"image/color"
 	"image/png"
@@ -85,6 +86,63 @@ func TestRender_MissingBinary_CIFatal(t *testing.T) {
 	}
 	if !strings.Contains(mt.fatalMsg, "VISUALGOLDEN_REQUIRED") {
 		t.Errorf("fatal msg should mention env var; got %q", mt.fatalMsg)
+	}
+}
+
+func TestFreezeBin_InvalidEnvPaths(t *testing.T) {
+	// NOT t.Parallel — sets FREEZE_BIN env.
+	dir := t.TempDir()
+	t.Setenv("FREEZE_BIN", dir)
+	if _, err := freezeBin(); !errors.Is(err, os.ErrInvalid) {
+		t.Fatalf("directory FREEZE_BIN should return os.ErrInvalid; got %v", err)
+	}
+
+	file := filepath.Join(dir, "not-executable")
+	if err := os.WriteFile(file, []byte("#!/bin/sh\n"), 0o600); err != nil {
+		t.Fatalf("write non-executable: %v", err)
+	}
+	t.Setenv("FREEZE_BIN", file)
+	if _, err := freezeBin(); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("non-executable FREEZE_BIN should return os.ErrPermission; got %v", err)
+	}
+}
+
+func TestRender_CommandFailureFatal(t *testing.T) {
+	// NOT t.Parallel — sets FREEZE_BIN env.
+	dir := t.TempDir()
+	script := filepath.Join(dir, "freeze-fail.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho boom >&2\nexit 7\n"), 0o700); err != nil {
+		t.Fatalf("write fail script: %v", err)
+	}
+	t.Setenv("FREEZE_BIN", script)
+	mt := &skipMockT{}
+	Render(mt, []byte("anything"), DefaultTheme())
+	if !mt.fatalCalled || !strings.Contains(mt.fatalMsg, "boom") {
+		t.Fatalf("expected freeze stderr in fatal; got %q", mt.fatalMsg)
+	}
+}
+
+func TestRender_InvalidPNGOutputFatal(t *testing.T) {
+	// NOT t.Parallel — sets FREEZE_BIN env.
+	dir := t.TempDir()
+	script := filepath.Join(dir, "freeze-text.sh")
+	body := `#!/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) shift; printf 'not a png' > "$1"; shift ;;
+    *)  shift ;;
+  esac
+done
+exit 0
+`
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatalf("write text script: %v", err)
+	}
+	t.Setenv("FREEZE_BIN", script)
+	mt := &skipMockT{}
+	Render(mt, []byte("anything"), DefaultTheme())
+	if !mt.fatalCalled || !strings.Contains(mt.fatalMsg, "not valid PNG") {
+		t.Fatalf("expected invalid PNG fatal; got %q", mt.fatalMsg)
 	}
 }
 

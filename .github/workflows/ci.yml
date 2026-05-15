@@ -1,9 +1,10 @@
 # opendbx CI — spec-0.9 D-1 (final state after T-9)
 #
-# 9 stable-name required jobs (validate / build-linux / build-macos /
+# 12 stable-name required jobs (validate / build-linux / build-macos /
 # unit-test / import-rules / dependency-policy / cli-golden / security /
-# perf-smoke). All branch protection contexts reference these stable names
-# 1:1 (scripts/ci/branch-protection-required-checks.json SSOT enforced by
+# perf-smoke / ui-visual / ui-screenshots / ci-ui-review). All branch
+# protection contexts reference these stable names 1:1
+# (scripts/ci/branch-protection-required-checks.json SSOT enforced by
 # tools/ci-protection-check; see `make ci-script-check`).
 #
 # T-5 / T-7 / T-8 / T-9 history (兼容 PR 模式):
@@ -26,6 +27,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, edited, reopened, labeled, synchronize, unlabeled]
   workflow_dispatch:                       # R2 codex MED / claude HIGH-3: 保留手动重跑
 
 env:
@@ -41,7 +43,7 @@ permissions:
   contents: read                           # R2 codex MED-1: 顶层最小化；security job 自行 elevate
 
 # =============================================================================
-# 9 stable-name required jobs (REAL work — T-8 cutover 后 protection 引用这些)
+# Stable-name required jobs (REAL work — branch protection 引用这些)
 # =============================================================================
 
 jobs:
@@ -294,6 +296,62 @@ jobs:
       - name: Layer 3 freeze pixel diff
         run: make ui-visual-golden
 
+  # spec-0.11.5 D-4/D-5: Layer 5 screenshot evidence. Required context,
+  # label-gated. PR body/label edits retrigger this workflow so stale
+  # screenshot evidence cannot survive after `area:render`/`area:ui` is added.
+  ui-screenshots:
+    name: ui-screenshots
+    runs-on: ubuntu-latest
+    if: contains(github.event.pull_request.labels.*.name, 'area:render') ||
+        contains(github.event.pull_request.labels.*.name, 'area:ui')
+    timeout-minutes: 5
+    steps:
+      - name: Validate 9 fixed-field screenshot URLs
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          FIELDS=(
+            "iTerm2 120w"
+            "iTerm2 80w"
+            "iTerm2 CJK"
+            "Alacritty 120w"
+            "Alacritty 80w"
+            "Alacritty CJK"
+            "kitty 120w"
+            "kitty 80w"
+            "kitty CJK"
+          )
+          FAIL=0
+          declare -A SEEN
+          for FIELD in "${FIELDS[@]}"; do
+            LINE=$(printf '%s\n' "$PR_BODY" | grep -F "$FIELD" || true)
+            URL=$(printf '%s\n' "$LINE" | grep -oE 'https?://[^[:space:]<>)]+\.(png|jpg|jpeg|webp)' | head -1)
+            if [ -z "$URL" ]; then
+              echo "::error::missing screenshot for field: $FIELD"
+              FAIL=1
+              continue
+            fi
+            case "$URL" in
+              https://example.com/*|http://example.com/*)
+                echo "::error::placeholder URL for field $FIELD: $URL"
+                FAIL=1
+                continue
+                ;;
+            esac
+            if [ -n "${SEEN[$URL]:-}" ]; then
+              echo "::error::duplicate URL across fields ($URL appears for ${SEEN[$URL]} and $FIELD)"
+              FAIL=1
+            else
+              SEEN[$URL]="$FIELD"
+            fi
+          done
+          if [ "$FAIL" -eq 1 ]; then
+            echo "::error::area:render/area:ui PRs require 9 distinct, non-placeholder screenshot URLs (3 terminals × 3 sizes); see PR template"
+            exit 1
+          fi
+          echo "all 9 screenshot fields present + distinct + non-placeholder"
+
   # spec-0.11.5 D-5: Layer 4 AI review (label-triggered + secret-gated).
   ci-ui-review:
     name: ci-ui-review
@@ -312,4 +370,3 @@ jobs:
         env:
           LOCAL_VL_ENDPOINT: ${{ secrets.LOCAL_VL_ENDPOINT }}
         run: make ui-ai-review
-

@@ -8,12 +8,14 @@ package visualgolden
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -83,6 +85,17 @@ func TestUpdate_DefaultFalse(t *testing.T) {
 	t.Parallel()
 	if Update() {
 		t.Error("default -update-visual should be false")
+	}
+}
+
+func TestUpdate_FlagSetTrue(t *testing.T) {
+	// NOT t.Parallel — mutates global flag value.
+	if err := flagSet("update-visual", "true"); err != nil {
+		t.Fatalf("set flag: %v", err)
+	}
+	t.Cleanup(func() { _ = flagSet("update-visual", "false") })
+	if !Update() {
+		t.Error("-update-visual=true should make Update return true")
 	}
 }
 
@@ -168,6 +181,42 @@ func TestCompareAt_MissingGolden(t *testing.T) {
 	}
 }
 
+func TestCompareAt_InvalidGoldenPNG(t *testing.T) {
+	// NOT t.Parallel — mutates updateVisualOracle global.
+	prev := updateVisualOracle
+	updateVisualOracle = func() bool { return false }
+	t.Cleanup(func() { updateVisualOracle = prev })
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "snap.png")
+	if err := os.WriteFile(path, []byte("not png"), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	mt := &mockT{}
+	compareAt(mt, path, encodePNG(t, 10, 10, color.RGBA{R: 1, G: 2, B: 3, A: 255}), 0.01)
+	if !mt.fatalCalled || !strings.Contains(mt.fatalMsg, "decode golden") {
+		t.Errorf("expected decode golden fatal; got %q", mt.fatalMsg)
+	}
+}
+
+func TestCompareAt_InvalidGotPNG(t *testing.T) {
+	// NOT t.Parallel — mutates updateVisualOracle global.
+	prev := updateVisualOracle
+	updateVisualOracle = func() bool { return false }
+	t.Cleanup(func() { updateVisualOracle = prev })
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "snap.png")
+	if err := os.WriteFile(path, encodePNG(t, 10, 10, color.RGBA{R: 1, G: 2, B: 3, A: 255}), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	mt := &mockT{}
+	compareAt(mt, path, []byte("not png"), 0.01)
+	if !mt.fatalCalled || !strings.Contains(mt.fatalMsg, "decode got") {
+		t.Errorf("expected decode got fatal; got %q", mt.fatalMsg)
+	}
+}
+
 func TestCompareAt_UpdateWritesGolden(t *testing.T) {
 	// NOT t.Parallel — mutates updateVisualOracle global.
 	prev := updateVisualOracle
@@ -185,6 +234,37 @@ func TestCompareAt_UpdateWritesGolden(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Errorf("golden not written: %v", err)
+	}
+}
+
+func TestCompareAt_UpdateMkdirFailure(t *testing.T) {
+	// NOT t.Parallel — mutates updateVisualOracle global.
+	prev := updateVisualOracle
+	updateVisualOracle = func() bool { return true }
+	t.Cleanup(func() { updateVisualOracle = prev })
+
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, []byte("file-not-dir"), 0o600); err != nil {
+		t.Fatalf("setup blocker: %v", err)
+	}
+	mt := &mockT{}
+	compareAt(mt, filepath.Join(blocker, "snap.png"), encodePNG(t, 10, 10, color.RGBA{R: 50, G: 50, B: 50, A: 255}), 0.01)
+	if !mt.fatalCalled || !strings.Contains(mt.fatalMsg, "mkdir") {
+		t.Errorf("expected mkdir fatal; got %q", mt.fatalMsg)
+	}
+}
+
+func TestCompareAt_UpdateWriteFailure(t *testing.T) {
+	// NOT t.Parallel — mutates updateVisualOracle global.
+	prev := updateVisualOracle
+	updateVisualOracle = func() bool { return true }
+	t.Cleanup(func() { updateVisualOracle = prev })
+
+	mt := &mockT{}
+	compareAt(mt, t.TempDir(), encodePNG(t, 10, 10, color.RGBA{R: 50, G: 50, B: 50, A: 255}), 0.01)
+	if !mt.fatalCalled || !strings.Contains(mt.fatalMsg, "write") {
+		t.Errorf("expected write fatal; got %q", mt.fatalMsg)
 	}
 }
 
@@ -230,4 +310,8 @@ func (m *mockT) Fatalf(format string, args ...any) {
 func (m *mockT) Errorf(format string, args ...any) {
 	m.errorfCalled = true
 	m.errorfMsg = fmt.Sprintf(format, args...)
+}
+
+func flagSet(name, value string) error {
+	return flag.CommandLine.Set(name, value)
 }

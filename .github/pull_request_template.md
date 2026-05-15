@@ -27,8 +27,8 @@
 ## UI Screenshots (required for `area:render` / `area:ui` PRs)
 
 <!--
-spec-0.11.5 D-4: 9 fixed fields enforced by .github/workflows/
-pr-screenshots-check.yml when label area:render or area:ui set.
+spec-0.11.5 D-4: 9 fixed fields enforced by the required `ui-screenshots`
+CI job when label area:render or area:ui set.
 Each line must have a real screenshot URL (no <url> placeholder,
 no example.com). URLs must be distinct across all 9 fields.
 -->
