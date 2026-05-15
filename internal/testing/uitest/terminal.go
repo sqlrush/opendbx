@@ -50,8 +50,8 @@ func Term(t testing.TB, cmd *exec.Cmd, cols, rows int) *Terminal {
 	// because the result is provably in [0, 0xFFFF]. The earlier bounds
 	// check above is the semantic invariant; this mask is the compiler
 	// hint. spec-0.11 T-6.
-	cols16 := uint16(cols & 0xFFFF) //nolint:gosec // spec-0.11 T-6: bounded by mask 0xFFFF
-	rows16 := uint16(rows & 0xFFFF) //nolint:gosec // spec-0.11 T-6: bounded by mask 0xFFFF
+	cols16 := uint16(cols & 0xFFFF) // #nosec G115 -- spec-0.11 T-6: bounded by mask 0xFFFF
+	rows16 := uint16(rows & 0xFFFF) // #nosec G115 -- spec-0.11 T-6: bounded by mask 0xFFFF
 	ptyFile, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Cols: cols16,
 		Rows: rows16,
