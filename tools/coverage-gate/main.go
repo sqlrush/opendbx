@@ -81,6 +81,8 @@ var (
 	// spec-0.9 T-3.5: vuln-allowlist 同列 Tool tier.
 	// spec-0.9 T-7: ci-protection-check 同列 Tool tier.
 	// spec-0.10 T-3.5: suppression-lint 同列 Tool tier.
+	// spec-0.11 T-2.5: 4 internal/testing/* packages 同列 Tool tier
+	// (R3 codex round-2 MED-3: spec-0.11 D-2/D-3/D-4 全部 ≥90%).
 	toolPackages = map[string]bool{
 		modulePath + "/tools/coverage-gate":       true,
 		modulePath + "/tools/makefile-check":      true,
@@ -88,6 +90,10 @@ var (
 		modulePath + "/tools/ci-protection-check": true,
 		modulePath + "/tools/suppression-lint":    true,
 		modulePath + "/tools/errcode-lint":        true,
+		modulePath + "/internal/testing/tablerun": true,
+		modulePath + "/internal/testing/must":     true,
+		modulePath + "/internal/testing/golden":   true,
+		modulePath + "/internal/testing/uitest":   true,
 	}
 
 	exemptPackages = map[string]bool{
