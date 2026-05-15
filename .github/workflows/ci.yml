@@ -101,10 +101,18 @@ jobs:
         run: CGO_ENABLED=0 go build -o /tmp/opendbx-cgo0 ./cmd/opendbx
       - name: Smoke test --version
         run: ./bin/opendbx --version
-      - name: Smoke test interact stub
+      - name: Smoke test interact non-TTY guard
         run: |
-          out=$(./bin/opendbx interact)
-          echo "$out" | grep -q "not yet implemented" || (echo "stub did not print expected text"; exit 1)
+          set +e
+          out=$(./bin/opendbx interact 2>&1)
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "interact unexpectedly succeeded without a TTY"
+            echo "$out"
+            exit 1
+          fi
+          echo "$out" | grep -q "TERMINAL.NOT_A_TTY" || (echo "interact did not emit TERMINAL.NOT_A_TTY"; echo "$out"; exit 1)
 
   build-macos:
     name: build-macos

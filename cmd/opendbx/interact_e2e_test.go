@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/creack/pty"
 )
@@ -351,17 +352,32 @@ func TestE2E_PTY_TerminalStateRestored(t *testing.T) {
 	}
 	defer func() {
 		_ = sttyPty.Close()
-		_ = sttyCmd.Process.Kill()
-		_, _ = sttyCmd.Process.Wait()
+		if sttyCmd.ProcessState == nil {
+			_ = sttyCmd.Process.Kill()
+			_, _ = sttyCmd.Process.Wait()
+		}
 	}()
 
 	sttyCtx, sttyCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer sttyCancel()
-	output := readForBytes(sttyCtx, sttyPty, 100)
-	got := string(output)
-	// `echo` or `icanon` should be present (not prefixed with `-` which means disabled).
-	// More relaxed: just assert the output is non-trivial and contains terminal flag keywords.
-	if !strings.Contains(got, "echo") && !strings.Contains(got, "icanon") {
-		t.Errorf("stty -a output missing terminal flag keywords; tcell.Fini may not have restored state.\nstty output: %q", got)
+	output := readForBytes(sttyCtx, sttyPty, 4096)
+	if err := sttyCmd.Wait(); err != nil {
+		t.Skipf("stty wait failed (env-specific): %v; output=%q", err, string(output))
+		return
 	}
+	got := string(output)
+	if !hasEnabledSttyFlag(got, "echo") || !hasEnabledSttyFlag(got, "icanon") {
+		t.Errorf("stty -a output missing enabled echo/icanon flags; tcell.Fini may not have restored state.\nstty output: %q", got)
+	}
+}
+
+func hasEnabledSttyFlag(output, flag string) bool {
+	for _, tok := range strings.FieldsFunc(output, func(r rune) bool {
+		return unicode.IsSpace(r) || r == ';'
+	}) {
+		if tok == flag {
+			return true
+		}
+	}
+	return false
 }
