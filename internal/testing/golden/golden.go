@@ -56,7 +56,7 @@ func compareAt(t testing.TB, path string, got []byte) {
 			t.Fatalf("golden: mkdir %s: %v", filepath.Dir(path), err)
 			return
 		}
-		if err := os.WriteFile(path, got, 0o644); err != nil { // #nosec G306 -- spec-0.11 D-3: golden fixtures are committed test artifacts
+		if err := os.WriteFile(path, got, 0o600); err != nil {
 			t.Fatalf("golden: write %s: %v", path, err)
 			return
 		}

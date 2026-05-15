@@ -49,7 +49,7 @@ func TestCompare_Match(t *testing.T) {
 	dir := t.TempDir()
 	want := []byte("expected payload")
 	path := filepath.Join(dir, "fixture.golden")
-	if err := os.WriteFile(path, want, 0o644); err != nil {
+	if err := os.WriteFile(path, want, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	// Use compareAt directly with explicit path so we don't depend on
@@ -67,7 +67,7 @@ func TestCompare_Mismatch(t *testing.T) {
 	dir := t.TempDir()
 	want := []byte("expected payload\nline two\nline three\n")
 	path := filepath.Join(dir, "fixture.golden")
-	if err := os.WriteFile(path, want, 0o644); err != nil {
+	if err := os.WriteFile(path, want, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	got := []byte("expected payload\nline TWO\nline three\n")
@@ -116,7 +116,7 @@ func TestCompare_BinaryRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	want := []byte{0x00, 0xFF, 0xC3, 0xA9, 0x01, 0x7F}
 	path := filepath.Join(dir, "blob.golden")
-	if err := os.WriteFile(path, want, 0o644); err != nil {
+	if err := os.WriteFile(path, want, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	mt := &mockT{}
@@ -156,7 +156,7 @@ func TestCompareFile_Match(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join("testdata", t.Name())) })
 	rel := filepath.Join("testdata", t.Name(), "rel-fixture.txt")
-	if err := os.WriteFile(rel, []byte("hi"), 0o644); err != nil {
+	if err := os.WriteFile(rel, []byte("hi"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	CompareFile(t, rel, []byte("hi"))
@@ -169,7 +169,7 @@ func TestCompareFile_Mismatch(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join("testdata", t.Name())) })
 	rel := filepath.Join("testdata", t.Name(), "fixture.txt")
-	if err := os.WriteFile(rel, []byte("want"), 0o644); err != nil {
+	if err := os.WriteFile(rel, []byte("want"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	mt := &mockT{}
@@ -270,7 +270,7 @@ func TestCompareString_Mismatch(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "s.golden")
-	if err := os.WriteFile(path, []byte("expected"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("expected"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	mt := &mockT{}
@@ -364,7 +364,7 @@ func TestUpdate_WritePath_MkdirFails(t *testing.T) {
 	// Use a path under a regular file — MkdirAll will fail with ENOTDIR.
 	dir := t.TempDir()
 	regularFile := filepath.Join(dir, "blocker")
-	if err := os.WriteFile(regularFile, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(regularFile, []byte("x"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	bad := filepath.Join(regularFile, "subdir", "x.golden") // /blocker/subdir/...
