@@ -58,6 +58,27 @@ func WriteFile(t testing.TB, dir, name string, content []byte) string {
 	return path
 }
 
+// WriteFileAt writes content at full path with permission 0o600,
+// creating parent directories as needed (mkdir -p). Returns the path.
+// Use when callers already have a fully-qualified target path; saves a
+// filepath.Dir/Base split. Binary-safe.
+//
+// spec-0.11 T-7 retrofit helper: many existing tests have local
+// `mustWrite(t, fullpath, body)` shapes; WriteFileAt makes them
+// deletable without bloating call sites.
+func WriteFileAt(t testing.TB, path string, content []byte) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("must.WriteFileAt mkdir(%q): %v", filepath.Dir(path), err)
+		return ""
+	}
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("must.WriteFileAt(%q): %v", path, err)
+		return ""
+	}
+	return path
+}
+
 // JSON unmarshals raw into v or fails. Reports both the path-style
 // destination type and the raw bytes prefix on failure.
 func JSON(t testing.TB, raw []byte, v any) {
