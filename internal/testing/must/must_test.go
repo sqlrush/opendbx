@@ -238,3 +238,35 @@ func bytesEqual(a, b []byte) bool {
 	}
 	return true
 }
+
+func TestWriteFileAt_HappyAndMkdir(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sub", "nested", "f.txt")
+	got := WriteFileAt(t, path, []byte("hello"))
+	if got != path {
+		t.Errorf("got %q, want %q", got, path)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(body) != "hello" {
+		t.Errorf("body %q, want %q", body, "hello")
+	}
+}
+
+func TestWriteFileAt_FailsOnBlockingFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	// Path under a regular file → MkdirAll ENOTDIR.
+	mt := &mockT{}
+	WriteFileAt(mt, filepath.Join(blocker, "sub", "x.txt"), []byte("payload"))
+	if !mt.fatalCalled || !strings.Contains(mt.fatalMsg, "WriteFileAt") {
+		t.Errorf("expected fatal 'WriteFileAt'; got %q", mt.fatalMsg)
+	}
+}
