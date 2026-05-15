@@ -62,14 +62,12 @@ func TestGolden(t *testing.T) {
 		{"help_long_flag", []string{"--help"}, "stdout", false, "testdata/golden/help.txt"},
 		{"help_short_flag", []string{"-h"}, "stdout", false, "testdata/golden/help.txt"},
 
-		// no-args → interact stub (D1 decision)
-		{"no_args_interact_stub", []string{}, "stdout", false, "testdata/golden/no-args-interact-stub.txt"},
-
-		// "non-subcommand bare arg" — CC parity: `opendbx foobar` treats foobar as
-		// [prompt], NOT as an unknown subcommand error. (`claude foobar` does the
-		// same — it sends "foobar" to the LLM.) Verified empirically against CC
-		// v2.1.138.
-		{"bare_arg_as_prompt", []string{"foobar"}, "stdout", false, "testdata/golden/bare-arg-as-prompt.txt"},
+		// no-args / bare-arg golden cases removed by spec-0.12 D-6 (R-12):
+		// the spec-0.3 stub "interact mode not yet implemented (spec-1.16)"
+		// stdout is replaced by ErrNotATTY (when not a TTY) or by entering
+		// the empty tui main loop (when a TTY). Golden text testing in a
+		// non-TTY golden runner is no longer meaningful; D-5 PTY E2E covers
+		// both production paths.
 
 		// unknown flag — cobra correctly returns error
 		{"unknown_flag_stderr", []string{"--xyz-not-a-real-flag"}, "stderr", true, "testdata/golden/unknown-flag.txt"},
@@ -183,24 +181,23 @@ func TestSubcommandStubs(t *testing.T) {
 	}
 }
 
+// TestRoot_PromptArgument verifies positional [prompt] is captured into
+// opts.Session.Prompt. spec-0.12 D-4 (M-6) makes non-empty prompt return
+// ErrPromptNotImplemented rather than the spec-0.3 stub stdout — so the
+// assertion shape moved from "stdout contains received prompt: ..." to
+// "err is ErrPromptNotImplemented".
 func TestRoot_PromptArgument(t *testing.T) {
 	t.Run("single_token", func(t *testing.T) {
-		stdout, _, err := runCmd(t, "hello")
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-		if !strings.Contains(stdout, "received prompt: \"hello\"") {
-			t.Errorf("[prompt] positional not captured. stdout: %q", stdout)
+		_, _, err := runCmd(t, "hello")
+		if !errors.Is(err, ErrPromptNotImplemented) {
+			t.Errorf("want ErrPromptNotImplemented; got %v", err)
 		}
 	})
 	t.Run("multi_token_joined", func(t *testing.T) {
 		// CC parity: `claude hello world` joins as "hello world".
-		stdout, _, err := runCmd(t, "hello", "world")
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-		if !strings.Contains(stdout, "received prompt: \"hello world\"") {
-			t.Errorf("multi-token prompt not joined. stdout: %q", stdout)
+		_, _, err := runCmd(t, "hello", "world")
+		if !errors.Is(err, ErrPromptNotImplemented) {
+			t.Errorf("want ErrPromptNotImplemented; got %v", err)
 		}
 	})
 }

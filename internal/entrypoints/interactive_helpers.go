@@ -14,6 +14,8 @@ package entrypoints
 
 import (
 	"context"
+
+	"github.com/sqlrush/opendbx/internal/bootstrap"
 )
 
 // ErrInteractiveHelperNotImplemented signals an interactive helper has not
@@ -21,13 +23,13 @@ import (
 // spec-1.15-tui. Moved to errors.go in spec-0.6 D-4 (now carries
 // Code/Message/Hint via errcode registry).
 
-// RenderAndRun parallels CC interactiveHelpers.ts::renderAndRun. Real
-// implementation drives the tcell event loop + render engine to produce a
-// React-equivalent re-render cycle.
-//
-// Stage-0: returns ErrInteractiveHelperNotImplemented.
-func RenderAndRun(_ context.Context) error {
-	return ErrInteractiveHelperNotImplemented
+// RenderAndRun parallels CC interactiveHelpers.ts::renderAndRun. spec-0.12
+// D-4 wires it to the empty tcell main loop via bootstrap.LaunchInteractiveTUI
+// (layer chain entrypoints → bootstrap → app/cli/tui; cmd cannot reach app
+// directly). spec-1.15-tui replaces the empty loop body with the real
+// render engine + dispatcher.
+func RenderAndRun(ctx context.Context) error {
+	return bootstrap.LaunchInteractiveTUI(ctx)
 }
 
 // ShowSetupDialog parallels CC interactiveHelpers.ts::showSetupDialog.
