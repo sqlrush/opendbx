@@ -19,10 +19,11 @@
 // elsewhere. See R3 codex round-3 HIGH-1.
 //
 // Safe usage:
-//   go test -update ./internal/testing/golden    # package-level: safe
-//   go test -update ./...                        # MAY fail if some
-//                                                  packages don't link
-//                                                  this package
+//
+//	go test -update ./internal/testing/golden    # package-level: safe
+//	go test -update ./...                        # MAY fail if some
+//	                                               packages don't link
+//	                                               this package
 //
 // Design: spec-0.11-test-framework § 1.1 D-3.
 package golden
