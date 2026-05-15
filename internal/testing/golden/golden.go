@@ -14,6 +14,11 @@ import (
 	"testing"
 )
 
+// callerFrameBudget bounds the stack walk in callerDir. 16 frames is
+// generous enough for any reasonable testing.T → t.Run → helper chain
+// while preventing runaway loops. T-13 go-reviewer LOW-1.
+const callerFrameBudget = 16
+
 // Compare diffs got against testdata/golden/<TestName>[/<subname>].golden.
 // On -update, writes got to disk (creating intermediate dirs).
 // On mismatch without -update, calls t.Errorf with mismatchSummary.
@@ -92,14 +97,19 @@ func goldenPath(t testing.TB, name string) string {
 // (which may itself be inside this package for self-tests).
 func callerDir(t testing.TB) string {
 	t.Helper()
-	for skip := 2; skip < 16; skip++ {
+	for skip := 2; skip < callerFrameBudget; skip++ {
 		_, file, _, ok := runtime.Caller(skip)
 		if !ok {
 			break
 		}
-		// Skip golden package's own non-test files. Tests (_test.go) in
-		// this package are valid callers (for self-tests of CompareFile).
+		// Skip our own non-test frames; also skip uitest helper frames
+		// so SnapshotGolden goldens land under the caller's test dir
+		// (T-13 codex HIGH-2). Tests (_test.go) inside our own package
+		// remain valid callers for self-tests of CompareFile.
 		if strings.Contains(file, "/internal/testing/golden/") && !strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		if strings.Contains(file, "/internal/testing/uitest/") && !strings.HasSuffix(file, "_test.go") {
 			continue
 		}
 		return filepath.Dir(file)

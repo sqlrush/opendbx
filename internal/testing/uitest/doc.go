@@ -11,8 +11,10 @@
 //   - Term(t, cmd, cols, rows) — launch cmd inside a sized PTY
 //     connected to a vt10x terminal emulator.
 //   - CellGrid() / CellGridRunes() — read the cell grid as either
-//     []string (UTF-8 with NBSP continuation) or [][]rune (one rune
-//     per terminal column).
+//     []string (one rune per cell, UTF-8) or [][]rune (one rune per
+//     terminal column, indexable). vt10x stores 1 rune per cell
+//     regardless of display width; unwritten cells are U+0020 space.
+//     See spec-0.11 T-6 / T-13 errata on vt10x model.
 //   - Send(bytes) — write to the PTY (e.g., keystrokes).
 //   - WaitFor(pred, timeout) — block until a predicate over the grid
 //     holds, or fail.
