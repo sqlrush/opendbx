@@ -1,11 +1,130 @@
 {
   "exemptions": [
     {
+      "osv_id": "GO-2025-4007",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory landed 2026-05-15 (post spec-0.11 FROZEN). opendbx Stage 0 locks Go 1.23 per spec-0.9 R2. Triage and patch-bump at Stage 1 toolchain review; reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-05-15)"
+    },
+    {
+      "osv_id": "GO-2025-4008",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory landed 2026-05-15 (post spec-0.11 FROZEN). opendbx Stage 0 locks Go 1.23 per spec-0.9 R2. Triage and patch-bump at Stage 1 toolchain review; reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-05-15)"
+    },
+    {
+      "osv_id": "GO-2025-4009",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory landed 2026-05-15 (post spec-0.11 FROZEN). opendbx Stage 0 locks Go 1.23 per spec-0.9 R2. Triage and patch-bump at Stage 1 toolchain review; reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-05-15)"
+    },
+    {
+      "osv_id": "GO-2025-4010",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory landed 2026-05-15 (post spec-0.11 FROZEN). opendbx Stage 0 locks Go 1.23 per spec-0.9 R2. Triage and patch-bump at Stage 1 toolchain review; reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-05-15)"
+    },
+    {
+      "osv_id": "GO-2025-4011",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory landed 2026-05-15 (post spec-0.11 FROZEN). opendbx Stage 0 locks Go 1.23 per spec-0.9 R2. Triage and patch-bump at Stage 1 toolchain review; reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-05-15)"
+    },
+    {
+      "osv_id": "GO-2025-4012",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory landed 2026-05-15 (post spec-0.11 FROZEN). opendbx Stage 0 locks Go 1.23 per spec-0.9 R2. Triage and patch-bump at Stage 1 toolchain review; reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-05-15)"
+    },
+    {
+      "osv_id": "GO-2025-4013",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory landed 2026-05-15 (post spec-0.11 FROZEN). opendbx Stage 0 locks Go 1.23 per spec-0.9 R2. Triage and patch-bump at Stage 1 toolchain review; reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-05-15)"
+    },
+    {
+      "osv_id": "GO-2025-4155",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory landed 2026-05-15 (post spec-0.11 FROZEN). opendbx Stage 0 locks Go 1.23 per spec-0.9 R2. Triage and patch-bump at Stage 1 toolchain review; reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-05-15)"
+    },
+    {
+      "osv_id": "GO-2025-4175",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory landed 2026-05-15 (post spec-0.11 FROZEN). opendbx Stage 0 locks Go 1.23 per spec-0.9 R2. Triage and patch-bump at Stage 1 toolchain review; reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-05-15)"
+    },
+    {
+      "osv_id": "GO-2026-4337",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory landed 2026-05-15 (post spec-0.11 FROZEN). opendbx Stage 0 locks Go 1.23 per spec-0.9 R2. Triage and patch-bump at Stage 1 toolchain review; reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-05-15)"
+    },
+    {
+      "osv_id": "GO-2026-4340",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory landed 2026-05-15 (post spec-0.11 FROZEN). opendbx Stage 0 locks Go 1.23 per spec-0.9 R2. Triage and patch-bump at Stage 1 toolchain review; reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-05-15)"
+    },
+    {
+      "osv_id": "GO-2026-4601",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory landed 2026-05-15 (post spec-0.11 FROZEN). opendbx Stage 0 locks Go 1.23 per spec-0.9 R2. Triage and patch-bump at Stage 1 toolchain review; reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-05-15)"
+    },
+    {
       "osv_id": "GO-2026-4602",
       "module": "stdlib",
       "expiry": "2026-08-14",
       "reason": "Go 1.23 stdlib os.FileInfo escape from Root (filepath.WalkDir chain). Fix landed in Go 1.25.8; opendbx Stage 0 locks Go 1.23 per spec-0.9 R2 / opendbx go.mod. Reachable only via tools/import-rules-check (operator-supplied repo paths, not user-untrusted input). Re-evaluate at Stage 1 toolchain bump.",
       "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5"
+    },
+    {
+      "osv_id": "GO-2026-4870",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory landed 2026-05-15 (post spec-0.11 FROZEN). opendbx Stage 0 locks Go 1.23 per spec-0.9 R2. Triage and patch-bump at Stage 1 toolchain review; reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-05-15)"
+    },
+    {
+      "osv_id": "GO-2026-4918",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory landed 2026-05-15 (post spec-0.11 FROZEN). opendbx Stage 0 locks Go 1.23 per spec-0.9 R2. Triage and patch-bump at Stage 1 toolchain review; reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-05-15)"
+    },
+    {
+      "osv_id": "GO-2026-4946",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory landed 2026-05-15 (post spec-0.11 FROZEN). opendbx Stage 0 locks Go 1.23 per spec-0.9 R2. Triage and patch-bump at Stage 1 toolchain review; reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-05-15)"
+    },
+    {
+      "osv_id": "GO-2026-4947",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory landed 2026-05-15 (post spec-0.11 FROZEN). opendbx Stage 0 locks Go 1.23 per spec-0.9 R2. Triage and patch-bump at Stage 1 toolchain review; reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-05-15)"
+    },
+    {
+      "osv_id": "GO-2026-4971",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory landed 2026-05-15 (post spec-0.11 FROZEN). opendbx Stage 0 locks Go 1.23 per spec-0.9 R2. Triage and patch-bump at Stage 1 toolchain review; reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-05-15)"
     }
   ]
 }
