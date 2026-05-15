@@ -39,12 +39,16 @@ type Terminal struct {
 // correct WINSIZE on its first byte of output thanks to pty.StartWithSize
 // (spec-0.11 R2 codex HIGH-5: pty.Start + Setsize races on first frame).
 //
-// Calls t.Fatalf on PTY allocation failure.
+// Calls t.Fatalf on PTY allocation failure or out-of-range size.
 func Term(t testing.TB, cmd *exec.Cmd, cols, rows int) *Terminal {
 	t.Helper()
+	if cols < 1 || cols > 65535 || rows < 1 || rows > 65535 {
+		t.Fatalf("uitest.Term: cols/rows out of uint16 range (%d, %d)", cols, rows)
+		return nil
+	}
 	ptyFile, err := pty.StartWithSize(cmd, &pty.Winsize{
-		Cols: uint16(cols),
-		Rows: uint16(rows),
+		Cols: uint16(cols), //nolint:gosec // spec-0.11 T-6: range-checked above (cols/rows ≤ 65535)
+		Rows: uint16(rows), //nolint:gosec // spec-0.11 T-6: range-checked above (cols/rows ≤ 65535)
 	})
 	if err != nil {
 		t.Fatalf("uitest: pty.StartWithSize: %v", err)

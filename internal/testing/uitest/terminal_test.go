@@ -45,7 +45,7 @@ func TestEchoHelper(t *testing.T) {
 
 func helperCmd(t *testing.T, mode string) *exec.Cmd {
 	t.Helper()
-	cmd := exec.Command(os.Args[0], "-test.run=^TestEchoHelper$") //nolint:gosec // test-only self-exec
+	cmd := exec.Command(os.Args[0], "-test.run=^TestEchoHelper$")
 	cmd.Env = append(os.Environ(), "GO_UITEST_HELPER="+mode)
 	return cmd
 }
@@ -103,6 +103,29 @@ func TestTerm_CloseKillsSlowChild(t *testing.T) {
 	term.close()
 	if elapsed := time.Since(start); elapsed > 3*time.Second {
 		t.Errorf("close() took %v; want < 3s (bounded teardown)", elapsed)
+	}
+}
+
+func TestTerm_RejectsOutOfRangeSize(t *testing.T) {
+	cases := []struct {
+		name string
+		cols int
+		rows int
+	}{
+		{"cols-zero", 0, 24},
+		{"rows-zero", 80, 0},
+		{"cols-too-big", 70000, 24},
+		{"rows-too-big", 80, 70000},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			mt := &mockT{}
+			Term(mt, helperCmd(t, "banner"), c.cols, c.rows)
+			if !mt.fatalCalled || !strings.Contains(mt.fatalMsg, "uint16 range") {
+				t.Errorf("expected fatal 'uint16 range'; got %q", mt.fatalMsg)
+			}
+		})
 	}
 }
 
