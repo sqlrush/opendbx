@@ -130,6 +130,12 @@ func scan(root string) ([]string, int, error) {
 				continue
 			}
 			edges := checkEdge(fromPath, toPath)
+			// spec-0.12 R3 H-4 + R-13: IMP-9 tcell-isolation exempts test
+			// files. Test-variant edges importing tcell from a non-whitelisted
+			// package (e.g. cmd/opendbx/root_test.go hook signature) are OK.
+			if fromIsTestVariant {
+				edges = filterTcellViolations(edges)
+			}
 			violations = append(violations, edges...)
 		}
 	}
@@ -153,6 +159,19 @@ func canonicalPath(p string) string {
 	return strings.TrimSuffix(p, ".test")
 }
 
+// filterTcellViolations drops IMP-9 violations from the edge list.
+// Used for test-variant edges where importing tcell.Screen for hook
+// signatures is acceptable (spec-0.12 R3 H-4 + R-13).
+func filterTcellViolations(edges []string) []string {
+	out := edges[:0]
+	for _, e := range edges {
+		if !strings.Contains(e, "IMP-9 tcell-isolation") {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // isTestVariant reports whether p is the synthesized test variant of a
 // package (so its imports include _test.go files only). spec-0.11 T-13
 // codex HIGH-3: needed to grant test-only edges to internal/testing/*.
@@ -162,13 +181,14 @@ func isTestVariant(p string) bool {
 
 // checkEdge runs every rule family against a single edge.
 //
-// Rule families (existing + spec-0.10 D-3 IMP-5/6/7/8 new):
+// Rule families (existing + spec-0.10 D-3 IMP-5/6/7/8 + spec-0.12 IMP-9):
 //   - CheckEdge:        layer matrix (spec-0.2 D-5)
 //   - CheckCluster:     domain cluster restrictions (spec-0.2 D-5)
 //   - CheckRenderDAG:   render/* 10-layer strict DAG (spec-0.2 D-5; IMP-6 per spec-0.10)
 //   - CheckOpendbBan:   IMP-5 (spec-0.10 D-3)
 //   - CheckLLMSDKIsolation: IMP-7 (spec-0.10 D-3, added T-7)
 //   - CheckRunewidthWrap:   IMP-8 (spec-0.10 D-3, added T-7)
+//   - CheckTcellIsolation:  IMP-9 (spec-0.12 D-1)
 func checkEdge(from, to string) []string {
 	var out []string
 	if r := rules.CheckEdge(from, to); r != "" {
@@ -187,6 +207,9 @@ func checkEdge(from, to string) []string {
 		out = append(out, fmt.Sprintf("%s → %s: %s", from, to, r))
 	}
 	if r := rules.CheckRunewidthWrap(from, to); r != "" {
+		out = append(out, fmt.Sprintf("%s → %s: %s", from, to, r))
+	}
+	if r := rules.CheckTcellIsolation(from, to); r != "" {
 		out = append(out, fmt.Sprintf("%s → %s: %s", from, to, r))
 	}
 	return out
