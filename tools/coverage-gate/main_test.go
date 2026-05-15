@@ -262,6 +262,11 @@ func TestClassify(t *testing.T) {
 		{modulePath + "/tools/ci-protection-check", TierTool},
 		{modulePath + "/tools/suppression-lint", TierTool},
 		{modulePath + "/tools/errcode-lint", TierTool},
+		// spec-0.11 T-2.5: internal/testing/* 入 Tool tier (R3 codex round-2 MED-3).
+		{modulePath + "/internal/testing/tablerun", TierTool},
+		{modulePath + "/internal/testing/must", TierTool},
+		{modulePath + "/internal/testing/golden", TierTool},
+		{modulePath + "/internal/testing/uitest", TierTool},
 		{modulePath + "/internal/platform/profileutil", TierOther},
 		{modulePath + "/internal/platform/nonexistent", TierOther},
 	}
