@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // --- CheckRowWidth -------------------------------------------------
@@ -32,6 +34,22 @@ func TestCheckRowWidth_OverwidthAscii(t *testing.T) {
 	if !mt.fatalCalled || !strings.Contains(mt.fatalMsg, "width 81 > cols 80") {
 		t.Errorf("expected fatal 'width 81 > cols 80'; got %q", mt.fatalMsg)
 	}
+}
+
+// spec-0.11.5 T-13 errata (claude HIGH-1 + codex HIGH-1): verify
+// CheckRowWidth's measurement does not flip when runewidth's package
+// global EastAsianWidth is toggled. Test mutates and restores; NOT
+// t.Parallel (shared global state).
+func TestCheckRowWidth_IgnoresLocaleGlobal(t *testing.T) {
+	saved := runewidth.EastAsianWidth
+	runewidth.EastAsianWidth = true
+	t.Cleanup(func() { runewidth.EastAsianWidth = saved })
+
+	// ambiguous-width char: U+00B7 MIDDLE DOT — would be width 2 under
+	// EastAsianWidth=true, width 1 under EastAsianWidth=false. With 80
+	// of them at cols=80, the false path passes, the true path fails.
+	grid := []string{strings.Repeat("·", 80)}
+	CheckRowWidth(t, grid, 80)
 }
 
 func TestCheckRowWidth_OverwidthCJK(t *testing.T) {

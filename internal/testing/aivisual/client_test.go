@@ -32,13 +32,15 @@ func TestPromptFrozen(t *testing.T) {
 	if !strings.Contains(p, "alignment") || !strings.Contains(p, "cjk-width") {
 		t.Error("prompt.txt should contain the 6 evaluation dimensions")
 	}
-	// Compute hash (recorded — fail loud if it changes).
+	// spec-0.11.5 T-13 errata (codex HIGH-5 + claude MED-2): real freeze
+	// guard. Update wantHash via BREAKING commit (feat!: + BREAKING CHANGE
+	// body per § 11.3) when prompt.txt is intentionally changed.
+	const wantHash = "9202da09d59d085299e24bf82f11d29e4968b4c5f001c98017e5301262a06ed9"
 	hash := sha256.Sum256([]byte(p))
 	hashHex := fmt.Sprintf("%x", hash)
-	t.Logf("prompt.txt SHA-256: %s", hashHex)
-	// We don't compare against a fixed hash here because the prompt
-	// was just committed in this very commit; T-13 errata can replace
-	// this Logf with a hardcoded sha256 string for true frozen check.
+	if hashHex != wantHash {
+		t.Fatalf("prompt.txt SHA-256 drift: want %s got %s — update wantHash via BREAKING commit", wantHash, hashHex)
+	}
 }
 
 // --- happy path via httptest -----------------------------------
@@ -115,6 +117,37 @@ func TestReview_EndpointDown(t *testing.T) {
 	_, err := reviewer.Review(context.Background(), []byte("png"), "")
 	if !errors.Is(err, ErrEndpointDown) {
 		t.Errorf("expected ErrEndpointDown; got %v", err)
+	}
+}
+
+// spec-0.11.5 T-13 errata (security LOW-1): non-http schemes are rejected
+// before request construction so misconfig produces a clear error.
+func TestReview_InvalidScheme(t *testing.T) {
+	t.Parallel()
+	for _, sch := range []string{"file:///etc/passwd", "ftp://x/y", "ws://x/y"} {
+		reviewer := &Reviewer{Endpoint: sch}
+		_, err := reviewer.Review(context.Background(), []byte("png"), "")
+		if err == nil || !strings.Contains(err.Error(), "invalid endpoint scheme") {
+			t.Errorf("scheme %q should reject; got %v", sch, err)
+		}
+	}
+}
+
+// spec-0.11.5 T-13 errata (security MED-1): 4xx responses surface as
+// ErrEndpointDown so auth/rate-limit misconfig fails loud rather than
+// silently returning uncertain verdict.
+func TestReview_4xx_MapsToEndpointDown(t *testing.T) {
+	t.Parallel()
+	for _, code := range []int{401, 403, 429} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(code)
+		}))
+		reviewer := &Reviewer{Endpoint: srv.URL}
+		_, err := reviewer.Review(context.Background(), []byte("png"), "")
+		srv.Close()
+		if !errors.Is(err, ErrEndpointDown) {
+			t.Errorf("HTTP %d should map to ErrEndpointDown; got %v", code, err)
+		}
 	}
 }
 

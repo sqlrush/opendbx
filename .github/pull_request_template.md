@@ -48,4 +48,4 @@ no example.com). URLs must be distinct across all 9 fields.
 TODO
 
 ---
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+Generated with Claude Code (https://claude.com/claude-code)

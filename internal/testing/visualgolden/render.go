@@ -19,6 +19,10 @@ import (
 // freezeBin resolves the freeze binary path. Production reads
 // LookPath; tests can swap to a stub binary by setting
 // FREEZE_BIN env var. Validates the path is an executable file.
+//
+// spec-0.11.5 T-13 errata (security MED-2): verify exec bit so a
+// config file mistakenly placed there produces a clear error rather
+// than a confusing "permission denied" surfaced from exec.Command.
 func freezeBin() (string, error) {
 	if env := os.Getenv("FREEZE_BIN"); env != "" {
 		info, err := os.Stat(env)
@@ -27,6 +31,9 @@ func freezeBin() (string, error) {
 		}
 		if info.IsDir() {
 			return "", os.ErrInvalid
+		}
+		if info.Mode()&0o111 == 0 {
+			return "", fmt.Errorf("%w: FREEZE_BIN=%s is not executable", os.ErrPermission, env)
 		}
 		return env, nil
 	}

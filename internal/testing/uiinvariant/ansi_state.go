@@ -19,7 +19,7 @@ import (
 // and 24-bit (encoded with a sentinel offset; presence/absence is
 // what matters for residual-at-stream-end check).
 type sgrState struct {
-	fg, bg                              int
+	fg, bg                           int
 	bold, italic, underline, reverse bool
 }
 

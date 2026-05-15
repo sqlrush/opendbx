@@ -7,16 +7,16 @@
 // luminance distance.
 //
 // Workflow:
-//   1. Capture ANSI bytes from a uitest.Terminal (Terminal.ANSIRaw).
-//   2. visualgolden.Render(t, ansi, theme) — invokes pinned freeze
-//      v0.2.2 binary to produce a deterministic PNG. Requires
-//      librsvg2-bin + fonts-jetbrains-mono + fonts-noto-cjk on host;
-//      verified at CI install step (see spec § 5.1).
-//   3. visualgolden.Compare(t, name, got, maxMismatchFraction) — diffs
-//      against testdata/visual/<TestName>[/<sub>].png golden; uses
-//      pixelSensitivity YIQ-distance for per-pixel decision; reports
-//      fraction of differing pixels. On -update-visual flag, writes
-//      golden + sidecar metadata.json (font/freeze/rsvg versions).
+//  1. Capture ANSI bytes from a uitest.Terminal (Terminal.ANSIRaw).
+//  2. visualgolden.Render(t, ansi, theme) — invokes pinned freeze
+//     v0.2.2 binary to produce a deterministic PNG. Requires
+//     librsvg2-bin + fonts-jetbrains-mono + fonts-noto-cjk on host;
+//     verified at CI install step (see spec § 5.1).
+//  3. visualgolden.Compare(t, name, got, maxMismatchFraction) — diffs
+//     against testdata/visual/<TestName>[/<sub>].png golden; uses
+//     pixelSensitivity YIQ-distance for per-pixel decision; reports
+//     fraction of differing pixels. On -update-visual flag, writes
+//     golden + sidecar metadata.json (font/freeze/rsvg versions).
 //
 // Metadata sidecar (spec § 2.3 R4 codex HIGH-3): goldens carry a
 // metadata.json with the rendering toolchain version. Compare verifies

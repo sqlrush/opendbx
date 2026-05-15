@@ -19,7 +19,7 @@ import (
 // 0.1 is conservative; 0.01 is very strict. Returns:
 //   - mismatchedPixels: count of pixels that differ beyond sensitivity
 //   - diffImage:        RGBA overlay with diffs highlighted red; nil if
-//                       images differ in dimension (caller handles).
+//     images differ in dimension (caller handles).
 //
 // R5 spec § 2.4 distinct from Compare's maxMismatchFraction to avoid
 // reversed-semantic confusion.
@@ -33,7 +33,11 @@ func Diff(a, b image.Image, pixelSensitivity float64) (int, image.Image) {
 	draw.Draw(out, bounds, a, bounds.Min, draw.Src)
 	desaturate(out, bounds)
 
-	threshold := pixelSensitivity * maxYIQDistance
+	// spec-0.11.5 T-13 errata (codex HIGH-3): match mapbox/pixelmatch
+	// reference — threshold is squared against pre-computed maxDelta so
+	// pixelSensitivity=0.1 means "ignore diffs within 1% of max distance",
+	// matching the JS upstream rather than the previous 10x-looser linear scale.
+	threshold := pixelSensitivity * pixelSensitivity * maxYIQDistance
 	mismatched := 0
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
@@ -69,10 +73,14 @@ func yiqDistance(a, b yiqValues) float64 {
 	return dy*dy*0.5053 + di*di*0.299 + dq*dq*0.1957
 }
 
-// maxYIQDistance is the empirical maximum distance for fully different
-// black-vs-white pixels per the YIQ weights above (~35215.0). Used to
+// maxYIQDistance is the empirical maximum distance across all RGB corner
+// pairs (cyan vs red yields ~35223 under the YIQ weights above). Used to
 // normalize pixelSensitivity 0..1 into the unbounded distance scale.
-const maxYIQDistance = 35215.0
+//
+// spec-0.11.5 T-13 errata (claude MED-1): previous 35215 came from the
+// mapbox/pixelmatch JS sources which use a slightly different formula;
+// for our weights the true worst-case is the cyan/red pair.
+const maxYIQDistance = 35223.0
 
 // desaturate converts an RGBA image to grayscale in-place.
 func desaturate(img *image.RGBA, bounds image.Rectangle) {

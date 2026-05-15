@@ -8,9 +8,9 @@ package aivisual
 // snapshot. "uncertain" is the fallback when JSON parsing fails or
 // the model returns ambiguous output.
 const (
-	VerdictOK           = "ok"
-	VerdictIssuesFound  = "issues-found"
-	VerdictUncertain    = "uncertain"
+	VerdictOK          = "ok"
+	VerdictIssuesFound = "issues-found"
+	VerdictUncertain   = "uncertain"
 )
 
 // Severity literals.

@@ -7,12 +7,12 @@
 // (OpenAI-compatible chat completions API on :8082).
 //
 // Workflow:
-//   1. Construct a Reviewer; defaults to http://127.0.0.1:8082/v1.
-//   2. Call Review(ctx, png, focus) with the snapshot PNG.
-//   3. The reviewer ships the PNG + prompt template (frozen at
-//      testdata/prompt.txt; SHA-256 verified by TestPromptFrozen) to
-//      the endpoint with response_format JSON.
-//   4. Returns a Report (Verdict / Issues / Tokens).
+//  1. Construct a Reviewer; defaults to http://127.0.0.1:8082/v1.
+//  2. Call Review(ctx, png, focus) with the snapshot PNG.
+//  3. The reviewer ships the PNG + prompt template (frozen at
+//     testdata/prompt.txt; SHA-256 verified by TestPromptFrozen) to
+//     the endpoint with response_format JSON.
+//  4. Returns a Report (Verdict / Issues / Tokens).
 //
 // Failure modes:
 //   - Endpoint unreachable (dial/timeout/reset) → returns a sentinel

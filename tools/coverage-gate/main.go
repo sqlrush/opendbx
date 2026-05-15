@@ -84,14 +84,14 @@ var (
 	// spec-0.11 T-2.5: 4 internal/testing/* packages 同列 Tool tier
 	// (R3 codex round-2 MED-3: spec-0.11 D-2/D-3/D-4 全部 ≥90%).
 	toolPackages = map[string]bool{
-		modulePath + "/tools/coverage-gate":       true,
-		modulePath + "/tools/makefile-check":      true,
-		modulePath + "/tools/vuln-allowlist":      true,
-		modulePath + "/tools/ci-protection-check": true,
-		modulePath + "/tools/suppression-lint":    true,
-		modulePath + "/tools/errcode-lint":        true,
-		modulePath + "/internal/testing/tablerun": true,
-		modulePath + "/internal/testing/must":     true,
+		modulePath + "/tools/coverage-gate":          true,
+		modulePath + "/tools/makefile-check":         true,
+		modulePath + "/tools/vuln-allowlist":         true,
+		modulePath + "/tools/ci-protection-check":    true,
+		modulePath + "/tools/suppression-lint":       true,
+		modulePath + "/tools/errcode-lint":           true,
+		modulePath + "/internal/testing/tablerun":    true,
+		modulePath + "/internal/testing/must":        true,
 		modulePath + "/internal/testing/golden":      true,
 		modulePath + "/internal/testing/uitest":      true,
 		modulePath + "/internal/testing/uiinvariant": true, // spec-0.11.5 T-3

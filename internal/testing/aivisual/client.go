@@ -13,8 +13,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
+
+// maxResponseBytes caps the AI endpoint response body to avoid OOM on a
+// misconfigured / adversarial endpoint serving an unbounded stream.
+// spec-0.11.5 T-13 errata (security HIGH-1 + go MED-1). 4 MiB is ample
+// for a 1024-token JSON report; raise if response_format ever streams.
+const maxResponseBytes = 4 << 20
 
 // ErrEndpointDown is returned when the Qwen2.5-VL-72B endpoint is
 // unreachable (connect refused / dial timeout). Test callers should
@@ -32,35 +39,40 @@ type Reviewer struct {
 	Client   *http.Client  // optional override (default: derived from Timeout)
 }
 
-// defaultReviewer returns a Reviewer with field defaults populated.
-func defaultReviewer() Reviewer {
-	return Reviewer{
-		Endpoint: "http://127.0.0.1:8082/v1",
-		Model:    "qwen2.5-vl-72b",
-		Timeout:  120 * time.Second,
-	}
-}
+// Reviewer field defaults applied inline in Review() (spec-0.11.5 T-13
+// errata go NIT-1: previous defaultReviewer() helper was dead weight).
+const (
+	defaultEndpoint = "http://127.0.0.1:8082/v1"
+	defaultModel    = "qwen2.5-vl-72b"
+	defaultTimeout  = 120 * time.Second
+)
 
 // Review submits a PNG screenshot + focus hint to the AI endpoint and
 // returns the structured Report. Returns ErrEndpointDown if connect
 // fails (mapped to errcode AIVISUAL.ENDPOINT_DOWN).
 func (r *Reviewer) Review(ctx context.Context, pngBytes []byte, focus string) (*Report, error) {
-	def := defaultReviewer()
 	endpoint := r.Endpoint
 	if endpoint == "" {
-		endpoint = def.Endpoint
+		endpoint = defaultEndpoint
 	}
 	model := r.Model
 	if model == "" {
-		model = def.Model
+		model = defaultModel
 	}
 	timeout := r.Timeout
 	if timeout == 0 {
-		timeout = def.Timeout
+		timeout = defaultTimeout
 	}
 	client := r.Client
 	if client == nil {
 		client = &http.Client{Timeout: timeout}
+	}
+
+	// spec-0.11.5 T-13 errata (security LOW-1): reject non-http(s) schemes
+	// at construction so file:// or ftp:// misconfig produces a clear error.
+	if u, perr := url.Parse(endpoint); perr != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		// errcode-lint:exempt -- spec-0.11.5 T-13 errata: config validation, errcode deferred
+		return nil, fmt.Errorf("aivisual: invalid endpoint scheme (need http/https): %q", endpoint)
 	}
 
 	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(pngBytes)
@@ -96,11 +108,15 @@ func (r *Reviewer) Review(ctx context.Context, pngBytes []byte, focus string) (*
 		return nil, fmt.Errorf("%w: %v", ErrEndpointDown, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 500 {
-		// errcode-lint:exempt -- spec-0.11.5 T-5: ErrEndpointDown sentinel deferred to T-13 errata
+	// spec-0.11.5 T-13 errata (security MED-1): map 4xx to ErrEndpointDown
+	// too, so auth / rate-limit misconfig surfaces as a Skip rather than
+	// silently returning an uncertain verdict.
+	if resp.StatusCode >= 400 {
+		// errcode-lint:exempt -- spec-0.11.5 T-5: ErrEndpointDown sentinel deferred to follow-up spec
 		return nil, fmt.Errorf("%w: HTTP %d", ErrEndpointDown, resp.StatusCode)
 	}
-	body, err := io.ReadAll(resp.Body)
+	// spec-0.11.5 T-13 errata (security HIGH-1 + go MED-1): cap response body.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		// errcode-lint:exempt -- spec-0.11.5 T-5: test harness internal; errcode wrap deferred to T-13 errata
 		return nil, fmt.Errorf("aivisual: read response: %w", err)
