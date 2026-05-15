@@ -29,9 +29,9 @@ type Terminal struct {
 	cmd      *exec.Cmd
 	pty      *os.File
 	vt       vt10x.Terminal
-	mu       sync.Mutex   // guards closed
-	closed   bool         // close() idempotent guard
-	waitCh   chan error   // buffered(1); pumpExit sends cmd.Wait err
+	mu       sync.Mutex    // guards closed
+	closed   bool          // close() idempotent guard
+	waitCh   chan error    // buffered(1); pumpExit sends cmd.Wait err
 	pumpDone chan struct{} // closed when pumpOutput returns
 }
 
