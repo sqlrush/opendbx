@@ -1,0 +1,72 @@
+# spec-0.11.5 D-4 — Layer 5 PR template strict screenshot validator.
+#
+# Triggers on every PR body change AND on label change. Runs only if
+# the PR carries `area:render` or `area:ui` label. Enforces:
+#   - 9 fixed-field lines (iTerm2/Alacritty/kitty × 120w/80w/CJK)
+#   - each line has a non-placeholder URL (rejects `<url>` and
+#     `https://example.com/...` literals)
+#   - URLs are distinct across all 9 fields (R5 user HIGH-3)
+#
+# Layer 5 of CLAUDE.md § 3.9 5-layer UI Review Pipeline.
+
+name: pr-screenshots-check
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, labeled, synchronize, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: validate 9 fixed-field screenshot URLs
+    if: contains(github.event.pull_request.labels.*.name, 'area:render') ||
+        contains(github.event.pull_request.labels.*.name, 'area:ui')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          FIELDS=(
+            "iTerm2 120w"
+            "iTerm2 80w"
+            "iTerm2 CJK"
+            "Alacritty 120w"
+            "Alacritty 80w"
+            "Alacritty CJK"
+            "kitty 120w"
+            "kitty 80w"
+            "kitty CJK"
+          )
+          FAIL=0
+          declare -A SEEN
+          for FIELD in "${FIELDS[@]}"; do
+            LINE=$(printf '%s\n' "$PR_BODY" | grep -F "$FIELD" || true)
+            URL=$(printf '%s\n' "$LINE" | grep -oE 'https?://[^[:space:]<>)]+\.(png|jpg|jpeg|webp)' | head -1)
+            if [ -z "$URL" ]; then
+              echo "::error::missing screenshot for field: $FIELD"
+              FAIL=1
+              continue
+            fi
+            case "$URL" in
+              https://example.com/*|http://example.com/*)
+                echo "::error::placeholder URL for field $FIELD: $URL"
+                FAIL=1
+                continue
+                ;;
+            esac
+            if [ -n "${SEEN[$URL]:-}" ]; then
+              echo "::error::duplicate URL across fields ($URL appears for ${SEEN[$URL]} and $FIELD)"
+              FAIL=1
+            else
+              SEEN[$URL]="$FIELD"
+            fi
+          done
+          if [ "$FAIL" -eq 1 ]; then
+            echo "::error::area:render/area:ui PRs require 9 distinct, non-placeholder screenshot URLs (3 terminals × 3 sizes); see PR template"
+            exit 1
+          fi
+          echo "all 9 screenshot fields present + distinct + non-placeholder"

@@ -24,6 +24,25 @@
 - [ ] E2E 测试（如适用）
 - [ ] perf benchmark vs baseline（如适用）
 
+## UI Screenshots (required for `area:render` / `area:ui` PRs)
+
+<!--
+spec-0.11.5 D-4: 9 fixed fields enforced by .github/workflows/
+pr-screenshots-check.yml when label area:render or area:ui set.
+Each line must have a real screenshot URL (no <url> placeholder,
+no example.com). URLs must be distinct across all 9 fields.
+-->
+
+- iTerm2 120w: <url>
+- iTerm2 80w: <url>
+- iTerm2 CJK: <url>
+- Alacritty 120w: <url>
+- Alacritty 80w: <url>
+- Alacritty CJK: <url>
+- kitty 120w: <url>
+- kitty 80w: <url>
+- kitty CJK: <url>
+
 ## 备注
 
 TODO

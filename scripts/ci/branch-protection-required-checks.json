@@ -9,6 +9,8 @@
     "dependency-policy",
     "cli-golden",
     "security",
-    "perf-smoke"
+    "perf-smoke",
+    "ui-visual",
+    "ci-ui-review"
   ]
 }
