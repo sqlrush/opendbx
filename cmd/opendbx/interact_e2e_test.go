@@ -56,7 +56,7 @@ func TestMain(m *testing.M) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		buildErr = fmt.Errorf("go build: %v: %s", err, stderr.String())
+		buildErr = fmt.Errorf("go build: %w: %s", err, stderr.String())
 	}
 	code := m.Run()
 	_ = os.RemoveAll(buildDir)

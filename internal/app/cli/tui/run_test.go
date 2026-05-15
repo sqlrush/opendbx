@@ -7,6 +7,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"io"
 	"runtime"
 	"sync"
 	"testing"
@@ -15,6 +16,19 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/sqlrush/opendbx/internal/platform/errcode"
 )
+
+type fakeTty struct{}
+
+func (fakeTty) Start() error        { return nil }
+func (fakeTty) Stop() error         { return nil }
+func (fakeTty) Drain() error        { return nil }
+func (fakeTty) NotifyResize(func()) {}
+func (fakeTty) WindowSize() (tcell.WindowSize, error) {
+	return tcell.WindowSize{Width: 80, Height: 24}, nil
+}
+func (fakeTty) Read([]byte) (int, error)    { return 0, io.EOF }
+func (fakeTty) Write(p []byte) (int, error) { return len(p), nil }
+func (fakeTty) Close() error                { return nil }
 
 // initSim creates and initializes a SimulationScreen for tests.
 func initSim(t *testing.T) tcell.SimulationScreen {
@@ -182,7 +196,7 @@ func TestNewScreen_TerminfoFactoryFailure(t *testing.T) {
 	origTTY := newStdIoTtyFn
 	origScreen := newTerminfoScreenFromTtyFn
 	newStdIoTtyFn = func() (tcell.Tty, error) {
-		return nil, nil
+		return fakeTty{}, nil
 	}
 	newTerminfoScreenFromTtyFn = func(tcell.Tty) (tcell.Screen, error) {
 		return nil, errors.New("terminfo boom")
