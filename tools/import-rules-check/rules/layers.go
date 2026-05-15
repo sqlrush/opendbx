@@ -123,6 +123,7 @@ func PathToLayer(importPath string) Layer {
 var CmdPlatformExceptionPaths = []string{
 	ModulePrefix + "internal/platform/version",
 	ModulePrefix + "internal/platform/errcode",
+	ModulePrefix + "internal/platform/terminal", // spec-0.12 D-4: TTY-detect + Probe pre-tui.NewScreen
 }
 
 // MigrationsPath is the platform/migrations path; only bootstrap may

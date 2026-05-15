@@ -1,1 +1,0 @@
-interact mode not yet implemented (spec-1.16); received prompt: "foobar"

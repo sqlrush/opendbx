@@ -31,7 +31,7 @@ on:
   workflow_dispatch:                       # R2 codex MED / claude HIGH-3: 保留手动重跑
 
 env:
-  GO_VERSION: '1.23'                       # R2 codex CRIT-1: align go.mod (was 1.22 in R1 draft)
+  GO_VERSION: '1.24'                       # spec-0.12 D-1 (R2 CRIT-1): bump for tcell v2.13.9 go.mod `go 1.24.0`
 
 # R2 codex HIGH-7: PR 用 ref 同 group → cancel-in-progress；
 # main push 用 run_id 让每个 run 独立 group 不互 cancel（防 burst 丢 pending run）.
@@ -101,10 +101,18 @@ jobs:
         run: CGO_ENABLED=0 go build -o /tmp/opendbx-cgo0 ./cmd/opendbx
       - name: Smoke test --version
         run: ./bin/opendbx --version
-      - name: Smoke test interact stub
+      - name: Smoke test interact non-TTY guard
         run: |
-          out=$(./bin/opendbx interact)
-          echo "$out" | grep -q "not yet implemented" || (echo "stub did not print expected text"; exit 1)
+          set +e
+          out=$(./bin/opendbx interact 2>&1)
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "interact unexpectedly succeeded without a TTY"
+            echo "$out"
+            exit 1
+          fi
+          echo "$out" | grep -q "TERMINAL.NOT_A_TTY" || (echo "interact did not emit TERMINAL.NOT_A_TTY"; echo "$out"; exit 1)
 
   build-macos:
     name: build-macos

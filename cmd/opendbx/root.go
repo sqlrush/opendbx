@@ -27,6 +27,7 @@ import (
 
 	"github.com/sqlrush/opendbx/internal/entrypoints"
 	"github.com/sqlrush/opendbx/internal/platform/errcode"
+	"github.com/sqlrush/opendbx/internal/platform/terminal"
 	"github.com/sqlrush/opendbx/internal/platform/version"
 )
 
@@ -203,19 +204,41 @@ func shouldSkipConfigLoad(cmd *cobra.Command) bool {
 }
 
 // runInteractRoot is shared between the root command (no subcommand) and the
-// explicit `opendbx interact` subcommand (interact.go). spec-0.3 returns a
-// stage-0 stub; spec-1.16-input-three-modes wires up the real REPL.
+// explicit `opendbx interact` subcommand (interact.go).
+//
+// spec-0.12 wires the empty tcell main loop here (NewScreen + Run +
+// defer Fini). spec-1.16-input-three-modes will replace the loop
+// body with the real REPL.
+//
+// Flow (spec-0.12 § 2.3):
+//  1. [prompt] non-empty → ErrPromptNotImplemented (M-6)
+//  2. !IsInteractiveTTY → ErrNotATTY (R3 M-7 double TTY check)
+//  3. Probe → ErrProbeFailed if env broken (R4 MED reachability)
+//  4. entrypoints.RenderAndRun → tui main loop (layer chain
+//     cmd → entrypoints → bootstrap → app/cli/tui per layer matrix)
 func runInteractRoot(cmd *cobra.Command, opts *Options) error {
 	if opts.Session.Prompt != "" {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-			"interact mode not yet implemented (spec-1.16); received prompt: %q\n",
-			opts.Session.Prompt)
-	} else {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(),
-			"interact mode not yet implemented (spec-1.16). Run with -h for help.")
+		return ErrPromptNotImplemented
 	}
-	return nil
+	if !terminal.IsInteractiveTTY() {
+		return terminal.ErrNotATTY
+	}
+	if _, err := terminal.Probe(); err != nil {
+		return err
+	}
+	return entrypoints.RenderAndRun(cmd.Context())
 }
+
+// ErrPromptNotImplemented is returned when `opendbx interact [prompt]`
+// is invoked with a non-empty prompt argument. spec-0.12 R2 M-6
+// user 拍板: REPL with prompt arg lands in spec-1.16.
+//
+//nolint:gochecknoglobals // spec-0.6 contract: errcode sentinels are package-level.
+var ErrPromptNotImplemented = errcode.Register(
+	"INTERACT.PROMPT_NOT_IMPLEMENTED",
+	"opendbx interact [prompt] is not yet supported",
+	"tui body lands in spec-1.16 input-three-modes; run `opendbx interact` without an argument",
+)
 
 // validateChoiceFlags enforces enum-typed flags (spec § 3.1: invalid choice
 // → exit 1). cobra/pflag has no native choice constraint for vanilla string
