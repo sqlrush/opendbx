@@ -105,6 +105,22 @@ func TestRun_Resize(t *testing.T) {
 	}
 }
 
+func TestRun_SpuriousInterruptIgnored(t *testing.T) {
+	t.Parallel()
+	s := initSim(t)
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		if err := s.PostEvent(tcell.NewEventInterrupt(nil)); err != nil {
+			t.Errorf("PostEvent interrupt: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+		s.InjectKey(tcell.KeyCtrlC, 0, tcell.ModNone)
+	}()
+	if err := Run(context.Background(), s); err != nil {
+		t.Errorf("Run with spurious interrupt: want nil, got %v", err)
+	}
+}
+
 // --- non-exit keys ignored -------------------------------------------
 
 func TestRun_OtherKeysIgnored(t *testing.T) {
@@ -149,13 +165,34 @@ func TestNewSimulationScreen_Factory(t *testing.T) {
 }
 
 func TestNewScreen_TCellInitFailure(t *testing.T) {
-	// Force tcell to fail Init via $TERM. The real NewScreen path goes
-	// through tcell.NewScreen() which loads terminfo from $TERM.
+	// In the non-TTY unit-test process, NewScreen should fail cleanly while
+	// preserving ErrInitFailed wrapping.
 	t.Setenv("TERM", "definitely-not-a-real-terminal-name-xyz")
 	_, err := NewScreen()
 	if err == nil {
 		t.Fatal("expected NewScreen to fail with bogus TERM; got nil err")
 	}
+	if !errors.Is(err, ErrInitFailed) {
+		t.Errorf("expected ErrInitFailed wrap; got %v", err)
+	}
+}
+
+func TestNewScreen_TerminfoFactoryFailure(t *testing.T) {
+	// NOT t.Parallel — temporarily swaps package-level constructor seams.
+	origTTY := newStdIoTtyFn
+	origScreen := newTerminfoScreenFromTtyFn
+	newStdIoTtyFn = func() (tcell.Tty, error) {
+		return nil, nil
+	}
+	newTerminfoScreenFromTtyFn = func(tcell.Tty) (tcell.Screen, error) {
+		return nil, errors.New("terminfo boom")
+	}
+	t.Cleanup(func() {
+		newStdIoTtyFn = origTTY
+		newTerminfoScreenFromTtyFn = origScreen
+	})
+
+	_, err := NewScreen()
 	if !errors.Is(err, ErrInitFailed) {
 		t.Errorf("expected ErrInitFailed wrap; got %v", err)
 	}

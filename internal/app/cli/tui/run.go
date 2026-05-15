@@ -12,18 +12,42 @@ import (
 	"github.com/sqlrush/opendbx/internal/platform/errcode"
 )
 
-// NewScreen creates and initializes a real tcell screen. Wraps init
-// failures as ErrInitFailed so callers (cmd/opendbx) don't need to
-// import tcell — preserves IMP-9 tcell isolation. Layer chain:
+// Test seams for NewScreen error branches. Production values stay as direct
+// tcell constructors; tests temporarily replace them without exposing tcell
+// outside this package.
+//
+//nolint:gochecknoglobals // spec-0.12 D-3: constructor seams for terminal init failure tests.
+var (
+	newStdIoTtyFn              = tcell.NewStdIoTty
+	newTerminfoScreenFromTtyFn = tcell.NewTerminfoScreenFromTty
+)
+
+// NewScreen creates and initializes a real tcell screen bound to the
+// current process stdin/stdout. We intentionally avoid tcell.NewScreen()
+// because it defaults to /dev/tty on POSIX; PTY-backed E2E tests and some
+// launcher contexts do not permit opening /dev/tty even though stdin/stdout
+// are valid TTYs.
+//
+// Wraps init failures as ErrInitFailed so callers (cmd/opendbx) don't need
+// to import tcell — preserves IMP-9 tcell isolation. Layer chain:
 // cmd→entrypoints→bootstrap→tui; the 3 packages whitelisted for tcell
 // production imports are terminal / tui / bootstrap (T-13 L-5
 // reconciliation of R-13 spec letter vs impl).
 func NewScreen() (tcell.Screen, error) {
-	screen, err := tcell.NewScreen()
+	tty, err := newStdIoTtyFn()
 	if err != nil {
 		// T-13 N-2: non-empty Hint so users have actionable guidance.
 		return nil, errcode.Wrap("TERMINAL.INIT_FAILED", err,
-			"tcell.NewScreen failed",
+			"tcell.NewStdIoTty failed",
+			"verify $TERM is set and the terminal supports ANSI escape sequences (e.g. xterm-256color)")
+	}
+	screen, err := newTerminfoScreenFromTtyFn(tty)
+	if err != nil {
+		if tty != nil {
+			_ = tty.Close()
+		}
+		return nil, errcode.Wrap("TERMINAL.INIT_FAILED", err,
+			"tcell.NewTerminfoScreenFromTty failed",
 			"verify $TERM is set and the terminal supports ANSI escape sequences (e.g. xterm-256color)")
 	}
 	if err := screen.Init(); err != nil {

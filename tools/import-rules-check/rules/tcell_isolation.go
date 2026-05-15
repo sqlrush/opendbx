@@ -3,13 +3,15 @@
 // Author: sqlrush
 
 // IMP-9 tcell-isolation: forbid imports of github.com/gdamore/tcell/v2
-// outside the two whitelisted packages (terminal probe + tui main loop).
+// outside the three whitelisted packages (terminal probe + tui main loop
+// + bootstrap screen-launch seam).
 //
 // Rationale (CLAUDE.md § 3.1 + AD-002):
 //
 // opendbx renders on tcell, but the rest of the codebase must only see
-// the abstractions exposed by `internal/app/cli/tui` (NewScreen factory)
-// and `internal/platform/terminal` (Probe / IsInteractiveTTY). Letting
+// the abstractions exposed by `internal/app/cli/tui` (NewScreen factory),
+// `internal/platform/terminal` (Probe / IsInteractiveTTY), and the
+// bootstrap launch seam. Letting
 // arbitrary packages reach for tcell symbols defeats AD-002's "self-built
 // engine on top of tcell" boundary and makes spec-1.x render subsystem
 // extension harder.
@@ -48,7 +50,7 @@ func hasTcellPrefix(to string) bool {
 	return to == TcellModule || strings.HasPrefix(to, TcellModule+"/")
 }
 
-// isTcellAllowedSource reports whether `from` is in the strict 2-package
+// isTcellAllowedSource reports whether `from` is in the strict 3-package
 // production whitelist.
 func isTcellAllowedSource(from string) bool {
 	for _, p := range TcellAllowedPrefixes {
@@ -70,6 +72,6 @@ func CheckTcellIsolation(from, to string) string {
 		return ""
 	}
 	return fmt.Sprintf(
-		"IMP-9 tcell-isolation: %q imports tcell %q; only internal/platform/terminal + internal/app/cli/tui may import tcell from production source (CLAUDE.md § 3.1 + AD-002 self-built engine boundary)",
+		"IMP-9 tcell-isolation: %q imports tcell %q; only internal/platform/terminal + internal/app/cli/tui + internal/bootstrap may import tcell from production source (CLAUDE.md § 3.1 + AD-002 self-built engine boundary)",
 		from, to)
 }

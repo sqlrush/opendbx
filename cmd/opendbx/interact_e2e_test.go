@@ -17,8 +17,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -73,17 +73,33 @@ func buildOpendbx(t *testing.T) string {
 	return buildBin
 }
 
+// hermeticEnv keeps E2E child processes independent from the developer/CI
+// user environment. In particular HOME must not point at a real ~/.opendbx,
+// otherwise config-load failures can mask the TTY behavior under test.
+func hermeticEnv(t *testing.T) []string {
+	t.Helper()
+	return []string{
+		"HOME=" + t.TempDir(),
+		"PATH=" + os.Getenv("PATH"),
+		"TERM=xterm-256color",
+		"LANG=en_US.UTF-8",
+	}
+}
+
 // readForBytes reads from r into a buffer until at least minBytes
 // arrive or the context expires. Returns whatever was read so far.
 // T-13 M-2: runtime.Gosched on zero-byte successful reads to yield
 // the scheduler under CI load.
-func readForBytes(ctx context.Context, r io.Reader, minBytes int) []byte {
+func readForBytes(ctx context.Context, r *os.File, minBytes int) []byte {
 	var buf bytes.Buffer
 	tmp := make([]byte, 4096)
 	for {
 		if ctx.Err() != nil {
 			return buf.Bytes()
 		}
+		// PTY reads are blocking. A short read deadline lets the context
+		// timeout actually stop the loop instead of waiting for another byte.
+		_ = r.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
 		n, err := r.Read(tmp)
 		if n > 0 {
 			buf.Write(tmp[:n])
@@ -92,6 +108,14 @@ func readForBytes(ctx context.Context, r io.Reader, minBytes int) []byte {
 			}
 		}
 		if err != nil {
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				runtime.Gosched()
+				continue
+			}
+			if timeoutErr, ok := err.(interface{ Timeout() bool }); ok && timeoutErr.Timeout() {
+				runtime.Gosched()
+				continue
+			}
 			return buf.Bytes()
 		}
 		if n == 0 {
@@ -110,6 +134,8 @@ func TestE2E_NonTTY_ReturnsErrcode(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "interact")
+	cmd.Env = hermeticEnv(t)
+	cmd.Dir = t.TempDir()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -132,6 +158,8 @@ func TestE2E_PromptArg_ReturnsErrcode(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "interact", "hello")
+	cmd.Env = hermeticEnv(t)
+	cmd.Dir = t.TempDir()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	cmd.Stdin = strings.NewReader("")
@@ -158,12 +186,8 @@ func TestE2E_PromptArg_ReturnsErrcode(t *testing.T) {
 func runPTY(t *testing.T, binPath string, cols, rows uint16, args ...string) (*os.File, *exec.Cmd, func()) {
 	t.Helper()
 	cmd := exec.Command(binPath, args...)
-	cmd.Env = []string{
-		"HOME=" + os.Getenv("HOME"),
-		"PATH=" + os.Getenv("PATH"),
-		"TERM=xterm-256color",
-		"LANG=en_US.UTF-8",
-	}
+	cmd.Env = hermeticEnv(t)
+	cmd.Dir = t.TempDir()
 	ptyFile, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: cols, Rows: rows})
 	if err != nil {
 		t.Fatalf("pty.StartWithSize: %v", err)
@@ -241,16 +265,17 @@ func TestE2E_PTY_CtrlCExitsZero(t *testing.T) {
 	// Wait for tcell to init (give it some bytes from PTY).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = readForBytes(ctx, ptyFile, 1)
+	initial := readForBytes(ctx, ptyFile, 1)
+	time.Sleep(300 * time.Millisecond)
 
 	// Send Ctrl+C (ETX = 0x03).
 	if _, err := ptyFile.Write([]byte{0x03}); err != nil {
-		t.Fatalf("write Ctrl+C: %v", err)
+		t.Fatalf("write Ctrl+C: %v; initial output=%q", err, string(initial))
 	}
 
-	code, _ := waitForExit(t, cmd, ptyFile, 3*time.Second)
+	code, out := waitForExit(t, cmd, ptyFile, 3*time.Second)
 	if code != 0 {
-		t.Errorf("expected exit code 0; got %d", code)
+		t.Errorf("expected exit code 0; got %d; output=%q", code, string(out))
 	}
 }
 
@@ -264,7 +289,8 @@ func TestE2E_PTY_SIGWINCH_Survives(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = readForBytes(ctx, ptyFile, 1)
+	initial := readForBytes(ctx, ptyFile, 1)
+	time.Sleep(300 * time.Millisecond)
 
 	// Resize twice.
 	if err := pty.Setsize(ptyFile, &pty.Winsize{Cols: 120, Rows: 40}); err != nil {
@@ -278,12 +304,12 @@ func TestE2E_PTY_SIGWINCH_Survives(t *testing.T) {
 
 	// Ctrl+C to exit.
 	if _, err := ptyFile.Write([]byte{0x03}); err != nil {
-		t.Fatalf("write Ctrl+C: %v", err)
+		t.Fatalf("write Ctrl+C: %v; initial output=%q", err, string(initial))
 	}
 
-	code, _ := waitForExit(t, cmd, ptyFile, 3*time.Second)
+	code, out := waitForExit(t, cmd, ptyFile, 3*time.Second)
 	if code != 0 {
-		t.Errorf("expected exit code 0 after SIGWINCH; got %d", code)
+		t.Errorf("expected exit code 0 after SIGWINCH; got %d; output=%q", code, string(out))
 	}
 }
 
@@ -302,14 +328,15 @@ func TestE2E_PTY_TerminalStateRestored(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = readForBytes(ctx, ptyFile, 1)
+	initial := readForBytes(ctx, ptyFile, 1)
+	time.Sleep(300 * time.Millisecond)
 
 	if _, err := ptyFile.Write([]byte{0x03}); err != nil {
-		t.Fatalf("write Ctrl+C: %v", err)
+		t.Fatalf("write Ctrl+C: %v; initial output=%q", err, string(initial))
 	}
-	code, _ := waitForExit(t, cmd, ptyFile, 3*time.Second)
+	code, out := waitForExit(t, cmd, ptyFile, 3*time.Second)
 	if code != 0 {
-		t.Errorf("expected exit code 0; got %d", code)
+		t.Errorf("expected exit code 0; got %d; initial output=%q; output=%q", code, string(initial), string(out))
 	}
 
 	// Now spawn stty -a on a NEW PTY to verify terminal state restored.

@@ -50,7 +50,7 @@ func TestLocaleIsUTF8(t *testing.T) {
 		{"LANG-posix", "", "", "POSIX", false},
 		{"LC_CTYPE-utf8", "", "zh_CN.UTF-8", "en_US.UTF-8", true},
 		{"LC_CTYPE-posix-prevents-LANG", "", "POSIX", "en_US.UTF-8", false}, // T-13 L-1: LC_CTYPE set non-UTF-8 → return false, do not fall through to LANG
-		{"LC_ALL-overrides", "C", "zh_CN.UTF-8", "en_US.UTF-8", false}, // LC_ALL=C wins
+		{"LC_ALL-overrides", "C", "zh_CN.UTF-8", "en_US.UTF-8", false},      // LC_ALL=C wins
 		{"all-empty", "", "", "", false},
 	}
 	for _, c := range cases {

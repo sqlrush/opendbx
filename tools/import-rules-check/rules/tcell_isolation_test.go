@@ -32,6 +32,11 @@ func TestCheckTcellIsolation_Allowed(t *testing.T) {
 			to:   "github.com/gdamore/tcell/v2/encoding",
 		},
 		{
+			name: "bootstrap-imports-tcell",
+			from: "github.com/sqlrush/opendbx/internal/bootstrap",
+			to:   "github.com/gdamore/tcell/v2",
+		},
+		{
 			name: "non-tcell-import",
 			from: "github.com/sqlrush/opendbx/cmd/opendbx",
 			to:   "github.com/sqlrush/opendbx/internal/app/cli/tui",
