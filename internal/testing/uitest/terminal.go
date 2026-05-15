@@ -47,8 +47,8 @@ func Term(t testing.TB, cmd *exec.Cmd, cols, rows int) *Terminal {
 		return nil
 	}
 	ptyFile, err := pty.StartWithSize(cmd, &pty.Winsize{
-		Cols: uint16(cols), //nolint:gosec // spec-0.11 T-6: range-checked above (cols/rows ≤ 65535)
-		Rows: uint16(rows), //nolint:gosec // spec-0.11 T-6: range-checked above (cols/rows ≤ 65535)
+		Cols: uint16(cols),
+		Rows: uint16(rows),
 	})
 	if err != nil {
 		t.Fatalf("uitest: pty.StartWithSize: %v", err)
