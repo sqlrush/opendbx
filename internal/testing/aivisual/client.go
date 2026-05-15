@@ -104,8 +104,8 @@ func (r *Reviewer) Review(ctx context.Context, pngBytes []byte, focus string) (*
 
 	resp, err := client.Do(req)
 	if err != nil {
-		// errcode-lint:exempt -- spec-0.11.5 T-5: ErrEndpointDown sentinel deferred to T-13 errata
-		return nil, fmt.Errorf("%w: %v", ErrEndpointDown, err)
+		// errcode-lint:exempt -- spec-0.11.5 T-5: ErrEndpointDown sentinel deferred to follow-up spec
+		return nil, fmt.Errorf("%w: %w", ErrEndpointDown, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	// spec-0.11.5 T-13 errata (security MED-1): map 4xx to ErrEndpointDown
