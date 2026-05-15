@@ -268,6 +268,7 @@ func TestClassify(t *testing.T) {
 		{modulePath + "/internal/testing/golden", TierTool},
 		{modulePath + "/internal/testing/uitest", TierTool},
 		{modulePath + "/internal/testing/uiinvariant", TierTool}, // spec-0.11.5 T-3
+		{modulePath + "/internal/testing/aivisual", TierTool},    // spec-0.11.5 T-5
 		{modulePath + "/internal/platform/profileutil", TierOther},
 		{modulePath + "/internal/platform/nonexistent", TierOther},
 	}

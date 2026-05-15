@@ -95,6 +95,7 @@ var (
 		modulePath + "/internal/testing/golden":      true,
 		modulePath + "/internal/testing/uitest":      true,
 		modulePath + "/internal/testing/uiinvariant": true, // spec-0.11.5 T-3
+		modulePath + "/internal/testing/aivisual":    true, // spec-0.11.5 T-5
 	}
 
 	exemptPackages = map[string]bool{
