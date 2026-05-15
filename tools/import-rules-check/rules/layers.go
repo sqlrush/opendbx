@@ -92,6 +92,12 @@ func PathToLayer(importPath string) Layer {
 		return LayerPkg
 	case rel == "tests" || strings.HasPrefix(rel, "tests/"):
 		return LayerTests
+	case rel == "internal/testing" || strings.HasPrefix(rel, "internal/testing/"):
+		// spec-0.11 D-1~D-4: internal/testing/{must,golden,tablerun,uitest}
+		// are shared test utilities, semantically equivalent to tests/
+		// layer for import-direction rules (no production code imports
+		// them; any test code may import any of them).
+		return LayerTests
 	case rel == "internal/bootstrap" || strings.HasPrefix(rel, "internal/bootstrap/"):
 		return LayerBootstrap
 	case rel == "internal/entrypoints" || strings.HasPrefix(rel, "internal/entrypoints/"):
@@ -184,11 +190,13 @@ var LayerMatrix = map[Layer]map[Layer]bool{
 	},
 	LayerTests: {
 		LayerStdlib:      true,
+		LayerExternal:    true, // spec-0.11 uitest imports creack/pty, hinshun/vt10x
 		LayerEntrypoints: true,
 		LayerBootstrap:   true,
 		LayerApp:         true,
 		LayerDomain:      true,
 		LayerPlatform:    true,
+		LayerTests:       true, // spec-0.11: internal/testing/uitest imports internal/testing/golden
 	},
 	LayerTools: {
 		LayerStdlib:   true,
