@@ -307,6 +307,20 @@ suppression-check: ## Verify all suppression comments carry spec_ref
 errcode-check: ## Verify exported public API errors use errcode (D-2)
 	@$(GO) run ./tools/errcode-lint ./...
 
+# spec-0.11.5 D-5: UI Review 5-layer gate targets.
+.PHONY: ui-invariant ui-visual-golden ui-ai-review
+ui-invariant: ## Layer 1 static invariants (uiinvariant package tests)
+	$(GO) test -race -count=1 ./internal/testing/uiinvariant/...
+
+ui-visual-golden: ## Layer 3 freeze + pixelmatch (VISUALGOLDEN_REQUIRED=1 in CI)
+	VISUALGOLDEN_REQUIRED=$${VISUALGOLDEN_REQUIRED:-} $(GO) test -race -count=1 ./internal/testing/visualgolden/...
+
+ui-ai-review: ## Layer 4 AI review (needs LOCAL_VL_ENDPOINT)
+	@if [ -z "$$LOCAL_VL_ENDPOINT" ]; then \
+		echo "ui-ai-review: LOCAL_VL_ENDPOINT unset, skipping" >&2; exit 0; \
+	fi
+	$(GO) test -race -count=1 ./internal/testing/aivisual/...
+
 # spec-0.2 governance gates (D-5 / D-6 / D-3) — see docs/cicd-and-methodology.md
 import-check: ## Run import-rules-check (spec-0.2 D-5)
 	$(GO) run ./tools/import-rules-check -v .
