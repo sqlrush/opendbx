@@ -8,6 +8,8 @@ package uitest
 
 import (
 	"bufio"
+	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"sync"
@@ -17,6 +19,53 @@ import (
 	"github.com/creack/pty"
 	"github.com/hinshun/vt10x"
 )
+
+// ErrAnsiBufFull reports that ansiBuf reached maxANSIBufBytes cap and
+// dropped subsequent PTY bytes silently (vt10x parsing continued).
+// spec-0.11.5 T-4 R5 user MED-4.
+var ErrAnsiBufFull = errors.New("uitest: ANSIRaw buffer reached max cap")
+
+// captureWriter is the io.Writer half of io.TeeReader; appends PTY
+// bytes to Terminal.ansiBuf under lock with cap enforcement.
+type captureWriter struct{ term *Terminal }
+
+func (c *captureWriter) Write(p []byte) (int, error) {
+	c.term.ansiBufMu.Lock()
+	defer c.term.ansiBufMu.Unlock()
+	remaining := maxANSIBufBytes - len(c.term.ansiBuf)
+	if remaining <= 0 {
+		c.term.ansiBufOverflow = true
+		return len(p), nil // tee sink: never propagate error
+	}
+	if len(p) > remaining {
+		c.term.ansiBuf = append(c.term.ansiBuf, p[:remaining]...)
+		c.term.ansiBufOverflow = true
+		return len(p), nil
+	}
+	c.term.ansiBuf = append(c.term.ansiBuf, p...)
+	return len(p), nil
+}
+
+// ANSIRaw returns a defensive copy of all PTY bytes received since
+// Term() was called. Safe to call from any goroutine concurrently
+// with pumpOutput. Returns ErrAnsiBufFull if buffer cap was reached
+// (test should fail with guidance to reduce scope).
+//
+// spec-0.11.5 T-4 BREAKING patch (spec-0.11 uitest API addition).
+// Feeds visualgolden.Render input for Layer 3 pixel diff.
+//
+// errcode-lint:exempt -- spec-0.11.5 T-4: ErrAnsiBufFull is package-internal sentinel for test harness; full errcode registration deferred to T-13 errata.
+func (term *Terminal) ANSIRaw() ([]byte, error) {
+	term.ansiBufMu.Lock()
+	defer term.ansiBufMu.Unlock()
+	out := make([]byte, len(term.ansiBuf))
+	copy(out, term.ansiBuf)
+	if term.ansiBufOverflow {
+		// errcode-lint:exempt -- spec-0.11.5 T-4: ErrAnsiBufFull sentinel deferred to T-13 errata
+		return out, ErrAnsiBufFull
+	}
+	return out, nil
+}
 
 // Terminal wraps a PTY + vt10x parser pair.
 //
@@ -33,7 +82,17 @@ type Terminal struct {
 	closed   bool          // close() idempotent guard
 	waitCh   chan error    // buffered(1); pumpExit sends cmd.Wait err
 	pumpDone chan struct{} // closed when pumpOutput returns
+
+	// spec-0.11.5 T-4 BREAKING patch: ANSIRaw capture.
+	// ansiBuf accumulates PTY bytes for visualgolden.Render input.
+	// 10 MiB cap; overflow sets ansiBufOverflow flag (read via ANSIRaw).
+	ansiBufMu       sync.Mutex
+	ansiBuf         []byte
+	ansiBufOverflow bool
 }
+
+// maxANSIBufBytes is the ansiBuf cap (10 MiB). spec-0.11.5 R5 user MED-4.
+const maxANSIBufBytes = 10 << 20
 
 // Term launches cmd inside a PTY of (cols, rows). The child sees the
 // correct WINSIZE on its first byte of output thanks to pty.StartWithSize
@@ -85,9 +144,13 @@ func Term(t testing.TB, cmd *exec.Cmd, cols, rows int) *Terminal {
 //
 // On exit, closes pumpDone so close() can synchronize.
 // spec-0.11 T-13 codex HIGH-1 fix.
+//
+// spec-0.11.5 T-4 BREAKING patch: also captures bytes into ansiBuf
+// via io.TeeReader so ANSIRaw() can return them for visualgolden.
 func (term *Terminal) pumpOutput() {
 	defer close(term.pumpDone)
-	reader := bufio.NewReader(term.pty)
+	tee := io.TeeReader(term.pty, &captureWriter{term: term})
+	reader := bufio.NewReader(tee)
 	for {
 		if err := term.vt.Parse(reader); err != nil {
 			return
