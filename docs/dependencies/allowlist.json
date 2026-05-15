@@ -30,7 +30,8 @@
     { "module": "github.com/cpuguy83/go-md2man/v2", "version": "v2.0.6" },
     { "module": "github.com/russross/blackfriday/v2", "version": "v2.1.0" },
     { "module": "go.yaml.in/yaml/v3",       "version": "v3.0.4" },
-    { "module": "gopkg.in/check.v1",        "version": "v0.0.0-20161208181325-20d25e280405" }
+    { "module": "gopkg.in/check.v1",        "version": "v0.0.0-20161208181325-20d25e280405" },
+    { "module": "github.com/clipperhouse/uax29/v2", "version": "v2.2.0" }
   ],
 
   "tool_only": [
