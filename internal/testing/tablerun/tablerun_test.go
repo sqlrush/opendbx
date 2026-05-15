@@ -183,8 +183,8 @@ func BenchmarkTablerun_Reflect_1000(b *testing.B) {
 // only calls Helper() on the happy path so this is sufficient.
 type silentTB struct{ testing.TB }
 
-func (silentTB) Helper()                  {}
-func (silentTB) Fatalf(string, ...any)    {}
+func (silentTB) Helper()               {}
+func (silentTB) Fatalf(string, ...any) {}
 
 // --- mockT: minimal *testing.T stand-in for negative-path coverage --
 
