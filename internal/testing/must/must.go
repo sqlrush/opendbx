@@ -40,7 +40,7 @@ func WriteTemp(t testing.TB, name, content string) string {
 	return path
 }
 
-// WriteFile writes content to <dir>/<name> with permission 0o644 and
+// WriteFile writes content to <dir>/<name> with permission 0o600 and
 // returns the absolute path. Caller controls dir (typically t.TempDir
 // or a subdirectory). Use when multiple files share a temp root or
 // permission matters. Binary-safe (takes []byte).
@@ -51,7 +51,7 @@ func WriteTemp(t testing.TB, name, content string) string {
 func WriteFile(t testing.TB, dir, name string, content []byte) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, content, 0o644); err != nil { // #nosec G306 -- spec-0.11 D-2: test fixture, 0o644 mirrors usual fixture perms
+	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatalf("must.WriteFile(%q): %v", path, err)
 		return ""
 	}

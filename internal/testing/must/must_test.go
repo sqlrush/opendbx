@@ -21,10 +21,10 @@ import (
 //
 //nolint:gochecknoinits // spec-0.11 D-2: test fixture errcode registration.
 func init() {
-	errcode.Register("MUSTTEST.MATCH", "msg", "hint")
-	errcode.Register("MUSTTEST.NOERR_CHAIN", "msg-here", "hint-here")
-	errcode.Register("MUSTTEST.GOT", "msg", "hint")
-	errcode.Register("MUSTTEST.WANT", "msg", "hint")
+	_ = errcode.Register("MUSTTEST.MATCH", "msg", "hint")
+	_ = errcode.Register("MUSTTEST.NOERR_CHAIN", "msg-here", "hint-here")
+	_ = errcode.Register("MUSTTEST.GOT", "msg", "hint")
+	_ = errcode.Register("MUSTTEST.WANT", "msg", "hint")
 }
 
 // --- File -----------------------------------------------------------
