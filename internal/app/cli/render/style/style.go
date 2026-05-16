@@ -97,7 +97,7 @@ func colorSGR(c Color, fg bool) string {
 	}
 	// Palette index (subtract the +1 offset). Caller guarantees c < 256
 	// when not truecolor (Palette constructor takes uint8).
-	idx := uint8(c & 0xFF) - 1 //nolint:gosec // c is bounded to 0..255 by Palette() ctor; truecolor branch handled above
+	idx := uint8(c&0xFF) - 1 //nolint:gosec // c is bounded to 0..255 by Palette() ctor; truecolor branch handled above
 	if idx < 8 {
 		base := uint8(30)
 		if !fg {
