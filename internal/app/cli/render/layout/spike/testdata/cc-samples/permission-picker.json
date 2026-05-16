@@ -1,0 +1,30 @@
+{
+  "name": "permission-picker",
+  "critical": true,
+  "note": "CC permission picker (CRITICAL sample): Column + intrinsic + shrink ACTUAL overflow path. T-10 codex HIGH-2: prior viewport h=5 made remainder positive → triggered grow path, not shrink. Now h=3 → totalBasis=4 > viewport=3 → overflow=1; fractional shrink ratios (choice-1 + choice-2 each shrink=1) split overflow via Phase C truncation + leftover correction. choice-1 collapses to 0 height (cramped terminal hides one option). spec-1.1 carry-over: real CC uses absolute-positioned cursor over choices + scroll on overflow.",
+  "cc_commit": "3da94d5e5f2b99c9d82b0d8f09448b04775cd41f",
+  "sources": [
+    {"path": "src/context/modalContext.tsx", "line": "12", "note": "CC modal/select sizing is bounded by available terminal rows"},
+    {"path": "src/context/overlayContext.tsx", "line": "128", "note": "CC select dialogs are modal overlays that capture input"},
+    {"path": "src/remote/remotePermissionBridge.ts", "line": "51-76", "note": "Permission requests can render fallback permission UI in local CLI"}
+  ],
+  "artifact": "manual 4-dim shrink approximation; real absolute cursor/scroll behavior is explicitly carried to spec-1.1",
+  "viewport": {"width": 50, "height": 3},
+  "root": {
+    "label": "root",
+    "direction": "column",
+    "children": [
+      {"label": "prompt",   "basis_mode": "fixed", "basis": 1, "shrink": 0},
+      {"label": "choice-1", "basis_mode": "fixed", "basis": 1, "shrink": 1},
+      {"label": "choice-2", "basis_mode": "fixed", "basis": 1, "shrink": 1},
+      {"label": "hint",     "basis_mode": "fixed", "basis": 1, "shrink": 0}
+    ]
+  },
+  "expected": {
+    "root":     {"x": 0, "y": 0, "w": 50, "h": 3},
+    "prompt":   {"x": 0, "y": 0, "w": 50, "h": 1},
+    "choice-1": {"x": 0, "y": 1, "w": 50, "h": 0},
+    "choice-2": {"x": 0, "y": 1, "w": 50, "h": 1},
+    "hint":     {"x": 0, "y": 2, "w": 50, "h": 1}
+  }
+}

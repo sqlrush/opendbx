@@ -1,0 +1,25 @@
+{
+  "_comment": "spec-0.12.5 D-4 perf baseline. Recorded on Apple M5 Max (arm64, darwin). Gate per spec § 2.2 outcome table: BenchmarkLayout1000Nodes < 5ms/op required for A 自研; otherwise outcome → B/C.",
+  "_run_at": "2026-05-16T17:30+08:00",
+  "_refreshed_at": "2026-05-16T17:35+08:00 (T-10 errata after shrink leftover correction landed)",
+  "_hardware": "Apple M5 Max, 128GB, arm64-darwin",
+  "_go_version": "1.24",
+  "_command": "go test -tags=spike -run=^$ -bench=. -benchtime=1s ./internal/app/cli/render/layout/spike/",
+  "benchmarks": [
+    {"name": "Layout1Node",       "ns_per_op": 112.2,   "iterations": 10669581, "note": "degenerate single-leaf baseline"},
+    {"name": "Layout10Nodes",     "ns_per_op": 822.4,   "iterations": 1433937,  "note": "10-leaf flat Row"},
+    {"name": "Layout100Nodes",    "ns_per_op": 8011.0,  "iterations": 149678,   "note": "100-leaf flat Row"},
+    {"name": "Layout1000Nodes",   "ns_per_op": 94817.0, "iterations": 12705,    "note": "HARD GATE (< 5_000_000 ns = 5ms). Result: 0.095ms, 53× margin under gate", "gate_ns": 5000000, "passes_gate": true},
+    {"name": "LayoutDeepNested",  "ns_per_op": 102389.0,"iterations": 10000,    "note": "100 rows × 10 leaves nested column-of-rows"},
+    {"name": "Layout5CCSamples",  "ns_per_op": 1243.0,  "iterations": 971583,   "note": "5 locked CC samples aggregated per iteration (with T-10 shrink-corrected permission-picker)"}
+  ],
+  "outcome_input": {
+    "samples_pass": 5,
+    "samples_fail": 0,
+    "critical_pass": ["status-line", "permission-picker"],
+    "critical_fail": [],
+    "perf_gate_1000_pass": true,
+    "recommended_outcome": "A 自研",
+    "rationale": "All 5/5 CC samples pass (incl. T-10-corrected permission-picker which now actually exercises Phase C shrink with leftover correction). BenchmarkLayout1000Nodes 0.095ms, 53× under 5ms gate. Per spec § 2.2 outcome table this maps to A 自研."
+  }
+}

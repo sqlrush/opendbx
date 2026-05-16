@@ -1,0 +1,27 @@
+{
+  "name": "tool-call-panel",
+  "critical": false,
+  "note": "CC tool-call panel: column with title (1 line) + args (1 line) + output (grow)",
+  "cc_commit": "3da94d5e5f2b99c9d82b0d8f09448b04775cd41f",
+  "sources": [
+    {"path": "src/tools/BashTool/UI.tsx", "line": "77-157", "note": "Bash tool UI uses MessageResponse and nested Box rows for tool-call output"},
+    {"path": "src/tools/FileWriteTool/UI.tsx", "line": "98-118", "note": "FileWrite tool composes code/output content inside column MessageResponse"}
+  ],
+  "artifact": "manual fixture derived from CC tool UI source; no screenshot artifact in spike scope",
+  "viewport": {"width": 80, "height": 15},
+  "root": {
+    "label": "root",
+    "direction": "column",
+    "children": [
+      {"label": "title",  "basis_mode": "fixed", "basis": 1},
+      {"label": "args",   "basis_mode": "fixed", "basis": 1},
+      {"label": "output", "basis_mode": "fixed", "basis": 0, "grow": 1}
+    ]
+  },
+  "expected": {
+    "root":   {"x": 0, "y": 0,  "w": 80, "h": 15},
+    "title":  {"x": 0, "y": 0,  "w": 80, "h": 1},
+    "args":   {"x": 0, "y": 1,  "w": 80, "h": 1},
+    "output": {"x": 0, "y": 2,  "w": 80, "h": 13}
+  }
+}
