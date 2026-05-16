@@ -11,7 +11,6 @@
 // render/terminal).
 //
 // Design: spec-0.13-render-engine-skeleton § 2.1 (D-1)
-
 package optimizer
 
 import (
@@ -21,10 +20,11 @@ import (
 // PatchKind tags the patch operation.
 type PatchKind uint8
 
+// Patch kinds enumerate the optimizer's minimal-change vocabulary.
 const (
-	PatchSetCell PatchKind = iota
-	PatchMoveCursor
-	PatchStyleChange
+	PatchSetCell     PatchKind = iota // overwrite a single cell at (X,Y)
+	PatchMoveCursor                   // reposition cursor only
+	PatchStyleChange                  // change SGR without moving / writing
 )
 
 // Patch is a single minimal change to apply to the terminal driver.

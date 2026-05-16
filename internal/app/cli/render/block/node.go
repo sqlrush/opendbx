@@ -15,7 +15,6 @@
 // render/buffer + render/width + render/style).
 //
 // Design: spec-0.13-render-engine-skeleton § 2.1 (D-1) + § 2.3 (D-3)
-
 package block
 
 import (

@@ -9,7 +9,6 @@
 // DAG position: render/layout is index 4 (depends on render/width).
 //
 // Design: spec-0.13-render-engine-skeleton § 2.1 (D-1)
-
 package layout
 
 // Box is the laid-out rectangle for a node.

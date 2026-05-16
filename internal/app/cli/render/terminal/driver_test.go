@@ -16,14 +16,21 @@ import (
 
 func TestEvent_TypeTags(t *testing.T) {
 	t.Parallel()
-	// All three concrete types satisfy Event marker.
+	// All three concrete types satisfy the Event marker — compile-time
+	// check via interface assignment is sufficient.
 	var e Event
 	e = EventKey{Code: KeyCtrlC}
-	_ = e.(Event)
+	if _, ok := e.(EventKey); !ok {
+		t.Errorf("EventKey not assignable to Event")
+	}
 	e = EventResize{Cols: 80, Rows: 24}
-	_ = e.(Event)
+	if _, ok := e.(EventResize); !ok {
+		t.Errorf("EventResize not assignable to Event")
+	}
 	e = EventInterrupt{Data: "ctx-done"}
-	_ = e.(Event)
+	if _, ok := e.(EventInterrupt); !ok {
+		t.Errorf("EventInterrupt not assignable to Event")
+	}
 }
 
 func TestEventKey_Modifiers(t *testing.T) {
