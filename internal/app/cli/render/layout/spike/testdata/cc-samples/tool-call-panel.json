@@ -1,0 +1,21 @@
+{
+  "name": "tool-call-panel",
+  "critical": false,
+  "note": "CC tool-call panel: column with title (1 line) + args (1 line) + output (grow)",
+  "viewport": {"width": 80, "height": 15},
+  "root": {
+    "label": "root",
+    "direction": "column",
+    "children": [
+      {"label": "title",  "basis_mode": "fixed", "basis": 1},
+      {"label": "args",   "basis_mode": "fixed", "basis": 1},
+      {"label": "output", "basis_mode": "fixed", "basis": 0, "grow": 1}
+    ]
+  },
+  "expected": {
+    "root":   {"x": 0, "y": 0,  "w": 80, "h": 15},
+    "title":  {"x": 0, "y": 0,  "w": 80, "h": 1},
+    "args":   {"x": 0, "y": 1,  "w": 80, "h": 1},
+    "output": {"x": 0, "y": 2,  "w": 80, "h": 13}
+  }
+}

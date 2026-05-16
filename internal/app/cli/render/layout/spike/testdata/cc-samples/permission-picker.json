@@ -1,0 +1,25 @@
+{
+  "name": "permission-picker",
+  "critical": true,
+  "note": "CC permission picker (CRITICAL sample): Column + intrinsic + shrink收缩 main-axis. prompt + 2 choices + hint, when viewport.height < intrinsic total → shrink-overflow. spec-1.1 carry-over: real CC uses absolute-positioned cursor over choices.",
+  "viewport": {"width": 50, "height": 5},
+  "root": {
+    "label": "root",
+    "direction": "column",
+    "children": [
+      {"label": "prompt",   "basis_mode": "fixed", "basis": 1, "shrink": 0},
+      {"label": "choice-1", "basis_mode": "fixed", "basis": 1, "shrink": 1},
+      {"label": "choice-2", "basis_mode": "fixed", "basis": 1, "shrink": 1},
+      {"label": "hint",     "basis_mode": "fixed", "basis": 1, "shrink": 0},
+      {"label": "spacer",   "basis_mode": "fixed", "basis": 0, "grow": 1}
+    ]
+  },
+  "expected": {
+    "root":     {"x": 0, "y": 0, "w": 50, "h": 5},
+    "prompt":   {"x": 0, "y": 0, "w": 50, "h": 1},
+    "choice-1": {"x": 0, "y": 1, "w": 50, "h": 1},
+    "choice-2": {"x": 0, "y": 2, "w": 50, "h": 1},
+    "hint":     {"x": 0, "y": 3, "w": 50, "h": 1},
+    "spacer":   {"x": 0, "y": 4, "w": 50, "h": 1}
+  }
+}

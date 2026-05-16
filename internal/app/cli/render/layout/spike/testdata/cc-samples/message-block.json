@@ -1,0 +1,40 @@
+{
+  "name": "message-block",
+  "critical": false,
+  "note": "CC message block: column with header (1 line) + body (grow to fill remainder)",
+  "viewport": {"width": 80, "height": 10},
+  "root": {
+    "label": "root",
+    "direction": "column",
+    "children": [
+      {
+        "label": "header",
+        "direction": "row",
+        "basis_mode": "fixed", "basis": 1,
+        "children": [
+          {"label": "header-icon", "basis_mode": "fixed", "basis": 4},
+          {"label": "header-text", "basis_mode": "auto",  "intrinsic": {"w": 20, "h": 1}}
+        ]
+      },
+      {
+        "label": "body",
+        "direction": "row",
+        "grow": 1,
+        "basis_mode": "fixed", "basis": 0,
+        "children": [
+          {"label": "body-margin", "basis_mode": "fixed", "basis": 4},
+          {"label": "body-text",   "basis_mode": "fixed", "basis": 0, "grow": 1}
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "root":        {"x": 0, "y": 0, "w": 80, "h": 10},
+    "header":      {"x": 0, "y": 0, "w": 80, "h": 1},
+    "header-icon": {"x": 0, "y": 0, "w": 4,  "h": 1},
+    "header-text": {"x": 4, "y": 0, "w": 20, "h": 1},
+    "body":        {"x": 0, "y": 1, "w": 80, "h": 9},
+    "body-margin": {"x": 0, "y": 1, "w": 4,  "h": 9},
+    "body-text":   {"x": 4, "y": 1, "w": 76, "h": 9}
+  }
+}

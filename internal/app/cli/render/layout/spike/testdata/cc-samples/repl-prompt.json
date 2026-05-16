@@ -1,0 +1,21 @@
+{
+  "name": "repl-prompt",
+  "critical": false,
+  "note": "CC REPL prompt single row: icon + spacer (grow) + prompt text right-aligned via spacer trick",
+  "viewport": {"width": 80, "height": 1},
+  "root": {
+    "label": "root",
+    "direction": "row",
+    "children": [
+      {"label": "icon",   "basis_mode": "fixed", "basis": 2},
+      {"label": "spacer", "basis_mode": "fixed", "basis": 0, "grow": 1},
+      {"label": "prompt", "basis_mode": "auto",  "intrinsic": {"w": 10, "h": 1}}
+    ]
+  },
+  "expected": {
+    "root":   {"x": 0,  "y": 0, "w": 80, "h": 1},
+    "icon":   {"x": 0,  "y": 0, "w": 2,  "h": 1},
+    "spacer": {"x": 2,  "y": 0, "w": 68, "h": 1},
+    "prompt": {"x": 70, "y": 0, "w": 10, "h": 1}
+  }
+}

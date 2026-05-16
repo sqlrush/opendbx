@@ -1,0 +1,24 @@
+{
+  "_comment": "spec-0.12.5 D-4 perf baseline. Recorded once on Apple M5 Max (arm64, darwin). Gate per spec § 2.2 outcome table: BenchmarkLayout1000Nodes < 5ms/op required for A 自研; otherwise outcome → B/C.",
+  "_run_at": "2026-05-16T17:30+08:00",
+  "_hardware": "Apple M5 Max, 128GB, arm64-darwin",
+  "_go_version": "1.24",
+  "_command": "go test -tags=spike -run=^$ -bench=. -benchtime=1s ./internal/app/cli/render/layout/spike/",
+  "benchmarks": [
+    {"name": "Layout1Node",       "ns_per_op": 117.9,   "iterations": 8903612,  "note": "degenerate single-leaf baseline"},
+    {"name": "Layout10Nodes",     "ns_per_op": 849.7,   "iterations": 1421028,  "note": "10-leaf flat Row"},
+    {"name": "Layout100Nodes",    "ns_per_op": 8199.0,  "iterations": 145648,   "note": "100-leaf flat Row"},
+    {"name": "Layout1000Nodes",   "ns_per_op": 96605.0, "iterations": 12392,    "note": "HARD GATE (< 5_000_000 ns = 5ms). Result: 0.097ms, 51× margin under gate", "gate_ns": 5000000, "passes_gate": true},
+    {"name": "LayoutDeepNested",  "ns_per_op": 104594.0,"iterations": 10000,    "note": "100 rows × 10 leaves nested column-of-rows"},
+    {"name": "Layout5CCSamples",  "ns_per_op": 1331.0,  "iterations": 895293,   "note": "5 locked CC samples aggregated per iteration"}
+  ],
+  "outcome_input": {
+    "samples_pass": 5,
+    "samples_fail": 0,
+    "critical_pass": ["status-line", "permission-picker"],
+    "critical_fail": [],
+    "perf_gate_1000_pass": true,
+    "recommended_outcome": "A 自研",
+    "rationale": "All 5/5 CC samples pass with both critical samples passing; BenchmarkLayout1000Nodes well under 5ms gate (51× margin). Per spec § 2.2 outcome table this maps to A 自研 outcome."
+  }
+}
