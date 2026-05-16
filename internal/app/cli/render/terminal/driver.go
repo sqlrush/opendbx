@@ -21,8 +21,8 @@ type Event interface{ isEvent() }
 // are printable runes; higher values map opendbx-specific virtual keys.
 const (
 	KeyNone          = 0
-	KeyCtrlC         = 3   // ETX
-	KeyEnter         = 13  // CR
+	KeyCtrlC         = 3  // ETX
+	KeyEnter         = 13 // CR
 	KeyCtrlBackslash = 28
 	KeyEscape        = 27
 	KeyRune          = 256 // Use the Rune field instead of Code

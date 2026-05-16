@@ -32,9 +32,9 @@ func newFake(cols, rows int) *fakeBuffer {
 	return &fakeBuffer{cols: cols, rows: rows, cells: map[[2]int]Cell{}}
 }
 
-func (b *fakeBuffer) Cell(x, y int) Cell        { return b.cells[[2]int{x, y}] }
-func (b *fakeBuffer) SetCell(x, y int, c Cell)  { b.cells[[2]int{x, y}] = c }
-func (b *fakeBuffer) Size() (int, int)          { return b.cols, b.rows }
+func (b *fakeBuffer) Cell(x, y int) Cell       { return b.cells[[2]int{x, y}] }
+func (b *fakeBuffer) SetCell(x, y int, c Cell) { b.cells[[2]int{x, y}] = c }
+func (b *fakeBuffer) Size() (int, int)         { return b.cols, b.rows }
 func (b *fakeBuffer) Resize(cols, rows int) {
 	b.cols = cols
 	b.rows = rows

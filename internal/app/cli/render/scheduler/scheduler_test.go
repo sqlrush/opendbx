@@ -19,7 +19,7 @@ func TestTick_ZeroValue(t *testing.T) {
 
 type fakeScheduler struct{ ch chan Tick }
 
-func (f *fakeScheduler) Schedule(cmd Cmd) { cmd() }
+func (f *fakeScheduler) Schedule(cmd Cmd)  { cmd() }
 func (f *fakeScheduler) Tick() <-chan Tick { return f.ch }
 
 func TestScheduler_InterfaceContract(t *testing.T) {
