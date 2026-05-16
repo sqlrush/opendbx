@@ -14,6 +14,13 @@ import (
 // 0..15 → ANSI 16-color palette; 16..255 → 256-color extended palette;
 // >= 0x1000000 → 24-bit truecolor encoded as 0x1RRGGBB (the high bit
 // distinguishes from palette indices).
+//
+// Construction contract (spec-0.13 T-13 security-reviewer R1 MED-1):
+// callers MUST construct Color values via the RGB() or Palette()
+// constructors only. Passing raw uint32 values outside the documented
+// ranges (Palette: 1..256; truecolor: 0x1000000..0x1FFFFFF) is undefined
+// behavior. When spec-2.x theme loader lands, themes from untrusted
+// sources MUST validate Color values against these ranges before use.
 type Color uint32
 
 const (
@@ -95,8 +102,10 @@ func colorSGR(c Color, fg bool) string {
 		}
 		return fmt.Sprintf("%s;%d;%d;%d", prefix, r, g, b)
 	}
-	// Palette index (subtract the +1 offset). Caller guarantees c < 256
-	// when not truecolor (Palette constructor takes uint8).
+	// Palette index (subtract the +1 offset). The uint8 wrap when c == 256
+	// (Palette(255)) is intentional: 256 & 0xFF = 0, then uint8(0)-1 = 255
+	// yields the correct SGR `38;5;255` for palette index 255. See
+	// spec-0.13 T-13 security-reviewer R1 LOW-1 for the trace.
 	idx := uint8(c&0xFF) - 1 //nolint:gosec // spec-0.13 D-1: c bounded 0..255 by Palette() ctor; truecolor branch handled above (G115 false positive)
 	if idx < 8 {
 		base := uint8(30)

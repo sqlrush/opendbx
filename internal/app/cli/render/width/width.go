@@ -44,6 +44,16 @@ func Width(s string) int {
 // tokenizer). Returns []string{} for empty input; never returns nil.
 //
 // Panics with ErrInvalidWidth if cols ≤ 0.
+//
+// Degenerate behavior (spec-0.13 T-13 security-reviewer R1 LOW-1 / code-reviewer
+// MED-1 pin): when a single rune is wider than cols (e.g., CJK rune with
+// cols=1), Wrap emits an empty line before the rune and continues. This
+// is the current spec-0.13 D-2 contract; spec-1.3 may revisit (drop rune
+// or substitute ellipsis).
+//
+// Input-size bound (security-reviewer MED-2): Caller is responsible for
+// bounding input size before calling Wrap. spec-3.10 context-budget
+// enforces the upstream bound at the LLM streaming boundary.
 func Wrap(s string, cols int) []string {
 	if cols <= 0 {
 		panic(ErrInvalidWidth)

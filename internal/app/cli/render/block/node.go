@@ -34,6 +34,13 @@ type Context struct {
 // a Buffer of (rune, style) cells suitable for paste into the scrollback
 // or streaming output. Returns (nil, ErrUnsupportedNode) for the spec-0.13
 // stub types; spec-1.7+ replaces stubs with real implementations.
+//
+// Return-type design note (spec-0.13 T-13 go-reviewer R1 MED-1): Render
+// returns the Buffer interface (not a concrete struct) intentionally —
+// spec-1.3 cell-grid-buffer plans to swap between allocating vs
+// sync.Pool-backed impls without breaking block-type implementors. This
+// is a deliberate deviation from the "accept interfaces, return structs"
+// Go idiom and is logged here so future refactors don't undo it.
 type RenderNode interface {
 	Render(ctx Context) (buffer.Buffer, error)
 }

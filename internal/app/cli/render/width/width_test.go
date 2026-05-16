@@ -54,6 +54,11 @@ func TestWrap(t *testing.T) {
 		{"breaks_basic_ascii", "abcdefghij", 4, []string{"abcd", "efgh", "ij"}},
 		{"breaks_cjk_each_2_cols", "中文中文中", 4, []string{"中文", "中文", "中"}},
 		{"single_column", "abc", 1, []string{"a", "b", "c"}},
+		// T-13 code-reviewer MED-1 + security-reviewer LOW-1: pin the
+		// degenerate behavior when a CJK rune is wider than cols. Current
+		// spec-0.13 D-2 contract emits an empty line before the rune; if
+		// spec-1.3 changes this, update both the test and width.go godoc.
+		{"cjk_into_1_col_degenerate", "中文", 1, []string{"", "中", "文"}},
 	}
 	for _, c := range cases {
 		c := c

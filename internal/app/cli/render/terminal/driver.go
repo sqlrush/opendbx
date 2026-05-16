@@ -99,6 +99,11 @@ func (ek EventKey) ModifierString() string {
 // passed context: if ctx is cancelled before an event arrives the
 // method MUST return ctx.Err() (spec-0.12 PollEvent blocking lesson
 // — Driver implementations bridge ctx.Done via PostEvent internally).
+//
+// PostEvent error contract (spec-0.13 T-13 code-reviewer R1 MED-2): the
+// returned error indicates the driver rejected the event — either the
+// driver is post-Fini or the internal event queue is at capacity. spec-1.4
+// driver impls MUST document the exact backpressure policy.
 type Driver interface {
 	Init() error
 	Fini()

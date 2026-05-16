@@ -24,6 +24,16 @@ type Cell struct {
 
 // Buffer is the abstract cell grid. Concrete implementations (allocating
 // vs pooled) come in spec-1.3.
+//
+// Resize contract (spec-0.13 T-13 code-reviewer R1 LOW-3 pin): Resize is
+// a destructive operation — cells outside the new (cols,rows) bounds are
+// discarded; cells within are preserved at their (x,y) positions. spec-1.3
+// cell-grid-buffer impls MUST honor this; revisit if the contract changes.
+//
+// Concurrency contract (spec-0.13 T-13 go-reviewer R1 LOW-1): all Buffer
+// methods are NOT safe for concurrent use; the render goroutine (spec-1.4
+// scheduler) owns Buffer for its lifetime. Cross-goroutine access requires
+// caller-side synchronization.
 type Buffer interface {
 	Cell(x, y int) Cell
 	SetCell(x, y int, c Cell)
