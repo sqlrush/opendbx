@@ -2,24 +2,37 @@
 //
 // Author: sqlrush
 
-// IMP-6 render-cascade (retrofit of spec-0.2 render strict DAG; spec-0.10
-// D-3 R2 codex H5 修：原 spec-0.10 R1 描述"9 层"是 typo，实际 10 层).
+// IMP-6 render-cascade — render subpackage strict DAG (spec-0.2 § 2.2
+// 重要细则 #3, CLAUDE.md § 3.1, spec-0.13 D-4 BREAKING retrofit).
 //
-// Render subpackage strict DAG (spec-0.2 § 2.2 重要细则 #3, CLAUDE.md § 3.1).
-// 10 layers, ordered:
+// **spec-0.13 R2 CRIT-1 BREAKING retrofit (2026-05-16)**: the original
+// spec-0.2 retrofit (spec-0.10 D-3) had RenderOrder reversed — listed
+// terminal as index 0 (top caller) and width as index 9 (leaf). That
+// did NOT match § 2.1 actual package dependencies, where width/style
+// are leaves and block/streaming are roots. R2 sequence reverses to
+// leaf→root + comparison operator flips from `fi >= ti` to `fi <= ti`.
 //
-//	terminal → buffer → layout → optimizer → scheduler → scrollback → streaming → block → style → width
+// Render subpackage strict DAG (leaf→root, 10 layers):
 //
-// Direction semantics (依赖方向单向向下):
-//   - "X → Y" means X imports Y (X depends on Y).
-//   - X is at index i, Y at index j; allowed iff i < j (importing strictly later in list).
-//   - Reverse direction (i >= j) is FORBIDDEN.
+//	width → style → terminal → buffer → layout → optimizer → scheduler → block → scrollback → streaming
+//	(0)     (1)      (2)        (3)       (4)      (5)         (6)         (7)     (8)          (9)
 //
-// Examples:
-//   - terminal (0) imports buffer (1):    OK (0 < 1)
-//   - terminal (0) imports width (9):     OK (0 < 9; long jump is fine, still downward)
-//   - block (7) imports scheduler (4):    FAIL (7 >= 4, upward in list)
-//   - buffer (1) imports buffer (1):      FAIL (Go disallows self-import anyway, but rule says i < j)
+// Direction semantics (依赖方向高 index → 低 index):
+//   - "X imports Y" allowed iff index(X) > index(Y).
+//   - Reverse direction (idx_from <= idx_to) is FORBIDDEN (cycle / leaf
+//     reaching back upward into root callers).
+//
+// Examples (post-spec-0.13):
+//   - block (7) imports layout (4):     OK (7 > 4, root reaches leaf)
+//   - block (7) imports width (0):      OK (7 > 0)
+//   - scrollback (8) imports block (7): OK (8 > 7)
+//   - streaming (9) imports block (7):  OK (9 > 7)
+//   - layout (4) imports block (7):     FAIL (4 <= 7, leaf cannot reach root)
+//   - block (7) imports scrollback (8): FAIL (7 <= 8, root cannot reach higher root)
+//
+// Cross-spec errata: spec-0.10 § D-3 + spec-0.2 § 2.2 重要细则 #3 +
+// CLAUDE.md § 3.1 inline errata 段 引用本 spec-0.13 D-4. CLAUDE.md
+// 走 § 9 完整修订协议. errata 不打 patch tag (spec-0.7 errata 协议).
 
 package rules
 
@@ -31,19 +44,20 @@ import (
 // RenderRoot is the package path prefix for the render subsystem.
 const RenderRoot = ModulePrefix + "internal/app/cli/render/"
 
-// RenderOrder is the canonical strict DAG order. Earlier entries may import
-// later entries; later entries may NOT import earlier entries.
+// RenderOrder is the canonical strict DAG order (leaf→root post spec-0.13).
+// Higher-index entries may import lower-index entries; the reverse is
+// FORBIDDEN. See package godoc for rationale.
 var RenderOrder = []string{
-	"terminal",
-	"buffer",
-	"layout",
-	"optimizer",
-	"scheduler",
-	"scrollback",
-	"streaming",
-	"block",
-	"style",
-	"width",
+	"width",      // 0 — leaf: pure utility, no internal deps
+	"style",      // 1 — leaf: pure data + ANSI generation
+	"terminal",   // 2 — depends on style
+	"buffer",     // 3 — depends on style + width
+	"layout",     // 4 — depends on width
+	"optimizer",  // 5 — depends on buffer + terminal
+	"scheduler",  // 6 — depends on optimizer + terminal
+	"block",      // 7 — intermediate root: depends on layout + buffer + width + style
+	"scrollback", // 8 — depends on buffer + layout + block
+	"streaming",  // 9 — true root: depends on scrollback + block
 }
 
 // renderClassify inspects an import path. Returns:
@@ -72,12 +86,13 @@ func renderClassify(importPath string) (idx int, ok bool, unknown string) {
 }
 
 // CheckRenderDAG returns "" if the edge obeys the render strict DAG, or a
-// violation reason. Behavior:
+// violation reason. Behavior (spec-0.13 R2 BREAKING retrofit):
 //   - Edges where neither endpoint is under render/ are ignored.
 //   - If either endpoint is under render/ but its first segment is unknown
 //     to RenderOrder, the edge fails (a new render subpackage must be
 //     added to RenderOrder explicitly before it can be imported).
-//   - Otherwise: idx_from < idx_to is allowed, idx_from >= idx_to fails.
+//   - Otherwise: idx_from > idx_to is allowed (root imports leaf);
+//     idx_from <= idx_to fails (leaf cannot reach root, no self-import).
 func CheckRenderDAG(from, to string) string {
 	fi, fOK, fUnknown := renderClassify(from)
 	ti, tOK, tUnknown := renderClassify(to)
@@ -89,11 +104,11 @@ func CheckRenderDAG(from, to string) string {
 	// Unknown render subpackage on either side: hard fail (force authors
 	// to update RenderOrder before adding new render/* dirs).
 	if fUnknown != "" {
-		return fmt.Sprintf("render-DAG: from-package render/%s is not in RenderOrder — add it to RenderOrder (and update spec § 2.2) before using. Current order: %s",
+		return fmt.Sprintf("render-DAG: from-package render/%s is not in RenderOrder — add it to RenderOrder (and update spec § 2.2) before using. Current order (leaf→root): %s",
 			fUnknown, strings.Join(RenderOrder, " → "))
 	}
 	if tUnknown != "" {
-		return fmt.Sprintf("render-DAG: imported package render/%s is not in RenderOrder — add it to RenderOrder (and update spec § 2.2) before using. Current order: %s",
+		return fmt.Sprintf("render-DAG: imported package render/%s is not in RenderOrder — add it to RenderOrder (and update spec § 2.2) before using. Current order (leaf→root): %s",
 			tUnknown, strings.Join(RenderOrder, " → "))
 	}
 	// Only one endpoint is in render/, the other is outside — no DAG
@@ -101,8 +116,8 @@ func CheckRenderDAG(from, to string) string {
 	if !fOK || !tOK {
 		return ""
 	}
-	if fi >= ti {
-		return fmt.Sprintf("render-DAG: %s (idx %d) imports %s (idx %d) — must be strictly downward (idx_from < idx_to). Order: %s",
+	if fi <= ti {
+		return fmt.Sprintf("render-DAG: %s (idx %d) imports %s (idx %d) — must be strictly upward in dependency (idx_from > idx_to). Order (leaf→root): %s",
 			RenderOrder[fi], fi, RenderOrder[ti], ti,
 			strings.Join(RenderOrder, " → "))
 	}

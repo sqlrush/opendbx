@@ -1,7 +1,8 @@
 // Copyright 2026 opendbx contributors. See LICENSE.
 //
-// Package streaming streaming token append (no reflow of completed lines).
+// Package streaming — spec-0.13 D-1 interface skeleton.
+// See streaming.go (or node.go for block) for the concrete interface/struct definitions.
 //
-// Design: spec-1.6-streaming-incremental
+// Design: spec-0.13-render-engine-skeleton § 2.1 (D-1)
 // Author: sqlrush
 package streaming

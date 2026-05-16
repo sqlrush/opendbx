@@ -1,7 +1,8 @@
 // Copyright 2026 opendbx contributors. See LICENSE.
 //
-// Package scrollback 27k-line scrollback buffer with virtual scroll.
+// Package scrollback — spec-0.13 D-1 interface skeleton.
+// See scrollback.go (or node.go for block) for the concrete interface/struct definitions.
 //
-// Design: spec-1.5-scrollback
+// Design: spec-0.13-render-engine-skeleton § 2.1 (D-1)
 // Author: sqlrush
 package scrollback

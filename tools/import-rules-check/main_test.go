@@ -240,35 +240,42 @@ func TestCheckRenderDAG(t *testing.T) {
 		wantOK      bool
 		wantContain string
 	}{
-		// forward (downward in list, idx_from < idx_to) — OK
-		{"terminal→buffer", R + "terminal", R + "buffer", true, ""},
-		{"terminal→layout", R + "terminal", R + "layout", true, ""},
-		{"terminal→width_long_jump", R + "terminal", R + "width", true, ""},
-		{"buffer→layout", R + "buffer", R + "layout", true, ""},
-		{"layout→optimizer", R + "layout", R + "optimizer", true, ""},
-		{"optimizer→scheduler", R + "optimizer", R + "scheduler", true, ""},
-		{"scheduler→scrollback", R + "scheduler", R + "scrollback", true, ""},
-		{"scrollback→streaming", R + "scrollback", R + "streaming", true, ""},
-		{"streaming→block", R + "streaming", R + "block", true, ""},
-		{"block→style", R + "block", R + "style", true, ""},
-		{"style→width", R + "style", R + "width", true, ""},
+		// spec-0.13 R2 BREAKING retrofit: leaf→root sequence
+		// (width=0, style=1, terminal=2, buffer=3, layout=4, optimizer=5,
+		// scheduler=6, block=7, scrollback=8, streaming=9). Allowed iff
+		// idx_from > idx_to (root reaches leaf).
 
-		// reverse (upward, idx_from >= idx_to) — FAIL
-		{"buffer→terminal_FAIL", R + "buffer", R + "terminal", false, "render-DAG"},
-		{"layout→buffer_FAIL", R + "layout", R + "buffer", false, "render-DAG"},
-		{"block→scheduler_FAIL", R + "block", R + "scheduler", false, "render-DAG"},
+		// upward (high-index imports low-index, idx_from > idx_to) — OK
+		{"buffer→width_root_imports_leaf", R + "buffer", R + "width", true, ""},
+		{"buffer→style", R + "buffer", R + "style", true, ""},
+		{"buffer→terminal", R + "buffer", R + "terminal", true, ""},
+		{"layout→width", R + "layout", R + "width", true, ""},
+		{"optimizer→buffer", R + "optimizer", R + "buffer", true, ""},
+		{"optimizer→terminal", R + "optimizer", R + "terminal", true, ""},
+		{"scheduler→optimizer", R + "scheduler", R + "optimizer", true, ""},
+		{"block→layout", R + "block", R + "layout", true, ""},
+		{"block→width_long_jump", R + "block", R + "width", true, ""},
+		{"scrollback→block", R + "scrollback", R + "block", true, ""},
+		{"streaming→scrollback", R + "streaming", R + "scrollback", true, ""},
+		{"streaming→block", R + "streaming", R + "block", true, ""},
+
+		// downward (low-index imports high-index, idx_from <= idx_to) — FAIL
+		{"terminal→buffer_FAIL", R + "terminal", R + "buffer", false, "render-DAG"},
+		{"buffer→layout_FAIL", R + "buffer", R + "layout", false, "render-DAG"},
+		{"layout→block_FAIL", R + "layout", R + "block", false, "render-DAG"},
 		{"width→style_FAIL", R + "width", R + "style", false, "render-DAG"},
 		{"width→terminal_FAIL", R + "width", R + "terminal", false, "render-DAG"},
-		{"streaming→scheduler_FAIL", R + "streaming", R + "scheduler", false, "render-DAG"},
+		{"scheduler→streaming_FAIL", R + "scheduler", R + "streaming", false, "render-DAG"},
+		{"block→scrollback_FAIL", R + "block", R + "scrollback", false, "render-DAG"},
 
 		// edges outside render/ are ignored
 		{"non_render_from_diagnose", "github.com/sqlrush/opendbx/internal/app/diagnose", R + "buffer", true, ""},
 		{"non_render_to_stdlib", R + "buffer", "fmt", true, ""},
 		{"both_non_render", "fmt", "io", true, ""},
 
-		// edges into render-with-subpkg also classify
-		{"terminal_subpkg→buffer", R + "terminal/sub", R + "buffer", true, ""},
-		{"buffer_subpkg→terminal_FAIL", R + "buffer/sub", R + "terminal", false, "render-DAG"},
+		// edges into render-with-subpkg also classify (post-retrofit)
+		{"buffer_subpkg→terminal", R + "buffer/sub", R + "terminal", true, ""},
+		{"terminal_subpkg→buffer_FAIL", R + "terminal/sub", R + "buffer", false, "render-DAG"},
 
 		// unknown render subpackage hard-fails (must be added to DAG first)
 		{"unknown_render_subpkg_from_FAIL", R + "newpkg/foo", R + "buffer", false, "not in RenderOrder"},

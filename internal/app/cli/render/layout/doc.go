@@ -1,7 +1,8 @@
 // Copyright 2026 opendbx contributors. See LICENSE.
 //
-// Package layout Yoga-like flex layout primitives.
+// Package layout — spec-0.13 D-1 interface skeleton.
+// See layout.go (or node.go for block) for the concrete interface/struct definitions.
 //
-// Design: spec-1.1-layout-engine
+// Design: spec-0.13-render-engine-skeleton § 2.1 (D-1)
 // Author: sqlrush
 package layout

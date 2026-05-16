@@ -1,7 +1,8 @@
 // Copyright 2026 opendbx contributors. See LICENSE.
 //
-// Package block block renderers (message / toolcall / markdown / code / diff / ...).
+// Package block — spec-0.13 D-1 interface skeleton.
+// See block.go (or node.go for block) for the concrete interface/struct definitions.
 //
-// Design: spec-1.7 ~ spec-1.13
+// Design: spec-0.13-render-engine-skeleton § 2.1 (D-1)
 // Author: sqlrush
 package block
