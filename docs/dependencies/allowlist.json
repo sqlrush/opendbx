@@ -6,7 +6,7 @@
     { "module": "github.com/gdamore/tcell/v2",         "purpose": "terminal abstraction",                                  "introduced_by": "spec-0.12-tcell-bootstrap" },
     { "module": "github.com/yuin/goldmark",            "purpose": "Markdown AST parsing",                                  "introduced_by": "spec-1.11-markdown-block" },
     { "module": "github.com/alecthomas/chroma/v2",     "purpose": "source code syntax highlighting",                       "introduced_by": "spec-1.12-code-highlight-block" },
-    { "module": "github.com/mattn/go-runewidth",       "purpose": "rune width (EastAsianWidth=false invariant)",           "introduced_by": "spec-1.14-string-width" },
+    { "module": "github.com/mattn/go-runewidth",       "purpose": "rune width (EastAsianWidth=false invariant; spec-0.11.5 uiinvariant first direct usage, spec-0.13 render/width extends to production)", "introduced_by": "spec-0.11.5-ui-review-pipeline" },
     { "module": "github.com/jackc/pgx/v5",             "purpose": "PostgreSQL driver",                                     "introduced_by": "spec-1.18-pg-driver" },
     { "module": "github.com/anthropics/anthropic-sdk-go", "purpose": "Claude LLM client",                                  "introduced_by": "spec-1.20-llm-client" },
     { "module": "modernc.org/sqlite",                  "purpose": "pure-Go SQLite (CGO_ENABLED=0 cross-compile compatible)", "introduced_by": "spec-2.12-session-sqlite-fts5" },
