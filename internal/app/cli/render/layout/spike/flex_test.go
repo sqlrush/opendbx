@@ -56,6 +56,16 @@ func TestLayout_RowGrowSpacer(t *testing.T) {
 	assertBox(t, "right", got[right], layout.Box{X: 75, Y: 0, Width: 5, Height: 1})
 }
 
+func TestLayout_GrowLeftoverGoesToLargestGrow(t *testing.T) {
+	t.Parallel()
+	a := &FlexNode{BasisMode: BasisFixed, Basis: 0, Grow: 2}
+	b := &FlexNode{BasisMode: BasisFixed, Basis: 0, Grow: 1}
+	root := &FlexNode{Direction: Row, Children: []*FlexNode{a, b}}
+	got := Layout(root, layout.Box{Width: 5, Height: 1})
+	assertBox(t, "a", got[a], layout.Box{X: 0, Y: 0, Width: 4, Height: 1})
+	assertBox(t, "b", got[b], layout.Box{X: 4, Y: 0, Width: 1, Height: 1})
+}
+
 func TestLayout_RowShrinkOverflow(t *testing.T) {
 	t.Parallel()
 	// 50 + 50 in 80 cols (overflow 20), shrink ratio 1:1 → each loses 10

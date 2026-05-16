@@ -62,6 +62,12 @@ func runAllSamples(t *testing.T) (pass, fail, criticalFail int) {
 		}
 		got := Layout(root, fx.Viewport.ViewportBox())
 		ok := true
+		for label := range index {
+			if _, exists := fx.Expected[label]; !exists {
+				t.Errorf("[%s] tree label %q has no expected box", name, label)
+				ok = false
+			}
+		}
 		for label, expected := range fx.Expected {
 			node, exists := index[label]
 			if !exists {

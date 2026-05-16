@@ -49,11 +49,23 @@ type FixtureBox struct {
 	H int `json:"h"`
 }
 
+// FixtureSource records the CC source/artifact that motivated a hand-written
+// fixture. The spike deliberately uses manual fixtures, so every sample needs
+// provenance strong enough for spec-1.1 to re-check against Claude Code.
+type FixtureSource struct {
+	Path string `json:"path"`
+	Line string `json:"line,omitempty"`
+	Note string `json:"note,omitempty"`
+}
+
 // Fixture is a complete CC UI sample with input + expected output.
 type Fixture struct {
 	Name     string                `json:"name"`
 	Critical bool                  `json:"critical"`
 	Note     string                `json:"note,omitempty"`
+	CCCommit string                `json:"cc_commit"`
+	Sources  []FixtureSource       `json:"sources"`
+	Artifact string                `json:"artifact"`
 	Viewport FixtureViewport       `json:"viewport"`
 	Root     *FixtureNode          `json:"root"`
 	Expected map[string]FixtureBox `json:"expected"`
@@ -76,7 +88,74 @@ func LoadFixture(path string) (*Fixture, error) {
 	if err := dec.Decode(&fx); err != nil {
 		return nil, fmt.Errorf("parse fixture %q: %w", path, err)
 	}
+	if err := fx.Validate(); err != nil {
+		return nil, fmt.Errorf("validate fixture %q: %w", path, err)
+	}
 	return &fx, nil
+}
+
+// Validate checks semantic fixture invariants not covered by JSON decoding.
+func (fx *Fixture) Validate() error {
+	if fx.Name == "" {
+		return fmt.Errorf("fixture: name is required")
+	}
+	if fx.CCCommit == "" {
+		return fmt.Errorf("fixture %q: cc_commit is required", fx.Name)
+	}
+	if len(fx.Sources) == 0 {
+		return fmt.Errorf("fixture %q: at least one source is required", fx.Name)
+	}
+	for i, src := range fx.Sources {
+		if src.Path == "" {
+			return fmt.Errorf("fixture %q: sources[%d].path is required", fx.Name, i)
+		}
+	}
+	if fx.Artifact == "" {
+		return fmt.Errorf("fixture %q: artifact is required", fx.Name)
+	}
+	if fx.Viewport.Width <= 0 || fx.Viewport.Height <= 0 {
+		return fmt.Errorf("fixture %q: viewport must be positive, got %dx%d", fx.Name, fx.Viewport.Width, fx.Viewport.Height)
+	}
+	if fx.Root == nil {
+		return fmt.Errorf("fixture %q: root is required", fx.Name)
+	}
+	if err := validateFixtureNode(fx.Root); err != nil {
+		return fmt.Errorf("fixture %q: %w", fx.Name, err)
+	}
+	if len(fx.Expected) == 0 {
+		return fmt.Errorf("fixture %q: expected boxes are required", fx.Name)
+	}
+	return nil
+}
+
+func validateFixtureNode(fn *FixtureNode) error {
+	if fn == nil {
+		return fmt.Errorf("nil child node")
+	}
+	if _, err := parseDirection(fn.Direction); err != nil {
+		return err
+	}
+	if _, err := parseBasisMode(fn.BasisMode); err != nil {
+		return err
+	}
+	if fn.Grow < 0 {
+		return fmt.Errorf("node %q: grow must be >= 0, got %v", fn.Label, fn.Grow)
+	}
+	if fn.Shrink < 0 {
+		return fmt.Errorf("node %q: shrink must be >= 0, got %v", fn.Label, fn.Shrink)
+	}
+	if fn.Basis < 0 {
+		return fmt.Errorf("node %q: basis must be >= 0, got %d", fn.Label, fn.Basis)
+	}
+	if fn.Intrinsic != nil && (fn.Intrinsic.W < 0 || fn.Intrinsic.H < 0) {
+		return fmt.Errorf("node %q: intrinsic must be >= 0, got %dx%d", fn.Label, fn.Intrinsic.W, fn.Intrinsic.H)
+	}
+	for _, child := range fn.Children {
+		if err := validateFixtureNode(child); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // BuildTree converts the FixtureNode tree into a FlexNode tree, also
@@ -86,6 +165,9 @@ func LoadFixture(path string) (*Fixture, error) {
 // version panicked from an unexported helper, reachable from this
 // exported method; converted to error return for CLAUDE rule 5 / 7).
 func (fn *FixtureNode) BuildTree() (*FlexNode, map[string]*FlexNode, error) {
+	if fn == nil {
+		return nil, nil, fmt.Errorf("fixture: root is nil")
+	}
 	index := make(map[string]*FlexNode)
 	root, err := buildNode(fn, index)
 	if err != nil {
@@ -95,15 +177,38 @@ func (fn *FixtureNode) BuildTree() (*FlexNode, map[string]*FlexNode, error) {
 }
 
 func buildNode(fn *FixtureNode, index map[string]*FlexNode) (*FlexNode, error) {
+	if fn == nil {
+		return nil, fmt.Errorf("fixture: nil child node")
+	}
+	dir, err := parseDirection(fn.Direction)
+	if err != nil {
+		return nil, err
+	}
+	basisMode, err := parseBasisMode(fn.BasisMode)
+	if err != nil {
+		return nil, err
+	}
+	if fn.Grow < 0 {
+		return nil, fmt.Errorf("fixture node %q: grow must be >= 0, got %v", fn.Label, fn.Grow)
+	}
+	if fn.Shrink < 0 {
+		return nil, fmt.Errorf("fixture node %q: shrink must be >= 0, got %v", fn.Label, fn.Shrink)
+	}
+	if fn.Basis < 0 {
+		return nil, fmt.Errorf("fixture node %q: basis must be >= 0, got %d", fn.Label, fn.Basis)
+	}
 	node := &FlexNode{
-		Direction: parseDirection(fn.Direction),
+		Direction: dir,
 		Grow:      fn.Grow,
 		Shrink:    fn.Shrink,
 		Basis:     fn.Basis,
-		BasisMode: parseBasisMode(fn.BasisMode),
+		BasisMode: basisMode,
 	}
 	if fn.Intrinsic != nil {
 		w, h := fn.Intrinsic.W, fn.Intrinsic.H
+		if w < 0 || h < 0 {
+			return nil, fmt.Errorf("fixture node %q: intrinsic must be >= 0, got %dx%d", fn.Label, w, h)
+		}
 		node.Intrinsic = func() (int, int) { return w, h }
 	}
 	for _, c := range fn.Children {
@@ -122,21 +227,25 @@ func buildNode(fn *FixtureNode, index map[string]*FlexNode) (*FlexNode, error) {
 	return node, nil
 }
 
-func parseDirection(s string) Direction {
+func parseDirection(s string) (Direction, error) {
 	switch s {
+	case "", "row", "Row":
+		return Row, nil
 	case "column", "Column":
-		return Column
+		return Column, nil
 	default:
-		return Row
+		return Row, fmt.Errorf("fixture: invalid direction %q", s)
 	}
 }
 
-func parseBasisMode(s string) BasisMode {
+func parseBasisMode(s string) (BasisMode, error) {
 	switch s {
+	case "", "auto", "Auto":
+		return BasisAuto, nil
 	case "fixed", "Fixed":
-		return BasisFixed
+		return BasisFixed, nil
 	default:
-		return BasisAuto
+		return BasisAuto, fmt.Errorf("fixture: invalid basis_mode %q", s)
 	}
 }
 

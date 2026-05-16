@@ -2,6 +2,12 @@
   "name": "message-block",
   "critical": false,
   "note": "CC message block: column with header (1 line) + body (grow to fill remainder)",
+  "cc_commit": "3da94d5e5f2b99c9d82b0d8f09448b04775cd41f",
+  "sources": [
+    {"path": "src/components/MessageResponse.tsx", "line": "21-37", "note": "MessageResponse wraps content in row Box with fixed prefix and grow/shrink body"},
+    {"path": "src/tools/BashTool/BashToolResultMessage.tsx", "line": "148-169", "note": "Tool output messages compose MessageResponse blocks"}
+  ],
+  "artifact": "manual fixture derived from MessageResponse source; no screenshot artifact in spike scope",
   "viewport": {"width": 80, "height": 10},
   "root": {
     "label": "root",

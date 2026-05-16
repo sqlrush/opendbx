@@ -2,6 +2,12 @@
   "name": "tool-call-panel",
   "critical": false,
   "note": "CC tool-call panel: column with title (1 line) + args (1 line) + output (grow)",
+  "cc_commit": "3da94d5e5f2b99c9d82b0d8f09448b04775cd41f",
+  "sources": [
+    {"path": "src/tools/BashTool/UI.tsx", "line": "77-157", "note": "Bash tool UI uses MessageResponse and nested Box rows for tool-call output"},
+    {"path": "src/tools/FileWriteTool/UI.tsx", "line": "98-118", "note": "FileWrite tool composes code/output content inside column MessageResponse"}
+  ],
+  "artifact": "manual fixture derived from CC tool UI source; no screenshot artifact in spike scope",
   "viewport": {"width": 80, "height": 15},
   "root": {
     "label": "root",
