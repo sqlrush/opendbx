@@ -63,7 +63,10 @@ func BenchmarkLayout5CCSamples(b *testing.B) {
 		if err != nil {
 			b.Fatalf("load fixture %s: %v", name, err)
 		}
-		root, _ := fx.Root.BuildTree()
+		root, _, err := fx.Root.BuildTree()
+		if err != nil {
+			b.Fatalf("build tree %s: %v", name, err)
+		}
 		loads = append(loads, loaded{root: root, vp: fx.Viewport.ViewportBox()})
 	}
 	b.ResetTimer()

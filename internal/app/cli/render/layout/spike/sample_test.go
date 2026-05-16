@@ -13,13 +13,17 @@ import (
 )
 
 // sampleNames lists the 5 locked CC UI sample fixtures (spec-0.12.5 D-2).
-// Order must not change; sample set is locked per spec § 2.1.
-var sampleNames = []string{
+// Array type [5]string is intentional (T-10 go-reviewer MED-2): a slice
+// `var` is mutable at package scope (slicing / append); a fixed array
+// type at exactly 5 is the spec § 2.1 lock made into Go's type system.
+// Adding/removing a sample requires editing the array length, which fails
+// compilation and forces a spec errata.
+var sampleNames = [5]string{
 	"repl-prompt",
 	"message-block",
 	"tool-call-panel",
 	"status-line",       // CRITICAL (Row + intrinsic + grow)
-	"permission-picker", // CRITICAL (Column + intrinsic + shrink)
+	"permission-picker", // CRITICAL (Column + intrinsic + shrink overflow)
 }
 
 // TestCCSamples runs the locked 5 CC UI sample fixtures.
@@ -50,7 +54,12 @@ func runAllSamples(t *testing.T) (pass, fail, criticalFail int) {
 			fail++
 			continue
 		}
-		root, index := fx.Root.BuildTree()
+		root, index, err := fx.Root.BuildTree()
+		if err != nil {
+			t.Errorf("build tree %s: %v", name, err)
+			fail++
+			continue
+		}
 		got := Layout(root, fx.Viewport.ViewportBox())
 		ok := true
 		for label, expected := range fx.Expected {
@@ -78,8 +87,8 @@ func runAllSamples(t *testing.T) (pass, fail, criticalFail int) {
 }
 
 // TestSampleLockedAt5 asserts the spec-0.12.5 § 2.1 / § 11.1 "5 locked" rule.
-// If sample count drifts (added or removed), this test must change in
-// lockstep with a spec errata.
+// Trivially true because sampleNames is typed [5]string; adding / removing
+// requires editing the type. T-10 go-reviewer MED-2 hardening.
 func TestSampleLockedAt5(t *testing.T) {
 	t.Parallel()
 	if len(sampleNames) != 5 {
@@ -87,22 +96,25 @@ func TestSampleLockedAt5(t *testing.T) {
 	}
 }
 
+// TestCriticalSamplesPresent asserts the two critical samples (status-line
+// + permission-picker) are present and marked critical in their fixture
+// JSON — spec § 1.3 D-2 critical sample gate.
 func TestCriticalSamplesPresent(t *testing.T) {
 	t.Parallel()
-	mustCritical := map[string]bool{"status-line": false, "permission-picker": false}
+	inSet := map[string]bool{"status-line": false, "permission-picker": false}
 	for _, name := range sampleNames {
 		fx, err := LoadFixture(filepath.Join("testdata", "cc-samples", name+".json"))
 		if err != nil {
 			t.Fatalf("load fixture %s: %v", name, err)
 		}
-		if _, want := mustCritical[name]; want {
+		if _, required := inSet[name]; required {
 			if !fx.Critical {
 				t.Errorf("%s: critical=false in fixture, but spec § 1.3 D-2 says critical", name)
 			}
-			mustCritical[name] = true
+			inSet[name] = true
 		}
 	}
-	for name, found := range mustCritical {
+	for name, found := range inSet {
 		if !found {
 			t.Errorf("required critical sample %q missing from sampleNames", name)
 		}

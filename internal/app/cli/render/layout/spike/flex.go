@@ -178,13 +178,16 @@ func distributePass(node *FlexNode, metas map[*FlexNode]*meta) {
 			for i, child := range node.Children {
 				share := int(float64(remainder) * (child.Grow / totalGrow))
 				mainSizes[i] = bases[i] + share
+				// used sums freshly written mainSizes[i], NOT bases[i]:
+				// integer-truncation may have rounded share down (T-10
+				// claude-code-reviewer HIGH-1 — fragile if a future
+				// refactor reads bases[i] here, breaks leftover calc).
 				used += mainSizes[i]
 			}
 			leftover := parentMain - used
 			if leftover != 0 {
-				if idx := largestGrowIdx(node.Children); idx >= 0 {
-					mainSizes[idx] += leftover
-				}
+				idx := largestGrowIdx(node.Children)
+				mainSizes[idx] += leftover // largest-grow always > 0 here (totalGrow > 0)
 			}
 		}
 	case remainder < 0:
@@ -194,6 +197,7 @@ func distributePass(node *FlexNode, metas map[*FlexNode]*meta) {
 			totalShrink += c.Shrink
 		}
 		if totalShrink > 0 {
+			actualCut := 0
 			for i, child := range node.Children {
 				cut := int(float64(overflow) * (child.Shrink / totalShrink))
 				v := bases[i] - cut
@@ -201,6 +205,22 @@ func distributePass(node *FlexNode, metas map[*FlexNode]*meta) {
 					v = 0
 				}
 				mainSizes[i] = v
+				// Record the real cut after clamp (may be less than `cut`
+				// if a child had less basis than cut would remove).
+				actualCut += bases[i] - v
+			}
+			// Phase C symmetric leftover correction (T-10 codex HIGH-1 +
+			// claude-code-reviewer MED-1): truncation can leave overflow
+			// un-distributed. Assign extra 1-cell cuts to largest-shrink
+			// children with remaining room, until exhausted.
+			leftover := overflow - actualCut
+			for leftover > 0 {
+				idx := largestShrinkIdxWithRoom(node.Children, mainSizes)
+				if idx < 0 {
+					break // no child has room to shrink further
+				}
+				mainSizes[idx]--
+				leftover--
 			}
 		}
 	}
@@ -275,6 +295,25 @@ func largestGrowIdx(children []*FlexNode) int {
 		if c.Grow > bestGrow {
 			best = i
 			bestGrow = c.Grow
+		}
+	}
+	return best
+}
+
+// largestShrinkIdxWithRoom picks the child with largest Shrink weight
+// among those still having room to shrink (mainSizes[i] > 0). Returns
+// -1 if no child can shrink further. Used by Phase C shrink leftover
+// correction (T-10 codex HIGH-1 + claude-code-reviewer MED-1).
+func largestShrinkIdxWithRoom(children []*FlexNode, mainSizes []int) int {
+	best := -1
+	bestShrink := -1.0
+	for i, c := range children {
+		if mainSizes[i] <= 0 {
+			continue
+		}
+		if c.Shrink > bestShrink {
+			best = i
+			bestShrink = c.Shrink
 		}
 	}
 	return best

@@ -1,8 +1,8 @@
 {
   "name": "permission-picker",
   "critical": true,
-  "note": "CC permission picker (CRITICAL sample): Column + intrinsic + shrink收缩 main-axis. prompt + 2 choices + hint, when viewport.height < intrinsic total → shrink-overflow. spec-1.1 carry-over: real CC uses absolute-positioned cursor over choices.",
-  "viewport": {"width": 50, "height": 5},
+  "note": "CC permission picker (CRITICAL sample): Column + intrinsic + shrink ACTUAL overflow path. T-10 codex HIGH-2: prior viewport h=5 made remainder positive → triggered grow path, not shrink. Now h=3 → totalBasis=4 > viewport=3 → overflow=1; fractional shrink ratios (choice-1 + choice-2 each shrink=1) split overflow via Phase C truncation + leftover correction. choice-1 collapses to 0 height (cramped terminal hides one option). spec-1.1 carry-over: real CC uses absolute-positioned cursor over choices + scroll on overflow.",
+  "viewport": {"width": 50, "height": 3},
   "root": {
     "label": "root",
     "direction": "column",
@@ -10,16 +10,14 @@
       {"label": "prompt",   "basis_mode": "fixed", "basis": 1, "shrink": 0},
       {"label": "choice-1", "basis_mode": "fixed", "basis": 1, "shrink": 1},
       {"label": "choice-2", "basis_mode": "fixed", "basis": 1, "shrink": 1},
-      {"label": "hint",     "basis_mode": "fixed", "basis": 1, "shrink": 0},
-      {"label": "spacer",   "basis_mode": "fixed", "basis": 0, "grow": 1}
+      {"label": "hint",     "basis_mode": "fixed", "basis": 1, "shrink": 0}
     ]
   },
   "expected": {
-    "root":     {"x": 0, "y": 0, "w": 50, "h": 5},
+    "root":     {"x": 0, "y": 0, "w": 50, "h": 3},
     "prompt":   {"x": 0, "y": 0, "w": 50, "h": 1},
-    "choice-1": {"x": 0, "y": 1, "w": 50, "h": 1},
-    "choice-2": {"x": 0, "y": 2, "w": 50, "h": 1},
-    "hint":     {"x": 0, "y": 3, "w": 50, "h": 1},
-    "spacer":   {"x": 0, "y": 4, "w": 50, "h": 1}
+    "choice-1": {"x": 0, "y": 1, "w": 50, "h": 0},
+    "choice-2": {"x": 0, "y": 1, "w": 50, "h": 1},
+    "hint":     {"x": 0, "y": 2, "w": 50, "h": 1}
   }
 }

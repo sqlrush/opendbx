@@ -19,14 +19,14 @@ import (
 // identify each node for golden-box mapping; pointer identity is lost
 // across JSON load.
 type FixtureNode struct {
-	Label     string          `json:"label"`
-	Direction string          `json:"direction,omitempty"` // "row" | "column" | ""
-	Grow      float64         `json:"grow,omitempty"`
-	Shrink    float64         `json:"shrink,omitempty"`
-	Basis     int             `json:"basis,omitempty"`
-	BasisMode string          `json:"basis_mode,omitempty"` // "fixed" | "auto" | ""
-	Intrinsic *IntrinsicSize  `json:"intrinsic,omitempty"`
-	Children  []*FixtureNode  `json:"children,omitempty"`
+	Label     string         `json:"label"`
+	Direction string         `json:"direction,omitempty"` // "row" | "column" | ""
+	Grow      float64        `json:"grow,omitempty"`
+	Shrink    float64        `json:"shrink,omitempty"`
+	Basis     int            `json:"basis,omitempty"`
+	BasisMode string         `json:"basis_mode,omitempty"` // "fixed" | "auto" | ""
+	Intrinsic *IntrinsicSize `json:"intrinsic,omitempty"`
+	Children  []*FixtureNode `json:"children,omitempty"`
 }
 
 // IntrinsicSize is a leaf's natural (w, h) in cells.
@@ -51,22 +51,29 @@ type FixtureBox struct {
 
 // Fixture is a complete CC UI sample with input + expected output.
 type Fixture struct {
-	Name     string                 `json:"name"`
-	Critical bool                   `json:"critical"`
-	Note     string                 `json:"note,omitempty"`
-	Viewport FixtureViewport        `json:"viewport"`
-	Root     *FixtureNode           `json:"root"`
-	Expected map[string]FixtureBox  `json:"expected"`
+	Name     string                `json:"name"`
+	Critical bool                  `json:"critical"`
+	Note     string                `json:"note,omitempty"`
+	Viewport FixtureViewport       `json:"viewport"`
+	Root     *FixtureNode          `json:"root"`
+	Expected map[string]FixtureBox `json:"expected"`
 }
 
 // LoadFixture reads a fixture JSON file from disk.
+//
+// Uses json.Decoder with DisallowUnknownFields to catch typos in fixture
+// authoring (T-10 claude-code-reviewer MED-2): a field name typo would
+// otherwise produce a zero-value silently.
 func LoadFixture(path string) (*Fixture, error) {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("read fixture %q: %w", path, err)
+		return nil, fmt.Errorf("open fixture %q: %w", path, err)
 	}
+	defer f.Close()
 	var fx Fixture
-	if err := json.Unmarshal(data, &fx); err != nil {
+	dec := json.NewDecoder(f)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&fx); err != nil {
 		return nil, fmt.Errorf("parse fixture %q: %w", path, err)
 	}
 	return &fx, nil
@@ -74,13 +81,20 @@ func LoadFixture(path string) (*Fixture, error) {
 
 // BuildTree converts the FixtureNode tree into a FlexNode tree, also
 // returning a label → *FlexNode index for box mapping.
-func (fn *FixtureNode) BuildTree() (*FlexNode, map[string]*FlexNode) {
+//
+// Returns an error on duplicate labels (T-10 go-reviewer MED-1: prior
+// version panicked from an unexported helper, reachable from this
+// exported method; converted to error return for CLAUDE rule 5 / 7).
+func (fn *FixtureNode) BuildTree() (*FlexNode, map[string]*FlexNode, error) {
 	index := make(map[string]*FlexNode)
-	root := buildNode(fn, index)
-	return root, index
+	root, err := buildNode(fn, index)
+	if err != nil {
+		return nil, nil, err
+	}
+	return root, index, nil
 }
 
-func buildNode(fn *FixtureNode, index map[string]*FlexNode) *FlexNode {
+func buildNode(fn *FixtureNode, index map[string]*FlexNode) (*FlexNode, error) {
 	node := &FlexNode{
 		Direction: parseDirection(fn.Direction),
 		Grow:      fn.Grow,
@@ -93,16 +107,19 @@ func buildNode(fn *FixtureNode, index map[string]*FlexNode) *FlexNode {
 		node.Intrinsic = func() (int, int) { return w, h }
 	}
 	for _, c := range fn.Children {
-		child := buildNode(c, index)
+		child, err := buildNode(c, index)
+		if err != nil {
+			return nil, err
+		}
 		node.Children = append(node.Children, child)
 	}
 	if fn.Label != "" {
 		if _, dup := index[fn.Label]; dup {
-			panic(fmt.Sprintf("fixture: duplicate label %q", fn.Label))
+			return nil, fmt.Errorf("fixture: duplicate label %q", fn.Label)
 		}
 		index[fn.Label] = node
 	}
-	return node
+	return node, nil
 }
 
 func parseDirection(s string) Direction {
