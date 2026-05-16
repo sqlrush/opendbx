@@ -10,7 +10,6 @@
 // DAG position: render/buffer is index 3 (depends on render/style + render/width).
 //
 // Design: spec-0.13-render-engine-skeleton § 2.1 (D-1)
-
 package buffer
 
 import (

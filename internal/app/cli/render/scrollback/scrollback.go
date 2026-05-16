@@ -11,7 +11,6 @@
 // index 7 so scrollback can legally import it).
 //
 // Design: spec-0.13-render-engine-skeleton § 2.1 (D-1)
-
 package scrollback
 
 import (

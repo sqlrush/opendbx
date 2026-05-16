@@ -12,7 +12,6 @@
 // render/scrollback + render/block).
 //
 // Design: spec-0.13-render-engine-skeleton § 2.1 (D-1)
-
 package streaming
 
 import (
