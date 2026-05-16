@@ -42,6 +42,7 @@ var TcellAllowedPrefixes = []string{
 	ModulePrefix + "internal/platform/terminal",
 	ModulePrefix + "internal/app/cli/tui",
 	ModulePrefix + "internal/bootstrap",
+	ModulePrefix + "internal/app/cli/render/terminal", // spec-0.13 D-5: render/terminal.Driver 抽象层 (4 包 whitelist reconcile)
 }
 
 // hasTcellPrefix reports whether `to` matches the tcell module root
