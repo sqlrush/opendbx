@@ -126,7 +126,7 @@ func TestLayout_NestedColumnRow(t *testing.T) {
 	header := &FlexNode{
 		Direction: Row,
 		BasisMode: BasisFixed, Basis: 1,
-		Children:  []*FlexNode{headerL, headerR},
+		Children: []*FlexNode{headerL, headerR},
 	}
 	bodyL := &FlexNode{BasisMode: BasisFixed, Basis: 5}
 	bodyR := &FlexNode{BasisMode: BasisFixed, Basis: 35}
