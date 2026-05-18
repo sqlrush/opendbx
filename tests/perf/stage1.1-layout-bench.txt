@@ -1,0 +1,12 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/sqlrush/opendbx/internal/app/cli/render/layout
+cpu: Apple M5 Max
+BenchmarkLayout1Node-18         	 6831337	       153.6 ns/op	     528 B/op	       3 allocs/op
+BenchmarkLayout10Nodes-18       	  911077	      1295 ns/op	    2632 B/op	      23 allocs/op
+BenchmarkLayout100Nodes-18      	   91214	     13104 ns/op	   26024 B/op	     125 allocs/op
+BenchmarkLayout1000Nodes-18     	    7646	    157595 ns/op	  378289 B/op	    1049 allocs/op
+BenchmarkLayoutDeepNested-18    	    7147	    166849 ns/op	  386097 B/op	    1349 allocs/op
+BenchmarkLayout5CCSamples-18    	  738970	      1656 ns/op	    3856 B/op	      34 allocs/op
+PASS
+ok  	github.com/sqlrush/opendbx/internal/app/cli/render/layout	7.921s

@@ -2,100 +2,90 @@
 //
 // Author: sqlrush
 
-//go:build spike
-// +build spike
-
-package spike
+package layout
 
 import (
 	"encoding/json"
 	"fmt"
 	"os"
-
-	"github.com/sqlrush/opendbx/internal/app/cli/render/layout"
+	"path/filepath"
+	"strings"
+	"testing"
 )
 
-// FixtureNode is the JSON-decoded form of a FlexNode. Labels uniquely
-// identify each node for golden-box mapping; pointer identity is lost
-// across JSON load.
-type FixtureNode struct {
+// fixtureNode is the JSON-decoded form of a FlexNode for CC UI sample
+// golden tests. Labels uniquely identify each node for golden-box
+// mapping; pointer identity is lost across JSON load.
+type fixtureNode struct {
 	Label     string         `json:"label"`
 	Direction string         `json:"direction,omitempty"` // "row" | "column" | ""
 	Grow      float64        `json:"grow,omitempty"`
 	Shrink    float64        `json:"shrink,omitempty"`
 	Basis     int            `json:"basis,omitempty"`
 	BasisMode string         `json:"basis_mode,omitempty"` // "fixed" | "auto" | ""
-	Intrinsic *IntrinsicSize `json:"intrinsic,omitempty"`
-	Children  []*FixtureNode `json:"children,omitempty"`
+	Justify   string         `json:"justify,omitempty"`    // "start"|"center"|"end"|"between"|"around"
+	Align     string         `json:"align,omitempty"`      // "stretch"|"start"|"center"|"end"
+	Intrinsic *intrinsicSize `json:"intrinsic,omitempty"`
+	Children  []*fixtureNode `json:"children,omitempty"`
 }
 
-// IntrinsicSize is a leaf's natural (w, h) in cells.
-type IntrinsicSize struct {
+type intrinsicSize struct {
 	W int `json:"w"`
 	H int `json:"h"`
 }
 
-// FixtureViewport is the root box.
-type FixtureViewport struct {
+type fixtureViewport struct {
 	Width  int `json:"width"`
 	Height int `json:"height"`
 }
 
-// FixtureBox is the JSON-decoded form of an expected layout.Box.
-type FixtureBox struct {
+type fixtureBox struct {
 	X int `json:"x"`
 	Y int `json:"y"`
 	W int `json:"w"`
 	H int `json:"h"`
 }
 
-// FixtureSource records the CC source/artifact that motivated a hand-written
-// fixture. The spike deliberately uses manual fixtures, so every sample needs
-// provenance strong enough for spec-1.1 to re-check against Claude Code.
-type FixtureSource struct {
+type fixtureSource struct {
 	Path string `json:"path"`
 	Line string `json:"line,omitempty"`
 	Note string `json:"note,omitempty"`
 }
 
-// Fixture is a complete CC UI sample with input + expected output.
-type Fixture struct {
+// fixture is a complete CC UI sample with input + expected output.
+// Provenance fields (cc_commit / sources / artifact) are required so
+// every golden fixture can be re-checked against Claude Code.
+type fixture struct {
 	Name     string                `json:"name"`
 	Critical bool                  `json:"critical"`
 	Note     string                `json:"note,omitempty"`
 	CCCommit string                `json:"cc_commit"`
-	Sources  []FixtureSource       `json:"sources"`
+	Sources  []fixtureSource       `json:"sources"`
 	Artifact string                `json:"artifact"`
-	Viewport FixtureViewport       `json:"viewport"`
-	Root     *FixtureNode          `json:"root"`
-	Expected map[string]FixtureBox `json:"expected"`
+	Viewport fixtureViewport       `json:"viewport"`
+	Root     *fixtureNode          `json:"root"`
+	Expected map[string]fixtureBox `json:"expected"`
 }
 
-// LoadFixture reads a fixture JSON file from disk.
-//
-// Uses json.Decoder with DisallowUnknownFields to catch typos in fixture
-// authoring (T-10 claude-code-reviewer MED-2): a field name typo would
-// otherwise produce a zero-value silently.
-func LoadFixture(path string) (*Fixture, error) {
+func loadFixture(path string) (*fixture, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open fixture %q: %w", path, err)
 	}
 	defer f.Close()
-	var fx Fixture
+	var fx fixture
 	dec := json.NewDecoder(f)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&fx); err != nil {
 		return nil, fmt.Errorf("parse fixture %q: %w", path, err)
 	}
-	if err := fx.Validate(); err != nil {
+	if err := fx.validate(); err != nil {
 		return nil, fmt.Errorf("validate fixture %q: %w", path, err)
 	}
 	return &fx, nil
 }
 
-// Validate checks semantic fixture invariants not covered by JSON decoding.
-func (fx *Fixture) Validate() error {
+func (fx *fixture) validate() error {
 	if fx.Name == "" {
 		return fmt.Errorf("fixture: name is required")
 	}
@@ -128,7 +118,7 @@ func (fx *Fixture) Validate() error {
 	return nil
 }
 
-func validateFixtureNode(fn *FixtureNode) error {
+func validateFixtureNode(fn *fixtureNode) error {
 	if fn == nil {
 		return fmt.Errorf("nil child node")
 	}
@@ -136,6 +126,12 @@ func validateFixtureNode(fn *FixtureNode) error {
 		return err
 	}
 	if _, err := parseBasisMode(fn.BasisMode); err != nil {
+		return err
+	}
+	if _, err := parseJustify(fn.Justify); err != nil {
+		return err
+	}
+	if _, err := parseAlign(fn.Align); err != nil {
 		return err
 	}
 	if fn.Grow < 0 {
@@ -158,61 +154,44 @@ func validateFixtureNode(fn *FixtureNode) error {
 	return nil
 }
 
-// BuildTree converts the FixtureNode tree into a FlexNode tree, also
-// returning a label → *FlexNode index for box mapping.
-//
-// Returns an error on duplicate labels (T-10 go-reviewer MED-1: prior
-// version panicked from an unexported helper, reachable from this
-// exported method; converted to error return for CLAUDE rule 5 / 7).
-func (fn *FixtureNode) BuildTree() (*FlexNode, map[string]*FlexNode, error) {
+// buildTree converts the fixtureNode tree into a FlexNode tree and a
+// label → *FlexNode index for box mapping. Returns an error on
+// duplicate labels.
+func (fn *fixtureNode) buildTree() (*FlexNode, map[string]*FlexNode, error) {
 	if fn == nil {
 		return nil, nil, fmt.Errorf("fixture: root is nil")
 	}
 	index := make(map[string]*FlexNode)
-	root, err := buildNode(fn, index)
+	root, err := buildFixtureNode(fn, index)
 	if err != nil {
 		return nil, nil, err
 	}
 	return root, index, nil
 }
 
-func buildNode(fn *FixtureNode, index map[string]*FlexNode) (*FlexNode, error) {
+func buildFixtureNode(fn *fixtureNode, index map[string]*FlexNode) (*FlexNode, error) {
 	if fn == nil {
 		return nil, fmt.Errorf("fixture: nil child node")
 	}
-	dir, err := parseDirection(fn.Direction)
-	if err != nil {
-		return nil, err
-	}
-	basisMode, err := parseBasisMode(fn.BasisMode)
-	if err != nil {
-		return nil, err
-	}
-	if fn.Grow < 0 {
-		return nil, fmt.Errorf("fixture node %q: grow must be >= 0, got %v", fn.Label, fn.Grow)
-	}
-	if fn.Shrink < 0 {
-		return nil, fmt.Errorf("fixture node %q: shrink must be >= 0, got %v", fn.Label, fn.Shrink)
-	}
-	if fn.Basis < 0 {
-		return nil, fmt.Errorf("fixture node %q: basis must be >= 0, got %d", fn.Label, fn.Basis)
-	}
+	dir, _ := parseDirection(fn.Direction)
+	basisMode, _ := parseBasisMode(fn.BasisMode)
+	justify, _ := parseJustify(fn.Justify)
+	align, _ := parseAlign(fn.Align)
 	node := &FlexNode{
 		Direction: dir,
 		Grow:      fn.Grow,
 		Shrink:    fn.Shrink,
 		Basis:     fn.Basis,
 		BasisMode: basisMode,
+		Justify:   justify,
+		Align:     align,
 	}
 	if fn.Intrinsic != nil {
 		w, h := fn.Intrinsic.W, fn.Intrinsic.H
-		if w < 0 || h < 0 {
-			return nil, fmt.Errorf("fixture node %q: intrinsic must be >= 0, got %dx%d", fn.Label, w, h)
-		}
-		node.Intrinsic = func() (int, int) { return w, h }
+		node.Measure = func() (int, int) { return w, h }
 	}
 	for _, c := range fn.Children {
-		child, err := buildNode(c, index)
+		child, err := buildFixtureNode(c, index)
 		if err != nil {
 			return nil, err
 		}
@@ -228,10 +207,10 @@ func buildNode(fn *FixtureNode, index map[string]*FlexNode) (*FlexNode, error) {
 }
 
 func parseDirection(s string) (Direction, error) {
-	switch s {
-	case "", "row", "Row":
+	switch strings.ToLower(s) {
+	case "", "row":
 		return Row, nil
-	case "column", "Column":
+	case "column":
 		return Column, nil
 	default:
 		return Row, fmt.Errorf("fixture: invalid direction %q", s)
@@ -239,22 +218,64 @@ func parseDirection(s string) (Direction, error) {
 }
 
 func parseBasisMode(s string) (BasisMode, error) {
-	switch s {
-	case "", "auto", "Auto":
+	switch strings.ToLower(s) {
+	case "", "auto":
 		return BasisAuto, nil
-	case "fixed", "Fixed":
+	case "fixed":
 		return BasisFixed, nil
 	default:
 		return BasisAuto, fmt.Errorf("fixture: invalid basis_mode %q", s)
 	}
 }
 
-// ViewportBox returns the viewport as a layout.Box (origin 0, 0).
-func (fv FixtureViewport) ViewportBox() layout.Box {
-	return layout.Box{X: 0, Y: 0, Width: fv.Width, Height: fv.Height}
+func parseJustify(s string) (Justify, error) {
+	switch strings.ToLower(s) {
+	case "", "start":
+		return JustifyStart, nil
+	case "center":
+		return JustifyCenter, nil
+	case "end":
+		return JustifyEnd, nil
+	case "between", "space-between":
+		return JustifySpaceBetween, nil
+	case "around", "space-around":
+		return JustifySpaceAround, nil
+	default:
+		return JustifyStart, fmt.Errorf("fixture: invalid justify %q", s)
+	}
 }
 
-// ToBox converts FixtureBox → layout.Box.
-func (fb FixtureBox) ToBox() layout.Box {
-	return layout.Box{X: fb.X, Y: fb.Y, Width: fb.W, Height: fb.H}
+func parseAlign(s string) (Align, error) {
+	switch strings.ToLower(s) {
+	case "", "stretch":
+		return AlignStretch, nil
+	case "start":
+		return AlignStart, nil
+	case "center":
+		return AlignCenter, nil
+	case "end":
+		return AlignEnd, nil
+	default:
+		return AlignStretch, fmt.Errorf("fixture: invalid align %q", s)
+	}
+}
+
+func (fv fixtureViewport) viewportBox() Box {
+	return Box{X: 0, Y: 0, Width: fv.Width, Height: fv.Height}
+}
+
+func (fb fixtureBox) toBox() Box {
+	return Box{X: fb.X, Y: fb.Y, Width: fb.W, Height: fb.H}
+}
+
+// writeFixtureForTest writes a JSON fixture body to a temp file and
+// returns its path. Used by fixture-parser negative tests.
+func writeFixtureForTest(t *testing.T, body string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fixture.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	return path
 }
