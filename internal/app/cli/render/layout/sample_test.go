@@ -130,3 +130,46 @@ func TestFixtureLoader_RejectsMissingProvenance(t *testing.T) {
 		t.Fatalf("loadFixture missing cc_commit should fail")
 	}
 }
+
+func TestFixtureLoader_UsesCCShrinkDefaultWhenOmitted(t *testing.T) {
+	t.Parallel()
+	path := writeFixtureForTest(t, `{
+	  "name": "shrink-default",
+	  "cc_commit": "test",
+	  "sources": [{"path": "src/ink/components/Box.tsx", "line": "111"}],
+	  "artifact": "unit-test",
+	  "viewport": {"width": 10, "height": 1},
+	  "root": {
+	    "label": "root",
+	    "children": [
+	      {"label": "implicit", "intrinsic": {"w": 10, "h": 1}},
+	      {"label": "explicit-zero", "shrink": 0, "intrinsic": {"w": 10, "h": 1}}
+	    ]
+	  },
+	  "expected": {"root": {"x": 0, "y": 0, "w": 10, "h": 1}}
+	}`)
+	fx, err := loadFixture(path)
+	if err != nil {
+		t.Fatalf("loadFixture: %v", err)
+	}
+	root, index, err := fx.Root.buildTree()
+	if err != nil {
+		t.Fatalf("buildTree: %v", err)
+	}
+	if got := index["implicit"].Shrink; got != 1 {
+		t.Fatalf("implicit shrink = %v, want 1 (CC Ink default)", got)
+	}
+	if got := index["explicit-zero"].Shrink; got != 0 {
+		t.Fatalf("explicit shrink = %v, want 0", got)
+	}
+	boxes, err := NewFlexLayouter().Layout(root, fx.Viewport.viewportBox())
+	if err != nil {
+		t.Fatalf("Layout err = %v", err)
+	}
+	if got := boxes[index["implicit"]].Width; got != 0 {
+		t.Errorf("implicit default-shrink child width = %d, want 0", got)
+	}
+	if got := boxes[index["explicit-zero"]].Width; got != 10 {
+		t.Errorf("explicit no-shrink child width = %d, want 10", got)
+	}
+}

@@ -73,6 +73,14 @@ func TestApplyJustify_Overflow(t *testing.T) {
 	}
 }
 
+func TestApplyJustify_UnknownFallsBackToStart(t *testing.T) {
+	t.Parallel()
+	lead, gap := applyJustify(Justify(255), 80, 30, 3)
+	if lead != 0 || gap != 0 {
+		t.Errorf("unknown justify fallback: lead=%d gap=%d, want 0/0", lead, gap)
+	}
+}
+
 // TestLayout_JustifyCenter verifies center justify wires through Layout
 // with a Row of two fixed-basis children in a wide parent.
 func TestLayout_JustifyCenter(t *testing.T) {

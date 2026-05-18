@@ -41,18 +41,10 @@ func applyAlign(align Align, parentCross, childIntrinsicCross int) (crossSize, c
 		return clampCross(childIntrinsicCross, parentCross), 0
 	case AlignCenter:
 		size := clampCross(childIntrinsicCross, parentCross)
-		off := (parentCross - size) / 2
-		if off < 0 {
-			off = 0
-		}
-		return size, off
+		return size, (parentCross - size) / 2
 	case AlignEnd:
 		size := clampCross(childIntrinsicCross, parentCross)
-		off := parentCross - size
-		if off < 0 {
-			off = 0
-		}
-		return size, off
+		return size, parentCross - size
 	default:
 		return parentCross, 0
 	}

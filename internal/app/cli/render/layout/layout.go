@@ -55,16 +55,17 @@ type Node interface {
 //   - any negative Grow / Shrink / Basis / Intrinsic value (INVALID_DIMENSION)
 //   - container with more than 1000 children (INVALID_DIMENSION, R2-9 cap)
 //   - arithmetic overflow during sizing (INVALID_DIMENSION, R2-9 guard)
-//   - Intrinsic() callback re-entering layout on the same Node
-//     (LAYOUT_CYCLE; measurement callback re-entry only — child graph
-//     cycles are caller responsibility per R2-8)
+//   - Intrinsic() callback re-entering layout on the same active Node through
+//     the same Layouter instance (LAYOUT_CYCLE; measurement callback
+//     re-entry only — child graph cycles are caller responsibility per R2-8)
 //
 // Node MUST be Go-comparable; non-comparable Nodes panic at the map
 // store site (Go map key requirement; not a layout-side error path).
 //
-// Concurrency: Layouter is stateless and can be invoked from any
-// goroutine; the input tree must NOT mutate during a Layout() call;
-// Intrinsic() callbacks must be caller-synchronized.
+// Concurrency: Layouter can be invoked from any goroutine; concurrent or
+// recursive calls on the same active FlexNode through the same Layouter
+// return ErrLayoutCycle. The input tree must NOT mutate during a
+// Layout() call; Intrinsic() callbacks must be caller-synchronized.
 type Layouter interface {
 	Layout(root Node, viewport Box) (map[Node]Box, error)
 }

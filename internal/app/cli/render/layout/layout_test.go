@@ -42,3 +42,16 @@ func TestLayouter_InterfaceContract(t *testing.T) {
 		t.Errorf("Layout = %+v want Width=20 Height=5", got)
 	}
 }
+
+func TestLayout_NonFlexNodeClampsIntrinsicToViewport(t *testing.T) {
+	t.Parallel()
+	root := &fakeNode{w: 120, h: 8}
+	boxes, err := NewFlexLayouter().Layout(root, Box{X: 2, Y: 3, Width: 80, Height: 5})
+	if err != nil {
+		t.Fatalf("Layout non-FlexNode err = %v", err)
+	}
+	want := Box{X: 2, Y: 3, Width: 80, Height: 5}
+	if got := boxes[root]; got != want {
+		t.Fatalf("Layout non-FlexNode box = %+v, want %+v", got, want)
+	}
+}

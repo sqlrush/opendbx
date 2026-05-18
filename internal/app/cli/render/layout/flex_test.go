@@ -6,6 +6,22 @@ package layout
 
 import "testing"
 
+func TestFlexNodeIntrinsic(t *testing.T) {
+	t.Parallel()
+	var nilNode *FlexNode
+	if w, h := nilNode.Intrinsic(); w != 0 || h != 0 {
+		t.Fatalf("nil FlexNode Intrinsic = %d,%d, want 0,0", w, h)
+	}
+	empty := NewFlexNode()
+	if w, h := empty.Intrinsic(); w != 0 || h != 0 {
+		t.Fatalf("empty FlexNode Intrinsic = %d,%d, want 0,0", w, h)
+	}
+	leaf := &FlexNode{Measure: func() (int, int) { return 7, 3 }}
+	if w, h := leaf.Intrinsic(); w != 7 || h != 3 {
+		t.Fatalf("measured FlexNode Intrinsic = %d,%d, want 7,3", w, h)
+	}
+}
+
 func TestLayout_Nil(t *testing.T) {
 	t.Parallel()
 	l := NewFlexLayouter()
@@ -219,10 +235,12 @@ func TestLayout_FloatRemainderTieBreak(t *testing.T) {
 
 func TestLayout_AutoBasisUnderTooSmallViewport(t *testing.T) {
 	t.Parallel()
-	// Sum of intrinsic = 20 but viewport.Width = 10 and Shrink = 0
-	// (default zero-value): per Yoga standard, allow overflow.
-	a := &FlexNode{Measure: func() (int, int) { return 10, 1 }}
-	b := &FlexNode{Measure: func() (int, int) { return 10, 1 }}
+	// Sum of intrinsic = 20 but viewport.Width = 10 and Shrink is
+	// explicitly disabled. Per Yoga standard, allow overflow. This test
+	// documents no-shrink behavior, not CC Ink defaults; use NewFlexNode()
+	// for CC-aligned Shrink=1 defaults.
+	a := &FlexNode{Shrink: 0, Measure: func() (int, int) { return 10, 1 }}
+	b := &FlexNode{Shrink: 0, Measure: func() (int, int) { return 10, 1 }}
 	root := &FlexNode{Direction: Row, Children: []*FlexNode{a, b}}
 	got, err := NewFlexLayouter().Layout(root, Box{Width: 10, Height: 1})
 	if err != nil {
@@ -230,6 +248,23 @@ func TestLayout_AutoBasisUnderTooSmallViewport(t *testing.T) {
 	}
 	if got[a].Width != 10 || got[b].Width != 10 {
 		t.Errorf("overflow allowed: a.W=%d b.W=%d, want 10/10", got[a].Width, got[b].Width)
+	}
+}
+
+func TestLayout_NewFlexNodeShrinkDefaultAppliesToLayout(t *testing.T) {
+	t.Parallel()
+	a := NewFlexNode()
+	a.Measure = func() (int, int) { return 10, 1 }
+	b := NewFlexNode()
+	b.Measure = func() (int, int) { return 10, 1 }
+	root := NewFlexNode()
+	root.Children = []*FlexNode{a, b}
+	got, err := NewFlexLayouter().Layout(root, Box{Width: 10, Height: 1})
+	if err != nil {
+		t.Fatalf("Layout err = %v", err)
+	}
+	if got[a].Width != 5 || got[b].Width != 5 {
+		t.Errorf("NewFlexNode shrink defaults: a.W=%d b.W=%d, want 5/5", got[a].Width, got[b].Width)
 	}
 }
 
@@ -277,15 +312,15 @@ func TestLayout_NewFlexNodeDefaults(t *testing.T) {
 func TestLayout_NonFlexNodeFallback(t *testing.T) {
 	t.Parallel()
 	// Non-FlexNode Node implementations are treated as a single leaf
-	// occupying the viewport. This keeps the Layouter interface usable
-	// for caller-defined Node types.
+	// using its intrinsic size clamped to the viewport. This keeps the
+	// Layouter interface usable for caller-defined Node types.
 	root := &fakeNode{w: 5, h: 2}
 	got, err := NewFlexLayouter().Layout(root, Box{Width: 80, Height: 24})
 	if err != nil {
 		t.Fatalf("Layout err = %v", err)
 	}
-	if got[root].Width != 80 || got[root].Height != 24 {
-		t.Errorf("non-flex leaf box = %+v, want 80x24", got[root])
+	if got[root].Width != 5 || got[root].Height != 2 {
+		t.Errorf("non-flex leaf box = %+v, want 5x2", got[root])
 	}
 }
 

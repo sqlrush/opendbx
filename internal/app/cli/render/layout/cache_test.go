@@ -86,29 +86,3 @@ func TestMeasureCache_CycleDetection(t *testing.T) {
 		t.Errorf("err Code = %q, want RENDER.LAYOUT_CYCLE", ec.Code())
 	}
 }
-
-// TestLayout_CycleDetection_Integration verifies cycle detection
-// surfaces from Layout() entrypoint when a Measure callback recursively
-// invokes layout measurement of the same node.
-func TestLayout_CycleDetection_Integration(t *testing.T) {
-	t.Parallel()
-	// We can't directly observe per-Layout-call cache from outside, so
-	// we simulate the re-entry pattern: a Measure callback that calls
-	// NewFlexLayouter().Layout on the same node tree creating self-
-	// nesting. The inner Layout panics or returns; for this test we
-	// directly use a measureCache.
-	c := newMeasureCache()
-	var leaf *FlexNode
-	leaf = &FlexNode{Measure: func() (int, int) {
-		_, _, _ = c.measure(leaf)
-		return 1, 1
-	}}
-	_, _, err := c.measure(leaf)
-	// outer call succeeds because the re-entry was on inner; outer
-	// call wrote results before delete on cleanup.
-	// However we DO want the cycle to be detectable; second top-level
-	// call should hit cache and return cleanly.
-	if err != nil {
-		t.Fatalf("outer measure err = %v", err)
-	}
-}

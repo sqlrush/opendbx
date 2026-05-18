@@ -20,7 +20,7 @@ type fixtureNode struct {
 	Label     string         `json:"label"`
 	Direction string         `json:"direction,omitempty"` // "row" | "column" | ""
 	Grow      float64        `json:"grow,omitempty"`
-	Shrink    float64        `json:"shrink,omitempty"`
+	Shrink    *float64       `json:"shrink,omitempty"`
 	Basis     int            `json:"basis,omitempty"`
 	BasisMode string         `json:"basis_mode,omitempty"` // "fixed" | "auto" | ""
 	Justify   string         `json:"justify,omitempty"`    // "start"|"center"|"end"|"between"|"around"
@@ -72,7 +72,7 @@ func loadFixture(path string) (*fixture, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open fixture %q: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var fx fixture
 	dec := json.NewDecoder(f)
 	dec.DisallowUnknownFields()
@@ -137,8 +137,8 @@ func validateFixtureNode(fn *fixtureNode) error {
 	if fn.Grow < 0 {
 		return fmt.Errorf("node %q: grow must be >= 0, got %v", fn.Label, fn.Grow)
 	}
-	if fn.Shrink < 0 {
-		return fmt.Errorf("node %q: shrink must be >= 0, got %v", fn.Label, fn.Shrink)
+	if fn.Shrink != nil && *fn.Shrink < 0 {
+		return fmt.Errorf("node %q: shrink must be >= 0, got %v", fn.Label, *fn.Shrink)
 	}
 	if fn.Basis < 0 {
 		return fmt.Errorf("node %q: basis must be >= 0, got %d", fn.Label, fn.Basis)
@@ -177,15 +177,16 @@ func buildFixtureNode(fn *fixtureNode, index map[string]*FlexNode) (*FlexNode, e
 	basisMode, _ := parseBasisMode(fn.BasisMode)
 	justify, _ := parseJustify(fn.Justify)
 	align, _ := parseAlign(fn.Align)
-	node := &FlexNode{
-		Direction: dir,
-		Grow:      fn.Grow,
-		Shrink:    fn.Shrink,
-		Basis:     fn.Basis,
-		BasisMode: basisMode,
-		Justify:   justify,
-		Align:     align,
+	node := NewFlexNode()
+	node.Direction = dir
+	node.Grow = fn.Grow
+	if fn.Shrink != nil {
+		node.Shrink = *fn.Shrink
 	}
+	node.Basis = fn.Basis
+	node.BasisMode = basisMode
+	node.Justify = justify
+	node.Align = align
 	if fn.Intrinsic != nil {
 		w, h := fn.Intrinsic.W, fn.Intrinsic.H
 		node.Measure = func() (int, int) { return w, h }

@@ -4,7 +4,10 @@
 
 package layout
 
-import "math"
+import (
+	"math"
+	"sync"
+)
 
 // MaxChildren is the per-container child count cap. Containers with more
 // children than this trigger ErrInvalidDimension (R2-9 fixture size cap).
@@ -31,10 +34,10 @@ const (
 type BasisMode uint8
 
 const (
-	// BasisAuto: child's basis on the parent's main axis = its intrinsic
-	// size projected onto the parent's main axis.
+	// BasisAuto uses the child's intrinsic size projected onto the parent's
+	// main axis.
 	BasisAuto BasisMode = iota
-	// BasisFixed: child uses Basis (cell count) as its starting main-axis
+	// BasisFixed uses Basis (cell count) as the child's starting main-axis
 	// size, ignoring intrinsic for sizing (intrinsic still feeds the
 	// parent's intrinsic accounting in nested containers).
 	BasisFixed
@@ -45,10 +48,10 @@ const (
 // once per leaf per Layout call (R2-7 call-count contract; enforced
 // internally via the per-Layout measure cache + re-entry guard).
 //
-// The function MUST NOT recursively invoke Layout on the same Node or
-// call back into another Node's IntrinsicFn that transitively reaches
-// the same Node — that pattern is the measurement-callback re-entry
-// cycle detected by ErrLayoutCycle (R2-8).
+// The function MUST NOT recursively invoke Layout on the same Node via
+// the same Layouter instance or call back into another Node's IntrinsicFn
+// that transitively reaches the same Node — that pattern is the
+// measurement-callback re-entry cycle detected by ErrLayoutCycle (R2-8).
 type IntrinsicFn func() (width, height int)
 
 // FlexNode is one node in the input tree fed to Layout.
@@ -120,15 +123,20 @@ func (n *FlexNode) Intrinsic() (int, int) {
 // flexLayouter is the production Layouter implementation backed by the
 // 4-phase DFS algorithm promoted from the spec-0.12.5 spike (outcome A).
 //
-// It is stateless; per-call state lives entirely on the stack of
-// Layout / layoutTree (the metas map + measure cache).
-type flexLayouter struct{}
+// It only carries a same-node re-entry guard; per-call layout state lives
+// entirely on the stack of Layout / layoutTree (the metas map + measure
+// cache). The guard catches measurement callbacks that call Layout again
+// on the same active node through the same Layouter instance.
+type flexLayouter struct {
+	mu     sync.Mutex
+	active map[*FlexNode]bool
+}
 
 // NewFlexLayouter returns a production-grade Yoga-like flex Layouter
 // implementing the spec-1.1 6-dim minimal subset (direction, grow,
 // shrink, basis, justify, align).
 func NewFlexLayouter() Layouter {
-	return flexLayouter{}
+	return &flexLayouter{}
 }
 
 // Layout runs the 4-phase Yoga-subset algorithm and returns the
@@ -157,8 +165,11 @@ func NewFlexLayouter() Layouter {
 // Complexity: O(N) total node visits across all phases (N = tree size).
 //
 // Errors: see Layouter interface godoc in layout.go.
-func (flexLayouter) Layout(root Node, viewport Box) (map[Node]Box, error) {
+func (l *flexLayouter) Layout(root Node, viewport Box) (map[Node]Box, error) {
 	if viewport.Width <= 0 || viewport.Height <= 0 {
+		return nil, ErrInvalidDimension
+	}
+	if viewport.Width > math.MaxInt32 || viewport.Height > math.MaxInt32 {
 		return nil, ErrInvalidDimension
 	}
 	if root == nil {
@@ -173,15 +184,25 @@ func (flexLayouter) Layout(root Node, viewport Box) (map[Node]Box, error) {
 		if w < 0 || h < 0 {
 			return nil, ErrInvalidDimension
 		}
-		return map[Node]Box{root: {X: viewport.X, Y: viewport.Y, Width: viewport.Width, Height: viewport.Height}}, nil
+		return map[Node]Box{root: {
+			X:      viewport.X,
+			Y:      viewport.Y,
+			Width:  clampToViewport(w, viewport.Width),
+			Height: clampToViewport(h, viewport.Height),
+		}}, nil
 	}
+	if !l.enterNode(fr) {
+		return nil, ErrLayoutCycle
+	}
+	defer l.leaveNode(fr)
+
 	if err := validateTree(fr); err != nil {
 		return nil, err
 	}
 
 	metas := make(map[*FlexNode]*meta)
 	cache := newMeasureCache()
-	if err := intrinsicPass(fr, nil, metas, cache); err != nil {
+	if err := l.intrinsicPass(fr, nil, metas, cache); err != nil {
 		return nil, err
 	}
 
@@ -203,6 +224,25 @@ func (flexLayouter) Layout(root Node, viewport Box) (map[Node]Box, error) {
 	return result, nil
 }
 
+func (l *flexLayouter) enterNode(node *FlexNode) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.active == nil {
+		l.active = make(map[*FlexNode]bool)
+	}
+	if l.active[node] {
+		return false
+	}
+	l.active[node] = true
+	return true
+}
+
+func (l *flexLayouter) leaveNode(node *FlexNode) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.active, node)
+}
+
 // meta is internal accounting attached to each node during a single
 // Layout pass. Both intrinsic and final sizes are stored as 2D (w, h)
 // in viewport coordinates; main/cross projection happens at use sites.
@@ -216,13 +256,22 @@ type meta struct {
 }
 
 // validateTree walks the tree once before phase A to check structural
-// invariants (no negative grow/shrink/basis; child count ≤ MaxChildren).
+// invariants (no negative grow/shrink/basis; child count ≤ MaxChildren;
+// no duplicate node references).
 // Returning ErrInvalidDimension here fails fast with a single error
 // before any allocation in metas.
 func validateTree(node *FlexNode) error {
+	return validateTreeNode(node, make(map[*FlexNode]bool))
+}
+
+func validateTreeNode(node *FlexNode, seen map[*FlexNode]bool) error {
 	if node == nil {
 		return nil
 	}
+	if seen[node] {
+		return ErrInvalidDimension
+	}
+	seen[node] = true
 	if node.Grow < 0 || node.Shrink < 0 {
 		return ErrInvalidDimension
 	}
@@ -233,7 +282,10 @@ func validateTree(node *FlexNode) error {
 		return ErrInvalidDimension
 	}
 	for _, c := range node.Children {
-		if err := validateTree(c); err != nil {
+		if c == nil {
+			return ErrInvalidDimension
+		}
+		if err := validateTreeNode(c, seen); err != nil {
 			return err
 		}
 	}
@@ -245,11 +297,17 @@ func validateTree(node *FlexNode) error {
 // max along its own cross axis. Leaf intrinsic comes from the measure
 // cache (one Intrinsic() call per leaf per Layout call; R2-7 + R2-8
 // re-entry detection).
-func intrinsicPass(node *FlexNode, parent *FlexNode, metas map[*FlexNode]*meta, cache *measureCache) error {
+func (l *flexLayouter) intrinsicPass(node *FlexNode, parent *FlexNode, metas map[*FlexNode]*meta, cache *measureCache) error {
 	m := &meta{parent: parent}
 	metas[node] = m
 	if len(node.Children) == 0 {
 		if node.Measure != nil {
+			if parent != nil {
+				if !l.enterNode(node) {
+					return ErrLayoutCycle
+				}
+				defer l.leaveNode(node)
+			}
 			w, h, err := cache.measure(node)
 			if err != nil {
 				return err
@@ -265,7 +323,7 @@ func intrinsicPass(node *FlexNode, parent *FlexNode, metas map[*FlexNode]*meta, 
 	sumMain := 0
 	maxCross := 0
 	for _, child := range node.Children {
-		if err := intrinsicPass(child, node, metas, cache); err != nil {
+		if err := l.intrinsicPass(child, node, metas, cache); err != nil {
 			return err
 		}
 		cm := metas[child]
@@ -330,6 +388,9 @@ func distributePass(node *FlexNode, metas map[*FlexNode]*meta) error {
 			for i, child := range node.Children {
 				share := int(float64(remainder) * (child.Grow / totalGrow))
 				mainSizes[i] = bases[i] + share
+				if mainSizes[i] > math.MaxInt32 || used > math.MaxInt32-mainSizes[i] {
+					return ErrInvalidDimension
+				}
 				used += mainSizes[i]
 			}
 			leftover := parentMain - used
@@ -455,6 +516,13 @@ func crossOf(dir Direction, w, h int) int {
 		return h
 	}
 	return w
+}
+
+func clampToViewport(size, viewportSize int) int {
+	if size > viewportSize {
+		return viewportSize
+	}
+	return size
 }
 
 func widthOf(parentDir Direction, mainSize, crossSize int) int {

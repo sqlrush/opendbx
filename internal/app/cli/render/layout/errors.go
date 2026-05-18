@@ -13,6 +13,8 @@ import "github.com/sqlrush/opendbx/internal/platform/errcode"
 //   - any FlexNode.Grow or FlexNode.Shrink < 0
 //   - any FlexNode.Basis < 0 when BasisMode == BasisFixed
 //   - any leaf's Intrinsic() callback returns a negative value
+//   - any Children slice contains a nil child
+//   - any FlexNode pointer appears more than once in the tree
 //   - any container has more than MaxChildren (1000) children
 //   - cumulative main-axis sum overflows int32
 //
@@ -24,17 +26,15 @@ import "github.com/sqlrush/opendbx/internal/platform/errcode"
 var ErrInvalidDimension = errcode.Register(
 	"RENDER.INVALID_DIMENSION",
 	"flex layout received an invalid dimension or tree shape",
-	"check viewport > 0, grow/shrink ≥ 0, basis ≥ 0, intrinsic ≥ 0, children ≤ 1000 per container, and no main-axis sum overflow",
+	"check viewport > 0, grow/shrink ≥ 0, basis ≥ 0, intrinsic ≥ 0, children are non-nil, no node is shared by multiple parents, children ≤ 1000 per container, and no main-axis sum overflow",
 )
 
 // ErrLayoutCycle is returned by Layouter.Layout when an Intrinsic()
-// callback re-enters the layout measurement of the same Node
-// (A.Intrinsic() → B.Intrinsic() → A.Intrinsic()). spec-1.1 R2-8
-// explicitly scopes cycle detection to measurement callback re-entry
-// only; child graph cycles (a Children list that loops back on
-// itself) are caller responsibility — the Node interface exposes no
-// Children() API for the layout side to enumerate, so the cycle would
-// manifest as unbounded recursion in caller-controlled code.
+// callback re-enters layout on the same active Node through the same
+// Layouter instance (A.Intrinsic() → Layout(A)). spec-1.1 R2-8
+// explicitly scopes cycle detection to same-layouter measurement callback
+// re-entry only; duplicate FlexNode references and FlexNode graph cycles
+// are rejected as ErrInvalidDimension during validation.
 //
 //nolint:gochecknoglobals // spec-0.6 contract: errcode sentinels are package-level.
 var ErrLayoutCycle = errcode.Register(

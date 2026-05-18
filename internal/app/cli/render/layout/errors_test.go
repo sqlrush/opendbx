@@ -112,6 +112,46 @@ func TestLayout_TooManyChildren(t *testing.T) {
 	}
 }
 
+func TestLayout_NilChild(t *testing.T) {
+	t.Parallel()
+	root := NewFlexNode()
+	root.Children = []*FlexNode{nil}
+	_, err := NewFlexLayouter().Layout(root, Box{Width: 80, Height: 1})
+	if !errors.Is(err, ErrInvalidDimension) {
+		t.Errorf("nil child err = %v, want ErrInvalidDimension", err)
+	}
+}
+
+func TestLayout_ViewportExceedsInt32(t *testing.T) {
+	t.Parallel()
+	root := NewFlexNode()
+	_, err := NewFlexLayouter().Layout(root, Box{Width: math.MaxInt32 + 1, Height: 1})
+	if !errors.Is(err, ErrInvalidDimension) {
+		t.Errorf("oversized viewport err = %v, want ErrInvalidDimension", err)
+	}
+}
+
+func TestLayout_DuplicateChildReference(t *testing.T) {
+	t.Parallel()
+	child := NewFlexNode()
+	root := NewFlexNode()
+	root.Children = []*FlexNode{child, child}
+	_, err := NewFlexLayouter().Layout(root, Box{Width: 80, Height: 1})
+	if !errors.Is(err, ErrInvalidDimension) {
+		t.Errorf("duplicate child err = %v, want ErrInvalidDimension", err)
+	}
+}
+
+func TestLayout_SelfReferentialChild(t *testing.T) {
+	t.Parallel()
+	root := NewFlexNode()
+	root.Children = []*FlexNode{root}
+	_, err := NewFlexLayouter().Layout(root, Box{Width: 80, Height: 1})
+	if !errors.Is(err, ErrInvalidDimension) {
+		t.Errorf("self-referential child err = %v, want ErrInvalidDimension", err)
+	}
+}
+
 func TestLayout_MaxIntOverflow(t *testing.T) {
 	t.Parallel()
 	// Three children whose intrinsic widths sum overflows int32.
@@ -126,25 +166,51 @@ func TestLayout_MaxIntOverflow(t *testing.T) {
 }
 
 // TestLayout_CycleViaIntrinsicCallback verifies that an Intrinsic
-// callback recursively calling itself via the Layouter trips
-// ErrLayoutCycle. The callback registers itself with a closure that
-// re-enters the layout measure path via a sentinel.
+// callback recursively calling Layout on the same node through the same
+// Layouter instance trips ErrLayoutCycle at the public API boundary.
 func TestLayout_CycleViaIntrinsicCallback(t *testing.T) {
 	t.Parallel()
-	// We cannot reach the per-Layout-call measureCache from outside,
-	// so this test exercises the cache directly (covered also by
-	// cache_test.go TestMeasureCache_CycleDetection). The integration
-	// here ensures the error type propagates through the public API.
-	c := newMeasureCache()
+	l := NewFlexLayouter()
 	var n *FlexNode
 	var innerErr error
-	n = &FlexNode{Measure: func() (int, int) {
-		_, _, innerErr = c.measure(n)
+	n = NewFlexNode()
+	n.Measure = func() (int, int) {
+		_, innerErr = l.Layout(n, Box{Width: 1, Height: 1})
 		return 1, 1
-	}}
-	_, _, _ = c.measure(n)
+	}
+
+	_, err := l.Layout(n, Box{Width: 1, Height: 1})
+	if err != nil {
+		t.Fatalf("outer Layout err = %v, want nil; inner re-entry should fail", err)
+	}
 	if !errors.Is(innerErr, ErrLayoutCycle) {
 		t.Errorf("cycle err = %v, want ErrLayoutCycle", innerErr)
+	}
+}
+
+func TestLayout_ChildMeasureReentryViaPublicLayout(t *testing.T) {
+	t.Parallel()
+	l := NewFlexLayouter()
+	child := NewFlexNode()
+	root := NewFlexNode()
+	root.Children = []*FlexNode{child}
+
+	calls := 0
+	var innerErr error
+	child.Measure = func() (int, int) {
+		calls++
+		if calls == 1 {
+			_, innerErr = l.Layout(child, Box{Width: 1, Height: 1})
+		}
+		return 1, 1
+	}
+
+	_, err := l.Layout(root, Box{Width: 1, Height: 1})
+	if err != nil {
+		t.Fatalf("outer Layout err = %v, want nil; child re-entry should fail", err)
+	}
+	if !errors.Is(innerErr, ErrLayoutCycle) {
+		t.Errorf("child re-entry err = %v, want ErrLayoutCycle", innerErr)
 	}
 }
 

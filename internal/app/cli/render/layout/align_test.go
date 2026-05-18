@@ -57,6 +57,14 @@ func TestApplyAlign_OversizeIntrinsic(t *testing.T) {
 	}
 }
 
+func TestApplyAlign_UnknownFallsBackToStretch(t *testing.T) {
+	t.Parallel()
+	size, off := applyAlign(Align(255), 10, 3)
+	if size != 10 || off != 0 {
+		t.Errorf("unknown align fallback: size=%d off=%d, want 10/0", size, off)
+	}
+}
+
 // Integration: align wires through Layout. Row direction, Align=Center.
 func TestLayout_AlignCenter_Row(t *testing.T) {
 	t.Parallel()
