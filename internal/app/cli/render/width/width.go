@@ -38,6 +38,25 @@ func Width(s string) int {
 	return condition.StringWidth(s)
 }
 
+// RuneWidth returns the visual column width of a single rune r under
+// EastAsianWidth=false. ASCII fast path (r ≤ 0x7F → 1) avoids string
+// allocation + runewidth scan for the dominant common case; non-ASCII
+// runes delegate to Width(string(r)) using the package condition.
+//
+// Practical return values: 0 (combining marks / zero-width), 1 (narrow,
+// ASCII / Latin), or 2 (East Asian wide / CJK). Callers should treat
+// values other than 2 as narrow (1-cell main write, no continuation).
+//
+// Per-rune SSOT: spec-0.13 § 11.7 errata adds this fn so callers do
+// not scatter ASCII branches. buffer.SetCell uses RuneWidth(c.Ch) to
+// auto-detect wide rune continuation.
+func RuneWidth(r rune) int {
+	if r >= 0 && r <= 0x7F {
+		return 1
+	}
+	return condition.RuneWidth(r)
+}
+
 // Wrap breaks s into lines, each visually ≤ cols columns. Lines are split
 // on rune boundaries; no hyphenation or word-aware wrapping (callers
 // needing CJK-aware word breaks should pre-process with a higher-level
