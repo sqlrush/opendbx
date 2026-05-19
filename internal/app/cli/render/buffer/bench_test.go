@@ -27,16 +27,16 @@ func BenchmarkSetCell_ASCII_Small(b *testing.B) {
 	}
 }
 
-// BenchmarkSetCell_ASCII_Large runs SetCell over a 500×200 (large
-// bucket, 100k cells) grid — proves the ASCII fast path scales.
-func BenchmarkSetCell_ASCII_Large(b *testing.B) {
-	g, _ := NewGrid(500, 200)
+// BenchmarkSetCell_ASCII_1000x1000 runs SetCell over a 1000×1000
+// grid — the spec-1.2 D-5 acceptance size for the ASCII fast path.
+func BenchmarkSetCell_ASCII_1000x1000(b *testing.B) {
+	g, _ := NewGrid(1000, 1000)
 	cell := Cell{Ch: 'a'}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		for y := 0; y < 200; y++ {
-			for x := 0; x < 500; x++ {
+		for y := 0; y < 1000; y++ {
+			for x := 0; x < 1000; x++ {
 				g.SetCell(x, y, cell)
 			}
 		}
@@ -61,29 +61,29 @@ func BenchmarkSetCell_CJK_Small(b *testing.B) {
 	}
 }
 
-// BenchmarkSetCell_CJK_Large fills a 500×200 grid with CJK runes.
-func BenchmarkSetCell_CJK_Large(b *testing.B) {
-	g, _ := NewGrid(500, 200)
+// BenchmarkSetCell_CJK_1000x1000 fills a 1000×1000 grid with CJK runes.
+func BenchmarkSetCell_CJK_1000x1000(b *testing.B) {
+	g, _ := NewGrid(1000, 1000)
 	cell := Cell{Ch: '中'}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		for y := 0; y < 200; y++ {
-			for x := 0; x < 500; x += 2 {
+		for y := 0; y < 1000; y++ {
+			for x := 0; x < 1000; x += 2 {
 				g.SetCell(x, y, cell)
 			}
 		}
 	}
 }
 
-// BenchmarkReset_Large bumps generation on a 500×200 grid — should
+// BenchmarkReset_1000x1000 bumps generation on a 1000×1000 grid — should
 // be O(1) regardless of grid size (target: ≥ 100× faster than the
 // memset baseline below).
-func BenchmarkReset_Large(b *testing.B) {
-	g, _ := NewGrid(500, 200)
+func BenchmarkReset_1000x1000(b *testing.B) {
+	g, _ := NewGrid(1000, 1000)
 	// Pre-fill so each Reset has live cells to invalidate.
-	for y := 0; y < 200; y++ {
-		for x := 0; x < 500; x++ {
+	for y := 0; y < 1000; y++ {
+		for x := 0; x < 1000; x++ {
 			g.SetCell(x, y, Cell{Ch: 'a'})
 		}
 	}
@@ -94,12 +94,12 @@ func BenchmarkReset_Large(b *testing.B) {
 	}
 }
 
-// BenchmarkReset_Memset_Baseline emulates the would-be O(N) memset
-// strategy on a 500×200 grid for comparison with BenchmarkReset_Large.
-func BenchmarkReset_Memset_Baseline(b *testing.B) {
-	g, _ := NewGrid(500, 200)
-	for y := 0; y < 200; y++ {
-		for x := 0; x < 500; x++ {
+// BenchmarkReset_Memset_1000x1000_Baseline emulates the would-be O(N)
+// memset strategy on a 1000×1000 grid for comparison with BenchmarkReset_1000x1000.
+func BenchmarkReset_Memset_1000x1000_Baseline(b *testing.B) {
+	g, _ := NewGrid(1000, 1000)
+	for y := 0; y < 1000; y++ {
+		for x := 0; x < 1000; x++ {
 			g.SetCell(x, y, Cell{Ch: 'a'})
 		}
 	}

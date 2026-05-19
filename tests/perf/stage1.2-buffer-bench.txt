@@ -2,14 +2,14 @@ goos: darwin
 goarch: arm64
 pkg: github.com/sqlrush/opendbx/internal/app/cli/render/buffer
 cpu: Apple M5 Max
-BenchmarkSetCell_ASCII_Small-18          	  651870	      1824 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSetCell_ASCII_Large-18          	    6532	    185064 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSetCell_CJK_Small-18            	  270975	      4342 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSetCell_CJK_Large-18            	    2770	    433947 ns/op	       0 B/op	       0 allocs/op
-BenchmarkReset_Large-18                  	1000000000	         0.3869 ns/op	       0 B/op	       0 allocs/op
-BenchmarkReset_Memset_Baseline-18        	  138909	      8629 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBufferPool_AcquireRelease-18    	100000000	        10.01 ns/op	       0 B/op	       0 allocs/op
-BenchmarkResize_Grow-18                  	  124614	      9813 ns/op	  172033 B/op	       4 allocs/op
-BenchmarkResize_Shrink-18                	   66570	     18082 ns/op	  344069 B/op	       4 allocs/op
+BenchmarkSetCell_ASCII_Small-18                	  326202	      3668 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSetCell_ASCII_1000x1000-18            	     289	   4154743 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSetCell_CJK_Small-18                  	  140042	      8571 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSetCell_CJK_1000x1000-18              	     138	   8726162 ns/op	       0 B/op	       0 allocs/op
+BenchmarkReset_1000x1000-18                    	1000000000	         0.4270 ns/op	       0 B/op	       0 allocs/op
+BenchmarkReset_Memset_1000x1000_Baseline-18    	   13644	     87843 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBufferPool_AcquireRelease-18          	98441013	        11.88 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResize_Grow-18                        	  128402	      9679 ns/op	  172034 B/op	       4 allocs/op
+BenchmarkResize_Shrink-18                      	   67132	     17605 ns/op	  344069 B/op	       4 allocs/op
 PASS
-ok  	github.com/sqlrush/opendbx/internal/app/cli/render/buffer	11.379s
+ok  	github.com/sqlrush/opendbx/internal/app/cli/render/buffer	14.094s

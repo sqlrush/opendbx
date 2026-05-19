@@ -94,12 +94,51 @@ func (g *Grid) SetCell(x, y int, c Cell) {
 	if x < 0 || x >= g.cols || y < 0 || y >= g.rows {
 		return
 	}
+	g.clearWideOverlap(x, y)
 	idx := y*g.cols + x
 	g.cells[idx] = c
 	g.cellGen[idx] = g.generation
 	if width.RuneWidth(c.Ch) == 2 && x+1 < g.cols {
 		g.setCellRaw(x+1, y, Cell{Ch: WideContinuation, St: c.St})
 	}
+}
+
+// clearWideOverlap preserves the wide-rune cell invariant before a write:
+// replacing either half of an existing wide rune must clear the other half.
+// Without this, narrow overwrites leave stale continuation cells and writes
+// into a continuation cell leave an overlapping wide main cell behind.
+func (g *Grid) clearWideOverlap(x, y int) {
+	old, ok := g.liveCell(x, y)
+	if !ok {
+		return
+	}
+	if IsContinuation(old) {
+		if x == 0 {
+			return
+		}
+		left, ok := g.liveCell(x-1, y)
+		if ok && width.RuneWidth(left.Ch) == 2 {
+			g.setCellRaw(x-1, y, Cell{})
+		}
+		return
+	}
+	if width.RuneWidth(old.Ch) == 2 && x+1 < g.cols {
+		right, ok := g.liveCell(x+1, y)
+		if ok && IsContinuation(right) {
+			g.setCellRaw(x+1, y, Cell{})
+		}
+	}
+}
+
+func (g *Grid) liveCell(x, y int) (Cell, bool) {
+	if x < 0 || x >= g.cols || y < 0 || y >= g.rows {
+		return Cell{}, false
+	}
+	idx := y*g.cols + x
+	if g.cellGen[idx] != g.generation {
+		return Cell{}, false
+	}
+	return g.cells[idx], true
 }
 
 // setCellRaw writes c at (x, y) without running width detection.

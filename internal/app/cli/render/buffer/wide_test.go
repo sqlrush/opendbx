@@ -110,23 +110,35 @@ func TestSetCell_WideOverwrite_OverwritesContinuation(t *testing.T) {
 	}
 }
 
-// TestSetCell_WideThenNarrow_LeavesStaleContinuation documents the
-// current contract: writing a narrow rune over a previous wide rune
-// main cell does NOT auto-clear the next column's continuation. The
-// caller (spec-1.3 optimizer / spec-1.7 block composer) is expected
-// to clear that cell explicitly when the layout changes.
-func TestSetCell_WideThenNarrow_LeavesStaleContinuation(t *testing.T) {
+// TestSetCell_WideThenNarrow_ClearsContinuation pins the grid invariant:
+// writing a narrow rune over a previous wide-rune main cell must clear the
+// stale continuation column, otherwise the ANSI optimizer would skip it.
+func TestSetCell_WideThenNarrow_ClearsContinuation(t *testing.T) {
 	t.Parallel()
 	g, _ := NewGrid(4, 1)
 	g.SetCell(0, 0, Cell{Ch: '中'})
-	// Overwriting the main cell with a narrow rune leaves the
-	// continuation cell at (1, 0) unchanged.
 	g.SetCell(0, 0, Cell{Ch: 'a'})
 	if g.Cell(0, 0).Ch != 'a' {
 		t.Errorf("Cell(0,0) = %q, want 'a'", g.Cell(0, 0).Ch)
 	}
-	if !IsContinuation(g.Cell(1, 0)) {
-		t.Errorf("Cell(1,0) = %+v, want continuation (caller responsibility to clear)", g.Cell(1, 0))
+	if got := g.Cell(1, 0); got != (Cell{}) {
+		t.Errorf("Cell(1,0) = %+v, want zero after wide main overwrite", got)
+	}
+}
+
+// TestSetCell_ContinuationThenNarrow_ClearsWideMain pins the symmetric
+// invariant: writing into the continuation half of an existing wide rune
+// must clear the left main cell to avoid overlapping terminal columns.
+func TestSetCell_ContinuationThenNarrow_ClearsWideMain(t *testing.T) {
+	t.Parallel()
+	g, _ := NewGrid(4, 1)
+	g.SetCell(0, 0, Cell{Ch: '中'})
+	g.SetCell(1, 0, Cell{Ch: 'a'})
+	if got := g.Cell(0, 0); got != (Cell{}) {
+		t.Errorf("Cell(0,0) = %+v, want zero after continuation overwrite", got)
+	}
+	if got := g.Cell(1, 0); got.Ch != 'a' {
+		t.Errorf("Cell(1,0) = %+v, want Ch='a'", got)
 	}
 }
 

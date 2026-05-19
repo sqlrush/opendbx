@@ -124,8 +124,12 @@ func TestBufferPool_Release_ByBackingCapacity(t *testing.T) {
 		t.Skipf("medium acquire ended up with small backing cap=%d (allocator-dependent); skipping bucket-by-cap assertion",
 			wantCap)
 	}
-	// Shrink to small dims; backing slice retains its capacity.
-	medium.Resize(20, 5)
+	// Shrink to small dims without changing cols; Resize keeps the backing
+	// slice capacity, so Release must still choose the medium pool by cap.
+	medium.Resize(150, 5)
+	if cap(medium.cells) <= SmallCapacity {
+		t.Fatalf("post-shrink backing cap=%d, want > SmallCapacity to test bucket-by-cap", cap(medium.cells))
+	}
 	pool.Release(medium)
 
 	// Re-acquire from the small bucket: must NOT receive our medium-

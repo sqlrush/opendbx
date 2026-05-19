@@ -41,6 +41,8 @@ import (
 // Release from multiple goroutines (sync.Pool semantics). Individual
 // *Grid instances are NOT concurrent-safe (spec-0.13 D-3 single-owner
 // contract).
+//
+//nolint:revive // spec-1.2 D-2: BufferPool is the spec-pinned render term.
 type BufferPool struct {
 	small  sync.Pool
 	medium sync.Pool
