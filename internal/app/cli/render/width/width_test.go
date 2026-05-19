@@ -38,6 +38,52 @@ func TestWidth(t *testing.T) {
 	}
 }
 
+// --- RuneWidth (spec-1.2 D-2 / spec-0.13 § 11.7 errata) -------------
+
+func TestRuneWidth(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		r    rune
+		want int
+	}{
+		{"ascii_null", 0x00, 1}, // NUL — ASCII fast path returns 1
+		{"ascii_space", ' ', 1},
+		{"ascii_zero", '0', 1},
+		{"ascii_uppercase_a", 'A', 1},
+		{"ascii_tilde_max_ascii", 0x7E, 1},
+		{"ascii_del_boundary", 0x7F, 1}, // exact boundary of ASCII fast path
+		{"latin_a_grave", 0xE0, 1},      // first printable non-ASCII (Latin-1 'à') — delegate
+		{"cjk_zhong", '中', 2},
+		{"cjk_wen", '文', 2},
+		{"hiragana_a", 'あ', 2},
+		{"combining_acute", '́', 0}, // combining mark — width 0
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := RuneWidth(c.r); got != c.want {
+				t.Errorf("RuneWidth(%q U+%04X) = %d, want %d", c.r, c.r, got, c.want)
+			}
+		})
+	}
+}
+
+// TestRuneWidth_NegativeRune ensures a negative rune (e.g. the
+// WideContinuation sentinel rune = -1 in the buffer package) does not
+// crash and returns a defined narrow width. The ASCII fast path checks
+// r >= 0 explicitly so negative runes fall through to runewidth which
+// is documented to return 1 for invalid runes.
+func TestRuneWidth_NegativeRune(t *testing.T) {
+	t.Parallel()
+	// Negative rune — should not panic; runewidth treats invalid runes as 1.
+	got := RuneWidth(-1)
+	if got < 0 || got > 2 {
+		t.Errorf("RuneWidth(-1) = %d, want in {0, 1, 2}", got)
+	}
+}
+
 // --- Wrap ------------------------------------------------------------
 
 func TestWrap(t *testing.T) {
