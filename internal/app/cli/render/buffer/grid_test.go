@@ -185,6 +185,37 @@ func TestGrid_Resize_Shrink_DropsOutside(t *testing.T) {
 	}
 }
 
+// TestGrid_Resize_ShrinkRowsOnly_InPlace exercises the fast-path
+// reslice branch (same cols, rows shrink, no reallocation). spec-1.2
+// R3 (go-reviewer LOW-1): the general per-row copy path is well
+// covered, but the cheaper reslice branch deserves its own assertion
+// that surviving rows keep their (x, y) coordinates AND that the
+// backing capacity is unchanged (so Release routes to the original
+// bucket per the cap-not-dim contract).
+func TestGrid_Resize_ShrinkRowsOnly_InPlace(t *testing.T) {
+	t.Parallel()
+	g, _ := NewGrid(10, 5)
+	g.SetCell(0, 0, Cell{Ch: 'A'})
+	g.SetCell(9, 0, Cell{Ch: 'B'})
+	g.SetCell(0, 2, Cell{Ch: 'C'})
+	g.SetCell(9, 4, Cell{Ch: 'D'}) // will be dropped
+	wantCap := cap(g.cells)
+	g.Resize(10, 3) // same cols, rows shrink → fast-path reslice
+	cols, rows := g.Size()
+	if cols != 10 || rows != 3 {
+		t.Errorf("Resize size = %d,%d, want 10,3", cols, rows)
+	}
+	if cap(g.cells) != wantCap {
+		t.Errorf("backing cap changed under fast-path reslice: %d → %d", wantCap, cap(g.cells))
+	}
+	if g.Cell(0, 0).Ch != 'A' || g.Cell(9, 0).Ch != 'B' || g.Cell(0, 2).Ch != 'C' {
+		t.Error("surviving cells did not retain (x,y) after fast-path shrink")
+	}
+	if got := g.Cell(9, 4); got != (Cell{}) {
+		t.Errorf("Cell(9,4) post-shrink = %+v, want zero (OOB)", got)
+	}
+}
+
 func TestGrid_Resize_Same_NoOp(t *testing.T) {
 	t.Parallel()
 	g, _ := NewGrid(10, 5)
@@ -249,6 +280,7 @@ func TestGrid_Resize_Invalid_Ignored(t *testing.T) {
 	g.SetCell(0, 0, Cell{Ch: 'A'})
 	g.Resize(-1, 5)
 	g.Resize(10, 0)
+	g.Resize(0, 0)         // spec-1.2 R3 LOW: explicit (0,0) edge case
 	g.Resize(70000, 70000) // overflow
 	cols, rows := g.Size()
 	if cols != 10 || rows != 5 {

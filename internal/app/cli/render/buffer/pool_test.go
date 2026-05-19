@@ -58,6 +58,7 @@ func TestBufferPool_Acquire_InvalidDims(t *testing.T) {
 	}{
 		{"zero_cols", 0, 24},
 		{"zero_rows", 80, 0},
+		{"zero_both", 0, 0}, // spec-1.2 R3 LOW: explicit (0,0) edge case
 		{"negative", -1, 24},
 		{"overflow", 70_000, 70_000},
 	}
@@ -141,6 +142,39 @@ func TestBufferPool_Release_ByBackingCapacity(t *testing.T) {
 	if cap(small.cells) > SmallCapacity {
 		t.Errorf("small Acquire returned Grid with cap=%d > SmallCapacity=%d — small pool polluted",
 			cap(small.cells), SmallCapacity)
+	}
+}
+
+// TestBufferPool_LargeBucket_ReuseRoundTrip — spec-1.2 R3 (claude
+// post-impl MED-1): explicit Acquire → Release → Acquire for a Grid
+// sized at the large bucket (≤ LargeCapacity), to exercise the large
+// pool's Release/warm-Acquire path independent of the small/medium
+// buckets covered above.
+func TestBufferPool_LargeBucket_ReuseRoundTrip(t *testing.T) {
+	t.Parallel()
+	pool := NewBufferPool()
+	// 400 × 150 = 60 000 cells; > MediumCapacity, ≤ LargeCapacity.
+	g1, err := pool.Acquire(400, 150)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cap(g1.cells) <= MediumCapacity {
+		t.Fatalf("large Acquire ended up with cap=%d, want > MediumCapacity=%d", cap(g1.cells), MediumCapacity)
+	}
+	g1.SetCell(0, 0, Cell{Ch: 'L'})
+	g1.SetCell(399, 149, Cell{Ch: 'X'})
+	pool.Release(g1)
+
+	g2, err := pool.Acquire(400, 150)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Released-then-reacquired Grid must read blank everywhere.
+	if got := g2.Cell(0, 0); got != (Cell{}) {
+		t.Errorf("large-bucket reacquire Cell(0,0) = %+v, want zero", got)
+	}
+	if got := g2.Cell(399, 149); got != (Cell{}) {
+		t.Errorf("large-bucket reacquire Cell(399,149) = %+v, want zero", got)
 	}
 }
 

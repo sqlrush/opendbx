@@ -133,21 +133,30 @@ func BenchmarkBufferPool_AcquireRelease(b *testing.B) {
 }
 
 // BenchmarkResize_Grow / BenchmarkResize_Shrink characterise the
-// per-row copy path triggered when cols changes.
+// per-row copy path triggered when cols changes. Setup grids are
+// pre-allocated before the timer starts so b.N measures Resize alone
+// (spec-1.2 R3: go-reviewer MED-2 — NewGrid inside b.N inflated the
+// reported allocs/op and obscured the per-row copy cost).
 func BenchmarkResize_Grow(b *testing.B) {
+	grids := make([]*Grid, b.N)
+	for i := range grids {
+		grids[i], _ = NewGrid(80, 24)
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		g, _ := NewGrid(80, 24)
-		g.Resize(120, 40)
+		grids[i].Resize(120, 40)
 	}
 }
 
 func BenchmarkResize_Shrink(b *testing.B) {
+	grids := make([]*Grid, b.N)
+	for i := range grids {
+		grids[i], _ = NewGrid(200, 60)
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		g, _ := NewGrid(200, 60)
-		g.Resize(80, 24)
+		grids[i].Resize(80, 24)
 	}
 }

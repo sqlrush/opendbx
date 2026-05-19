@@ -65,7 +65,8 @@ func NewGrid(cols, rows int) (*Grid, error) {
 // cells (whose generation does not match the current grid generation)
 // return the zero Cell{}; this is the post-Reset "cleared" state. The
 // spec-0.13 D-3 Buffer contract forbids panicking the render goroutine
-// on out-of-bounds reads.
+// on out-of-bounds reads; callers that wish to log OOB access can
+// reference the ErrOutOfBounds (RENDER.OUT_OF_BOUNDS) sentinel.
 func (g *Grid) Cell(x, y int) Cell {
 	if x < 0 || x >= g.cols || y < 0 || y >= g.rows {
 		return Cell{}
@@ -85,7 +86,9 @@ func (g *Grid) Cell(x, y int) Cell {
 //
 // Edge cases:
 //   - out-of-bounds (x, y) is a silent no-op (no panic per spec-0.13
-//     D-3 contract; callers should Size()-clamp before writing);
+//     D-3 contract; callers should Size()-clamp before writing). The
+//     ErrOutOfBounds (RENDER.OUT_OF_BOUNDS) sentinel documents this
+//     contract in errcode form for callers that want to instrument it;
 //   - wide rune at the last column (x == cols-1) writes only the main
 //     cell — the continuation is dropped silently. Higher-level
 //     measure logic (spec-1.7 block) should clamp via width.Width

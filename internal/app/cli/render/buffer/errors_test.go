@@ -18,3 +18,13 @@ func TestErrInvalidDimension_Code(t *testing.T) {
 		t.Errorf("ErrInvalidDimension.Hint() should mention cols; got %q", ErrInvalidDimension.Hint())
 	}
 }
+
+func TestErrOutOfBounds_Code(t *testing.T) {
+	t.Parallel()
+	if ErrOutOfBounds.Code() != "RENDER.OUT_OF_BOUNDS" {
+		t.Errorf("ErrOutOfBounds.Code() = %q, want RENDER.OUT_OF_BOUNDS", ErrOutOfBounds.Code())
+	}
+	if !strings.Contains(ErrOutOfBounds.Hint(), "Size") {
+		t.Errorf("ErrOutOfBounds.Hint() should mention Size(); got %q", ErrOutOfBounds.Hint())
+	}
+}
