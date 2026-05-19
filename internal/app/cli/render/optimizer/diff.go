@@ -62,7 +62,7 @@ var _ Optimizer = (*DiffEngine)(nil)
 //     are skipped — the main cell at (x-1, y) has already been emitted
 //     and Driver.SetCell handles the wide-rune cursor advance.
 func (e *DiffEngine) Diff(prev, next buffer.Buffer) []Patch {
-	nc, nr := next.Size() // panics if next == nil (caller bug per godoc)
+	nc, nr := next.Size()
 	// Pre-size the patch slice. Modest hint for typical low-churn frames;
 	// append's geometric growth handles full-redraw spikes (R-5: total
 	// copy is amortized O(n) not O(n²)).

@@ -42,7 +42,6 @@ func TestPatchKinds_Values(t *testing.T) {
 		{"PatchResize", PatchResize, 3},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			if c.got != c.want {

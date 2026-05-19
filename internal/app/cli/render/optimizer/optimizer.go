@@ -38,6 +38,13 @@ const (
 )
 
 // Patch is a single minimal change to apply to the terminal driver.
+//
+// Field order is the spec-0.13 D-1 data contract — do NOT reorder for
+// padding. On arm64 the struct sits at 56 bytes with a 7-byte hole
+// after Kind (PatchKind is uint8 followed by int-aligned X); reordering
+// to (X, Y, NewCols, NewRows, Cell, Kind) only shifts the hole to the
+// tail because Cell embeds a rune (int32) + style.Style (int-aligned).
+// The padding is intrinsic to int alignment, not a fixable layout bug.
 type Patch struct {
 	Kind    PatchKind
 	X, Y    int

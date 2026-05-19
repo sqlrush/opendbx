@@ -24,6 +24,8 @@ func mustGrid(t testing.TB, cols, rows int) *buffer.Grid {
 	return g
 }
 
+// fillNarrow writes ch into every cell of g (narrow rune only; for
+// wide-rune fills caller must stride by 2 to avoid continuation overwrite).
 func fillNarrow(g *buffer.Grid, ch rune) {
 	cols, rows := g.Size()
 	c := buffer.Cell{Ch: ch}
@@ -330,10 +332,22 @@ func TestDiffEngine_Concurrent(t *testing.T) {
 	for gi := 0; gi < goroutines; gi++ {
 		go func(seed int) {
 			defer wg.Done()
+			// spec-1.3 R3 M-2 fix: do NOT call t.Fatalf (via mustGrid)
+			// from a non-test goroutine — Go 1.21+ testing.T panics on
+			// that pattern. Use buffer.NewGrid directly and accumulate
+			// errors via the atomic counter idiom.
 			for i := 0; i < iterations; i++ {
-				prev := mustGrid(t, 10, 5)
+				prev, err := buffer.NewGrid(10, 5)
+				if err != nil {
+					errs.Add(1)
+					return
+				}
 				prev.SetCell(seed%10, i%5, buffer.Cell{Ch: 'A'})
-				next := mustGrid(t, 10, 5)
+				next, err := buffer.NewGrid(10, 5)
+				if err != nil {
+					errs.Add(1)
+					return
+				}
 				next.SetCell(seed%10, i%5, buffer.Cell{Ch: 'B'})
 				patches := engine.Diff(prev, next)
 				if len(patches) != 1 || patches[0].Cell.Ch != 'B' {
