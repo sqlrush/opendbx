@@ -1,0 +1,11 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/sqlrush/opendbx/internal/app/cli/render/optimizer
+cpu: Apple M5 Max
+BenchmarkDiff_NoChange_1000x1000-18              	     154	   7640422 ns/op	    4096 B/op	       1 allocs/op
+BenchmarkDiff_FullChange_1000x1000-18            	      66	  18619962 ns/op	313217024 B/op	      33 allocs/op
+BenchmarkDiff_SparseChange_10pct_1000x1000-18    	     133	   8588929 ns/op	32256000 B/op	      23 allocs/op
+BenchmarkDiff_Resize_TriggerFullRedraw-18        	   12627	    100205 ns/op	 1069062 B/op	      10 allocs/op
+BenchmarkDiff_FirstFrame_NilPrev-18              	      69	  17966970 ns/op	313217054 B/op	      33 allocs/op
+PASS
+ok  	github.com/sqlrush/opendbx/internal/app/cli/render/optimizer	10.769s
