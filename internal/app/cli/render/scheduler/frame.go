@@ -111,8 +111,11 @@ func NewFrameScheduler(driver terminal.Driver, fps int, render RenderFn) *FrameS
 	}
 }
 
-// Schedule enqueues cmd at PriorityNormal and returns its CmdID
-// (spec-1.4 R2 H-6 caller correlation).
+// Schedule enqueues cmd at PriorityNormal as fire-and-forget. The
+// Scheduler interface signature (spec-0.13 D-1 FROZEN) returns nothing,
+// so callers that need a CmdID for ErrorMsg correlation must use
+// ScheduleAt instead (spec-1.4 R3 H-B + go-reviewer MED-1: godoc
+// honesty — signature can't return CmdID without breaking spec-0.13).
 func (s *FrameScheduler) Schedule(cmd Cmd) {
 	s.ScheduleAt(cmd, PriorityNormal)
 }
@@ -171,6 +174,15 @@ func (s *FrameScheduler) Run(ctx context.Context) error {
 	defer s.driver.Fini()
 	defer s.workers.Stop()
 	defer close(s.msgCh)
+	// spec-1.4 R3 M-A: release the final adopted lastFrame back to the
+	// pool on Run exit, otherwise the pool slowly leaks one Grid per
+	// scheduler lifecycle.
+	defer func() {
+		if s.lastFrame != nil {
+			s.pool.Release(s.lastFrame)
+			s.lastFrame = nil
+		}
+	}()
 
 	ticker := time.NewTicker(s.frameDeadline)
 	defer ticker.Stop()
@@ -189,9 +201,14 @@ func (s *FrameScheduler) Run(ctx context.Context) error {
 				continue
 			}
 			if res.panicErr != nil {
+				// spec-1.4 R3 H-A: wrap with %w so callers can use
+				// errors.Is(em.Err, ErrPanicRecovered) to programmatically
+				// detect scheduler panic-recovered errors (rule 7 errcode
+				// chain). %v alone produced a string-only error and made
+				// the registered sentinel effectively dead code.
 				s.emit(ErrorMsg{
 					CmdID:     CmdID(res.cmdID),
-					Err:       fmt.Errorf("%v", res.panicErr),
+					Err:       fmt.Errorf("%w: %v", ErrPanicRecovered, res.panicErr),
 					Stack:     res.stack,
 					Submitted: res.submitted,
 					Priority:  res.priority,
@@ -208,7 +225,7 @@ func (s *FrameScheduler) Run(ctx context.Context) error {
 //
 // spec-1.4 R2 CRIT-B: lastFrame ownership transfer happens exactly
 // once, at the very end. applyPatches NEVER mutates s.lastFrame.
-func (s *FrameScheduler) runFrame(ctx context.Context) {
+func (s *FrameScheduler) runFrame(_ context.Context) {
 	start := time.Now()
 	s.frame++
 
@@ -221,18 +238,19 @@ func (s *FrameScheduler) runFrame(ctx context.Context) {
 	// (spec-1.4 R2 H-2). If we panic before adopted=true, Release any
 	// acquired next. prev is unaffected: it stays referenced by
 	// s.lastFrame so the next frame can retry diff against the same
-	// state.
+	// state. spec-1.4 R3 M-C: capture debug.Stack() once and reuse.
 	defer func() {
 		if r := recover(); r != nil {
+			stack := debug.Stack()
 			slog.Error("frame panic recovered",
 				"panic", r,
 				"frame", s.frame,
 				"adopted", adopted,
-				"stack", string(debug.Stack()))
+				"stack", string(stack))
 			s.emit(ErrorMsg{
 				CmdID:    0, // frame-level panic has no Cmd identity
-				Err:      fmt.Errorf("frame panic: %v", r),
-				Stack:    debug.Stack(),
+				Err:      fmt.Errorf("%w: frame body: %v", ErrPanicRecovered, r),
+				Stack:    stack,
 				Priority: PriorityNormal,
 				Frame:    s.frame,
 			})
@@ -242,16 +260,21 @@ func (s *FrameScheduler) runFrame(ctx context.Context) {
 		}
 	}()
 
-	// Step 3: drain queue → submit to workers.
+	// Step 3: drain queue → submit to workers (non-blocking).
+	// spec-1.4 R3 user 决策 Option B: never block the frame loop on a
+	// full worker channel. peek + TrySubmit + leave-at-head means a
+	// failed submit retries naturally next frame; backpressure lives
+	// in the unbounded queue lane, not in this hot path.
 	for {
-		j, ok := s.queue.pop()
+		j, ok := s.queue.peek()
 		if !ok {
 			break
 		}
-		if err := s.workers.SubmitWithCtx(ctx, j); err != nil {
-			// ctx cancelled mid-drain or pool stopped. defer cleans up.
-			return
+		if !s.workers.TrySubmit(j) {
+			// jobs channel full or pool stopped; leave Cmd at queue head.
+			break
 		}
+		s.queue.dropHead()
 	}
 
 	// Step 4: acquire next.
@@ -276,7 +299,7 @@ func (s *FrameScheduler) runFrame(ctx context.Context) {
 		prevBuf = prev
 	}
 	patches := s.diff.Diff(prevBuf, next)
-	s.applyPatches(patches)
+	_ = s.applyPatches(patches) // sawResize ignored — currently informational only
 
 	// Step 7: Show + release prev.
 	s.driver.Show()
@@ -301,18 +324,20 @@ func (s *FrameScheduler) runFrame(ctx context.Context) {
 }
 
 // applyPatches translates optimizer.Patch into Driver.SetCell /
-// Driver.Resize calls.
+// Driver.Resize calls. The returned sawResize is true if at least one
+// PatchResize was applied this frame; callers may use it for logging
+// or metrics, but the next-frame fullRedraw is automatic via the
+// optimizer detecting size mismatch on the new lastFrame (spec-1.4 R3
+// H-D + R2.1: sawResize naming, not needsFullRedraw — the resize is
+// already fully applied in this frame's patch stream).
 //
 // spec-1.3 § 10 forward contract: Cell{} (Ch=0) must clear the cell —
 // adapter writes space ' ' since tcell has no well-defined Ch=0
-// behavior. The translation point is single (spec-1.4 D-4).
+// behavior. Single translation point (spec-1.4 D-4).
 //
 // spec-1.4 R2 CRIT-B: this function MUST NOT mutate s.lastFrame
-// ownership. PatchResize is applied to the driver only; subsequent
-// frames will detect the size mismatch via the optimizer and emit a
-// PatchResize again (or be replaced by the caller's new RenderFn
-// output).
-func (s *FrameScheduler) applyPatches(patches []optimizer.Patch) {
+// ownership; PatchResize is applied to the driver only.
+func (s *FrameScheduler) applyPatches(patches []optimizer.Patch) (sawResize bool) {
 	for _, p := range patches {
 		switch p.Kind {
 		case optimizer.PatchSetCell:
@@ -324,6 +349,8 @@ func (s *FrameScheduler) applyPatches(patches []optimizer.Patch) {
 			s.driver.SetCell(p.X, p.Y, ch, st)
 		case optimizer.PatchResize:
 			s.driver.Resize(p.NewCols, p.NewRows)
+			sawResize = true
 		}
 	}
+	return sawResize
 }

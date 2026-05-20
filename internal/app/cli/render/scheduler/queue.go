@@ -69,23 +69,70 @@ func (q *queue) push(j jobItem) {
 	}
 }
 
-// pop drains the highest-priority non-empty lane FIFO. Returns
-// (zero jobItem, false) on empty.
+// peek returns the head of the highest-priority non-empty lane WITHOUT
+// removing it. spec-1.4 R3 Option B: combined with dropHead, this lets
+// the frame loop attempt a non-blocking TrySubmit and leave the Cmd at
+// the queue head for the next frame if the worker channel is full —
+// so the UI frame loop is never blocked by background backpressure.
+func (q *queue) peek() (jobItem, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.high) > 0 {
+		return q.high[0], true
+	}
+	if len(q.normal) > 0 {
+		return q.normal[0], true
+	}
+	if len(q.idle) > 0 {
+		return q.idle[0], true
+	}
+	return jobItem{}, false
+}
+
+// dropHead removes the highest-priority lane's head. Pairs with peek
+// after a successful TrySubmit. The freed slot is nil'd out so the
+// underlying Cmd closure becomes GC-eligible (spec-1.4 R3 M-B fix:
+// slice front-pop alone retains a reference to the popped element).
+func (q *queue) dropHead() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.high) > 0 {
+		q.high[0] = jobItem{}
+		q.high = q.high[1:]
+		return
+	}
+	if len(q.normal) > 0 {
+		q.normal[0] = jobItem{}
+		q.normal = q.normal[1:]
+		return
+	}
+	if len(q.idle) > 0 {
+		q.idle[0] = jobItem{}
+		q.idle = q.idle[1:]
+	}
+}
+
+// pop is the convenience peek+dropHead for non-retain use cases. Retained
+// for compatibility with existing tests; frame loop uses peek+dropHead
+// explicitly so it can leave items at the queue head on TrySubmit failure.
 func (q *queue) pop() (jobItem, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.high) > 0 {
 		j := q.high[0]
+		q.high[0] = jobItem{}
 		q.high = q.high[1:]
 		return j, true
 	}
 	if len(q.normal) > 0 {
 		j := q.normal[0]
+		q.normal[0] = jobItem{}
 		q.normal = q.normal[1:]
 		return j, true
 	}
 	if len(q.idle) > 0 {
 		j := q.idle[0]
+		q.idle[0] = jobItem{}
 		q.idle = q.idle[1:]
 		return j, true
 	}

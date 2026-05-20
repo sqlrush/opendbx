@@ -12,6 +12,8 @@ import (
 	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
 )
 
+var _ = context.Background // retained for runFrame(ctx) signature reuse
+
 // BenchmarkFrame_60fps_NoChange_baseline measures one tick of the
 // frame loop when neither the model state nor the buffer dimensions
 // have changed — the dominant cost is DiffEngine NoChange + Driver.Show.
@@ -97,16 +99,20 @@ func BenchmarkWorkerPool_Throughput(b *testing.B) {
 	}()
 	defer close(stopDrain)
 
-	ctx := context.Background()
 	now := time.Now()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = p.SubmitWithCtx(ctx, jobItem{
+		// Spin on TrySubmit when the bench-side channel saturates;
+		// keeps the bench self-throttling without measuring an
+		// unbounded-retain pattern.
+		for !p.TrySubmit(jobItem{
 			Cmd:       func() {},
 			CmdID:     uint64(i),
 			Submitted: now,
 			Priority:  PriorityNormal,
-		})
+		}) {
+			// yield until drainer makes room
+		}
 	}
 }

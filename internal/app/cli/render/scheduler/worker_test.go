@@ -5,8 +5,7 @@
 package scheduler
 
 import (
-	"context"
-	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,8 +25,8 @@ func TestWorker_BasicExecute(t *testing.T) {
 		Submitted: time.Now(),
 		Priority:  PriorityNormal,
 	}
-	if err := p.SubmitWithCtx(context.Background(), j); err != nil {
-		t.Fatalf("Submit: %v", err)
+	if !p.TrySubmit(j) {
+		t.Fatal("TrySubmit returned false on empty pool")
 	}
 	select {
 	case res := <-p.Results():
@@ -45,21 +44,22 @@ func TestWorker_BasicExecute(t *testing.T) {
 	}
 }
 
-// TestWorker_PanicRecovered — Cmd panic; worker recovers + writes
-// workerResult{panicErr != nil}; subsequent Cmds still run (spec-1.4
-// CRIT-C: 修 R1 defer-in-loop trap, panic 后 worker 不死).
+// TestWorker_PanicRecovered — spec-1.4 CRIT-C: runCmd's independent
+// defer scope means a panic in one Cmd does NOT kill the worker;
+// subsequent Cmds still run.
 func TestWorker_PanicRecovered(t *testing.T) {
 	t.Parallel()
 	p := newWorkerPool(1) // single worker to verify it survives
 	defer p.Stop()
 
-	// First Cmd panics.
-	_ = p.SubmitWithCtx(context.Background(), jobItem{
+	if !p.TrySubmit(jobItem{
 		Cmd:       func() { panic("boom") },
 		CmdID:     10,
 		Submitted: time.Now(),
 		Priority:  PriorityHigh,
-	})
+	}) {
+		t.Fatal("first TrySubmit failed")
+	}
 	res1 := <-p.Results()
 	if res1.panicErr == nil {
 		t.Fatalf("first Cmd should report panic; got %+v", res1)
@@ -70,12 +70,14 @@ func TestWorker_PanicRecovered(t *testing.T) {
 
 	// Second Cmd must still run — proves worker not dead.
 	var ran atomic.Bool
-	_ = p.SubmitWithCtx(context.Background(), jobItem{
+	if !p.TrySubmit(jobItem{
 		Cmd:       func() { ran.Store(true) },
 		CmdID:     11,
 		Submitted: time.Now(),
 		Priority:  PriorityNormal,
-	})
+	}) {
+		t.Fatal("second TrySubmit failed")
+	}
 	res2 := <-p.Results()
 	if res2.panicErr != nil {
 		t.Errorf("second Cmd unexpectedly panicked: %v", res2.panicErr)
@@ -87,22 +89,20 @@ func TestWorker_PanicRecovered(t *testing.T) {
 
 // TestWorker_StopCloseOrder — Submit then Stop; verify Stop completes
 // (no deadlock) and all submitted Cmds executed before Stop returns
-// (spec-1.4 R2 H-4 in-flight drain guarantee). With non-blocking
-// results send, individual workerResult delivery is best-effort —
-// what the contract guarantees is that close(jobs) lets workers
-// drain the channel buffer and finish in-flight cmds before wg.Wait
-// completes.
+// (spec-1.4 R2 H-4 in-flight drain guarantee).
 func TestWorker_StopCloseOrder(t *testing.T) {
 	t.Parallel()
 	p := newWorkerPool(2)
 	var executed atomic.Int64
 	for i := uint64(0); i < 10; i++ {
-		_ = p.SubmitWithCtx(context.Background(), jobItem{
+		if !p.TrySubmit(jobItem{
 			Cmd:       func() { executed.Add(1) },
 			CmdID:     i,
 			Submitted: time.Now(),
 			Priority:  PriorityNormal,
-		})
+		}) {
+			t.Fatalf("TrySubmit #%d failed (channel full unexpectedly)", i)
+		}
 	}
 
 	stopReturned := make(chan struct{})
@@ -122,47 +122,62 @@ func TestWorker_StopCloseOrder(t *testing.T) {
 	}
 }
 
-// TestWorker_SubmitWithCtxCancel — fill jobs channel, then submit with
-// cancelled ctx; verify SubmitWithCtx returns ctx.Err() promptly without
-// blocking main loop (spec-1.4 R2 H-1 backpressure with escape).
-func TestWorker_SubmitWithCtxCancel(t *testing.T) {
+// TestWorker_TrySubmitFullReturnsFalse — spec-1.4 R3 H-1 + user 决策
+// Option B: when the jobs channel is full, TrySubmit must return
+// false promptly (no blocking, no ctx escape needed).
+func TestWorker_TrySubmitFullReturnsFalse(t *testing.T) {
 	t.Parallel()
 	p := newWorkerPool(1) // 1 worker, jobs cap = 8
 	defer p.Stop()
 
-	// Block the single worker on a long Cmd so jobs channel fills.
+	// Block the single worker on a long Cmd so it can't drain the
+	// channel during this test window. Use sync.Once+defer to ensure
+	// close(block) fires even if t.Fatal short-circuits the test —
+	// otherwise the worker hangs in runCmd, Stop's wg.Wait deadlocks.
 	block := make(chan struct{})
-	_ = p.SubmitWithCtx(context.Background(), jobItem{
+	var unblockOnce sync.Once
+	unblock := func() { unblockOnce.Do(func() { close(block) }) }
+	defer unblock()
+	if !p.TrySubmit(jobItem{
 		Cmd:      func() { <-block },
 		CmdID:    1,
 		Priority: PriorityHigh,
-	})
+	}) {
+		t.Fatal("initial TrySubmit failed")
+	}
+	// Wait for the worker to actually pick up Cmd 1 so the jobs
+	// channel buffer is empty before we start filling it. Without this,
+	// the racing fillers may collide with Cmd 1 still in the buffer
+	// and the channel saturates before reaching the intended cap.
+	time.Sleep(5 * time.Millisecond)
 
 	// Fill the buffered jobs channel (cap = 1*8 = 8) with quick cmds.
 	for i := uint64(2); i <= 9; i++ {
-		_ = p.SubmitWithCtx(context.Background(), jobItem{Cmd: func() {}, CmdID: i})
+		if !p.TrySubmit(jobItem{Cmd: func() {}, CmdID: i}) {
+			t.Fatalf("filler TrySubmit %d failed early — cap < 8?", i)
+		}
 	}
 
-	// Now jobs is full. Submit with a cancelled ctx; must return ctx.Err.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	err := p.SubmitWithCtx(ctx, jobItem{Cmd: func() {}, CmdID: 99})
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("SubmitWithCtx err = %v; want context.Canceled", err)
+	// Channel full. Next TrySubmit must return false fast.
+	start := time.Now()
+	if got := p.TrySubmit(jobItem{Cmd: func() {}, CmdID: 99}); got {
+		t.Errorf("TrySubmit on full channel returned true; want false")
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Millisecond {
+		t.Errorf("TrySubmit on full channel took %v; should be <1ms (non-blocking)", elapsed)
 	}
 
-	close(block) // let worker drain so Stop completes cleanly
+	unblock() // explicit early unblock (defer is the safety net)
 }
 
-// TestWorker_SubmitAfterStop — submitting after Stop returns
-// errPoolStopped without panicking on closed channel.
-func TestWorker_SubmitAfterStop(t *testing.T) {
+// TestWorker_TrySubmitAfterStop — TrySubmit after Stop returns false
+// without panicking on closed channel.
+func TestWorker_TrySubmitAfterStop(t *testing.T) {
 	t.Parallel()
 	p := newWorkerPool(2)
 	p.Stop()
-	err := p.SubmitWithCtx(context.Background(), jobItem{Cmd: func() {}, CmdID: 1})
-	if !errors.Is(err, errPoolStopped) {
-		t.Errorf("Submit after Stop: err = %v, want errPoolStopped", err)
+	if got := p.TrySubmit(jobItem{Cmd: func() {}, CmdID: 1}); got {
+		t.Errorf("TrySubmit after Stop = true; want false")
 	}
 }
 
@@ -172,13 +187,44 @@ func TestWorker_DurationRecorded(t *testing.T) {
 	t.Parallel()
 	p := newWorkerPool(1)
 	defer p.Stop()
-	_ = p.SubmitWithCtx(context.Background(), jobItem{
+	if !p.TrySubmit(jobItem{
 		Cmd:       func() { time.Sleep(2 * time.Millisecond) },
 		CmdID:     1,
 		Submitted: time.Now(),
-	})
+	}) {
+		t.Fatal("TrySubmit failed")
+	}
 	res := <-p.Results()
 	if res.duration < time.Millisecond {
 		t.Errorf("duration = %v, want > 1ms", res.duration)
+	}
+}
+
+// TestWorker_StopDrainsResults — spec-1.4 R3 H-C: when Stop is called
+// while many in-flight results are unread (channel full + main loop
+// stopped consuming), Stop's internal drain goroutine must unblock
+// workers so wg.Wait completes (no goroutine leak / deadlock).
+func TestWorker_StopDrainsResults(t *testing.T) {
+	t.Parallel()
+	p := newWorkerPool(2)
+
+	// Submit enough cmds to overfill results channel (cap = 2*8 = 16).
+	// Don't read results — simulate main loop exit.
+	for i := uint64(0); i < 64; i++ {
+		_ = p.TrySubmit(jobItem{Cmd: func() {}, CmdID: i, Submitted: time.Now()})
+	}
+
+	// Give workers a moment to start dropping results to default branch.
+	time.Sleep(20 * time.Millisecond)
+
+	stopReturned := make(chan struct{})
+	go func() {
+		p.Stop()
+		close(stopReturned)
+	}()
+	select {
+	case <-stopReturned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop deadlocked with unread results")
 	}
 }

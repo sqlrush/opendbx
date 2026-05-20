@@ -5,16 +5,11 @@
 package scheduler
 
 import (
-	"context"
-	"errors"
 	"log/slog"
 	"runtime/debug"
 	"sync"
 	"time"
 )
-
-// errPoolStopped is returned by SubmitWithCtx after Stop closes jobs.
-var errPoolStopped = errors.New("scheduler: workerPool stopped")
 
 // workerResult is what each worker writes to the results channel after
 // running one Cmd. It carries the jobItem context for ErrorMsg
@@ -121,27 +116,28 @@ func runCmd(j jobItem) (res workerResult) {
 	return res
 }
 
-// SubmitWithCtx enqueues j on the jobs channel. Blocks until either
-// the channel has room, ctx is cancelled, or the pool is stopped.
-// Returns ctx.Err() or errPoolStopped on the latter two paths.
+// TrySubmit attempts a non-blocking enqueue of j on the jobs channel.
+// Returns true on success, false if the channel is full or the pool
+// has been stopped.
 //
-// spec-1.4 R2 H-1: blocking-with-ctx-escape is the contract — main
-// loop drains queue and submits each cmd via SubmitWithCtx(ctx). The
-// queue itself is the unbounded backpressure buffer; the channel cap
-// only smooths burst spikes.
-func (p *workerPool) SubmitWithCtx(ctx context.Context, j jobItem) error {
+// spec-1.4 R2 H-1 + R3 user 决策 Option B: scheduler is the UI frame
+// loop; it MUST NOT block on a full worker channel — that would stall
+// frame rendering and break CC/Bubbletea-style responsiveness. The
+// frame loop is expected to peek the queue head, TrySubmit, and (on
+// failure) leave the item at the queue head for the next frame retry.
+// Backpressure is absorbed by the unbounded queue lane rather than
+// the bounded channel.
+func (p *workerPool) TrySubmit(j jobItem) bool {
 	select {
 	case <-p.stopped:
-		return errPoolStopped
+		return false
 	default:
 	}
 	select {
 	case p.jobs <- j:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-p.stopped:
-		return errPoolStopped
+		return true
+	default:
+		return false
 	}
 }
 

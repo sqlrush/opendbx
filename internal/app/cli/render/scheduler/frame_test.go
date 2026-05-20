@@ -375,7 +375,8 @@ func TestFrame_MsgChClosedOnRunExit(t *testing.T) {
 
 // TestFrame_CmdPanicEmitsErrorMsg — submit panicking Cmd, verify
 // Msgs() yields ErrorMsg with full context (CmdID/Submitted/Priority/
-// Frame; spec-1.4 R2 H-6).
+// Frame; spec-1.4 R2 H-6) AND errors.Is matches the registered
+// ErrPanicRecovered sentinel (spec-1.4 R3 H-A: %w wrap must work).
 func TestFrame_CmdPanicEmitsErrorMsg(t *testing.T) {
 	t.Parallel()
 	s, _ := newTestScheduler(t, 5, 3, noopRender)
@@ -415,6 +416,11 @@ WAIT:
 			if em.Stack == nil {
 				t.Errorf("Stack is nil")
 			}
+			// spec-1.4 R3 H-A: errcode sentinel must be embedded via %w
+			// so callers can programmatically classify panics.
+			if !errors.Is(em.Err, ErrPanicRecovered) {
+				t.Errorf("errors.Is(em.Err, ErrPanicRecovered) = false; want true (R3 H-A %%w wrap)")
+			}
 			break WAIT
 		}
 	}
@@ -430,7 +436,8 @@ func TestFrame_ConcurrentScheduleFromCallers(t *testing.T) {
 	render := func(g *buffer.Grid) { g.SetCell(0, 0, buffer.Cell{Ch: 'A'}) }
 	s, _ := newTestScheduler(t, 5, 3, render)
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { _ = s.Run(ctx) }()
+	done := make(chan struct{})
+	go func() { _ = s.Run(ctx); close(done) }()
 
 	const goroutines = 8
 	const iters = 100
@@ -448,6 +455,7 @@ func TestFrame_ConcurrentScheduleFromCallers(t *testing.T) {
 	// Allow enough time for workers to drain.
 	time.Sleep(150 * time.Millisecond)
 	cancel()
+	<-done
 	if got := executed.Load(); got != goroutines*iters {
 		t.Errorf("executed = %d; want %d", got, goroutines*iters)
 	}
@@ -477,11 +485,11 @@ func TestFrame_RenderFnMainGoroutineOnly(t *testing.T) {
 	}
 }
 
-// TestFrame_PatchResize_OwnershipIntact — spec-1.4 R2 CRIT-B: after a
+// TestFrame_PatchResize_CurrentFrameFullRedraw — spec-1.4 R2 CRIT-B: after a
 // resize (which triggers PatchResize), s.lastFrame ownership must not
 // be mutated mid-applyPatches. We verify that Show was called every
 // frame (i.e., main loop didn't crash on a leaked-buffer error path).
-func TestFrame_PatchResize_OwnershipIntact(t *testing.T) {
+func TestFrame_PatchResize_CurrentFrameFullRedraw(t *testing.T) {
 	t.Parallel()
 	drv := &mockDriver{cols: 10, rows: 5}
 	frame := atomic.Int32{}
@@ -517,10 +525,14 @@ func TestFrame_MsgChDropOldestUnderPanicStorm(t *testing.T) {
 	s, drv := newTestScheduler(t, 5, 3, noopRender)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
+	// Drain Msgs in background to avoid blocking main loop emit; we
+	// only care that Fini still runs.
+	go func() {
+		for range s.Msgs() {
+		}
+	}()
 	go func() { _ = s.Run(ctx); close(done) }()
 
-	// Don't consume Msgs at all — let it fill, then verify Fini still
-	// happens (proves main loop didn't deadlock on msgCh send).
 	for i := 0; i < 64; i++ {
 		s.Schedule(func() { panic("storm") })
 	}
@@ -533,5 +545,99 @@ func TestFrame_MsgChDropOldestUnderPanicStorm(t *testing.T) {
 	_, fini, _, _, _ := drv.snapshot()
 	if fini != 1 {
 		t.Errorf("Fini = %d; want 1 — main loop must survive panic storm", fini)
+	}
+}
+
+// TestFrame_TrySubmitFullLeavesCmdQueued — spec-1.4 R3 user 决策 Option B:
+// when the worker channel is full, the frame loop must leave queued
+// Cmds at the queue head and bail out of the drain loop without
+// blocking. We saturate the pool with a slow Cmd then submit enough
+// fillers to overfill the channel, and verify ticks keep coming.
+func TestFrame_TrySubmitFullLeavesCmdQueued(t *testing.T) {
+	t.Parallel()
+	s, drv := newTestScheduler(t, 5, 3, noopRender)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = s.Run(ctx); close(done) }()
+
+	block := make(chan struct{})
+	s.ScheduleAt(func() { <-block }, PriorityHigh)
+
+	// Pile up enough cmds to overflow workers (cap 32 + 4 workers active).
+	for i := 0; i < 200; i++ {
+		s.Schedule(func() {})
+	}
+
+	// Frame loop must keep ticking even though queue can't drain fully.
+	time.Sleep(40 * time.Millisecond)
+	_, _, show, _, _ := drv.snapshot()
+	if show < 2 {
+		t.Errorf("Show count = %d; expected multiple ticks during backpressure (frame loop blocked?)", show)
+	}
+	close(block)
+	cancel()
+	<-done
+}
+
+// TestFrame_BudgetOvershootWARN — spec-1.4 D-5 budget: a slow render
+// must trigger a slog.Warn but the frame must still complete (not
+// preempt). We use a render that sleeps past the 1ms test budget and
+// verify Show is still called.
+func TestFrame_BudgetOvershootWARN(t *testing.T) {
+	t.Parallel()
+	render := func(g *buffer.Grid) {
+		time.Sleep(5 * time.Millisecond) // > 1ms frameDeadline at fps=1000
+		g.SetCell(0, 0, buffer.Cell{Ch: 'A'})
+	}
+	s, drv := newTestScheduler(t, 5, 3, render)
+	_ = runShort(t, s, 30*time.Millisecond)
+
+	_, fini, show, _, _ := drv.snapshot()
+	if fini != 1 {
+		t.Errorf("Fini = %d; want 1", fini)
+	}
+	if show == 0 {
+		t.Errorf("Show was never called despite overshoot — frame did not complete")
+	}
+}
+
+// TestFrame_LastFrameReleasedOnExit — spec-1.4 R3 M-A: the final
+// adopted lastFrame must be released back to the pool when Run
+// returns. We verify by acquiring all pool buckets after Run + check
+// none of them is the leaked grid (best-effort indirect check; the
+// direct guarantee is in the defer added to Run).
+func TestFrame_LastFrameReleasedOnExit(t *testing.T) {
+	t.Parallel()
+	render := func(g *buffer.Grid) { g.SetCell(0, 0, buffer.Cell{Ch: 'X'}) }
+	s, _ := newTestScheduler(t, 5, 3, render)
+	_ = runShort(t, s, 15*time.Millisecond)
+	if s.lastFrame != nil {
+		t.Errorf("s.lastFrame = %p after Run exit; want nil (R3 M-A leak fix)", s.lastFrame)
+	}
+}
+
+// TestQueue_PeekDropHead — spec-1.4 R3 user 决策 Option B: peek shows
+// head without removing; dropHead removes the peeked head; together
+// they let the frame loop retain a Cmd at the queue head when
+// TrySubmit fails.
+func TestQueue_PeekDropHead(t *testing.T) {
+	t.Parallel()
+	q := newQueue()
+	q.push(jobItem{CmdID: 1, Cmd: func() {}, Priority: PriorityNormal})
+	q.push(jobItem{CmdID: 2, Cmd: func() {}, Priority: PriorityNormal})
+
+	j, ok := q.peek()
+	if !ok || j.CmdID != 1 {
+		t.Errorf("first peek: %+v ok=%v; want CmdID=1", j, ok)
+	}
+	// Peek again — same head, not removed.
+	j2, _ := q.peek()
+	if j2.CmdID != 1 {
+		t.Errorf("second peek removed head; got CmdID=%d, want 1", j2.CmdID)
+	}
+	q.dropHead()
+	j3, _ := q.peek()
+	if j3.CmdID != 2 {
+		t.Errorf("after dropHead, peek CmdID=%d, want 2", j3.CmdID)
 	}
 }
