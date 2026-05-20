@@ -33,8 +33,6 @@ type mockDriver struct {
 	finiN    int
 	showN    int
 	resizeN  int
-	clearN   int
-	syncN    int
 	setCells []mockSetCell
 
 	// hook for panicking the driver in specific methods
