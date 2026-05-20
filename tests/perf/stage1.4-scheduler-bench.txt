@@ -1,0 +1,23 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/sqlrush/opendbx/internal/app/cli/render/scheduler
+cpu: Apple M5 Max
+BenchmarkFrame_60fps_NoChange_baseline-18    	   57280	     19879 ns/op	    4101 B/op	       1 allocs/op
+BenchmarkFrame_60fps_FullChange_budget-18    	2026/05/20 20:28:52 WARN frame budget overshoot elapsed=23.101875ms deadline=16.666666ms frame=2507
+2026/05/20 20:28:52 WARN frame budget overshoot elapsed=26.299166ms deadline=16.666666ms frame=3133
+2026/05/20 20:28:52 WARN frame budget overshoot elapsed=21.967791ms deadline=16.666666ms frame=3917
+2026/05/20 20:28:52 WARN frame budget overshoot elapsed=30.560333ms deadline=16.666666ms frame=4896
+2026/05/20 20:28:52 WARN frame budget overshoot elapsed=50.330042ms deadline=16.666666ms frame=6120
+2026/05/20 20:28:53 WARN frame budget overshoot elapsed=71.166958ms deadline=16.666666ms frame=7650
+2026/05/20 20:28:53 WARN frame budget overshoot elapsed=82.784042ms deadline=16.666666ms frame=9563
+2026/05/20 20:28:53 WARN frame budget overshoot elapsed=34.742666ms deadline=16.666666ms frame=9563
+2026/05/20 20:28:53 WARN frame budget overshoot elapsed=64.992ms deadline=16.666666ms frame=11953
+2026/05/20 20:28:54 WARN frame budget overshoot elapsed=122.96725ms deadline=16.666666ms frame=14941
+2026/05/20 20:28:54 WARN frame budget overshoot elapsed=21.522125ms deadline=16.666666ms frame=6120
+2026/05/20 20:28:54 WARN frame budget overshoot elapsed=44.748458ms deadline=16.666666ms frame=11953
+2026/05/20 20:28:54 WARN frame budget overshoot elapsed=23.383791ms deadline=16.666666ms frame=14941
+2026/05/20 20:28:55 WARN frame budget overshoot elapsed=89.500417ms deadline=16.666666ms frame=18677
+   20259	     51829 ns/op	  693886 B/op	       7 allocs/op
+BenchmarkWorkerPool_Throughput-18            	 4507038	       263.5 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/sqlrush/opendbx/internal/app/cli/render/scheduler	5.908s
