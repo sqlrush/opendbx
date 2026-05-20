@@ -42,8 +42,9 @@ type CmdID uint64
 
 // ErrorMsg carries a recovered Cmd panic with full context for caller
 // debugging (spec-1.4 R2 H-6). CmdID matches the value returned by
-// Schedule/ScheduleAt; Frame is the scheduler frame counter at recovery
-// time; Submitted/Priority are forwarded from the original jobItem.
+// Schedule/ScheduleAt; Frame is the scheduler frame counter when the
+// main loop observes and emits the recovered worker result; Submitted/
+// Priority are forwarded from the original jobItem.
 type ErrorMsg struct {
 	CmdID     CmdID
 	Err       error
@@ -262,19 +263,11 @@ func (s *FrameScheduler) runFrame(_ context.Context) {
 
 	// Step 3: drain queue → submit to workers (non-blocking).
 	// spec-1.4 R3 user 决策 Option B: never block the frame loop on a
-	// full worker channel. peek + TrySubmit + leave-at-head means a
-	// failed submit retries naturally next frame; backpressure lives
-	// in the unbounded queue lane, not in this hot path.
-	for {
-		j, ok := s.queue.peek()
-		if !ok {
-			break
-		}
-		if !s.workers.TrySubmit(j) {
-			// jobs channel full or pool stopped; leave Cmd at queue head.
-			break
-		}
-		s.queue.dropHead()
+	// full worker channel. popIf + TrySubmit is atomic with respect to
+	// concurrent ScheduleAt calls: on submit failure the item remains at
+	// the queue head for the next frame; on success the exact submitted
+	// item is removed.
+	for s.queue.popIf(s.workers.TrySubmit) {
 	}
 
 	// Step 4: acquire next.

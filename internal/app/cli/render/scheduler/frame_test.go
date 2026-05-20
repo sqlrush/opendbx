@@ -614,28 +614,61 @@ func TestFrame_LastFrameReleasedOnExit(t *testing.T) {
 	}
 }
 
-// TestQueue_PeekDropHead — spec-1.4 R3 user 决策 Option B: peek shows
-// head without removing; dropHead removes the peeked head; together
-// they let the frame loop retain a Cmd at the queue head when
-// TrySubmit fails.
-func TestQueue_PeekDropHead(t *testing.T) {
+// TestQueue_PopIfRetainsOnSubmitFailure — spec-1.4 R3 user 决策
+// Option B: if the worker channel is full, popIf must leave the Cmd at
+// the queue head so the next frame can retry it.
+func TestQueue_PopIfRetainsOnSubmitFailure(t *testing.T) {
 	t.Parallel()
 	q := newQueue()
 	q.push(jobItem{CmdID: 1, Cmd: func() {}, Priority: PriorityNormal})
 	q.push(jobItem{CmdID: 2, Cmd: func() {}, Priority: PriorityNormal})
 
-	j, ok := q.peek()
+	if q.popIf(func(j jobItem) bool {
+		if j.CmdID != 1 {
+			t.Errorf("submitted CmdID = %d; want 1", j.CmdID)
+		}
+		return false
+	}) {
+		t.Fatal("popIf returned true on submit failure")
+	}
+	j, ok := q.pop()
 	if !ok || j.CmdID != 1 {
-		t.Errorf("first peek: %+v ok=%v; want CmdID=1", j, ok)
+		t.Fatalf("failed submit removed head: got %+v ok=%v, want CmdID=1", j, ok)
 	}
-	// Peek again — same head, not removed.
-	j2, _ := q.peek()
-	if j2.CmdID != 1 {
-		t.Errorf("second peek removed head; got CmdID=%d, want 1", j2.CmdID)
+	j, ok = q.pop()
+	if !ok || j.CmdID != 2 {
+		t.Fatalf("second pop got %+v ok=%v, want CmdID=2", j, ok)
 	}
-	q.dropHead()
-	j3, _ := q.peek()
-	if j3.CmdID != 2 {
-		t.Errorf("after dropHead, peek CmdID=%d, want 2", j3.CmdID)
+}
+
+// TestQueue_PopIfRemovesOnlySubmittedHead — popIf holds the queue lock
+// across head selection + successful submit + removal. This prevents
+// the old split peek/dropHead bug where a concurrent high-priority
+// ScheduleAt could be inserted between calls and then be deleted while
+// the already-submitted normal item remained queued.
+func TestQueue_PopIfRemovesOnlySubmittedHead(t *testing.T) {
+	t.Parallel()
+	q := newQueue()
+	q.push(jobItem{CmdID: 1, Cmd: func() {}, Priority: PriorityNormal})
+	q.push(jobItem{CmdID: 2, Cmd: func() {}, Priority: PriorityNormal})
+
+	var submitted uint64
+	if !q.popIf(func(j jobItem) bool {
+		submitted = j.CmdID
+		return true
+	}) {
+		t.Fatal("popIf returned false on submit success")
+	}
+	if submitted != 1 {
+		t.Fatalf("submitted CmdID = %d; want 1", submitted)
+	}
+	q.push(jobItem{CmdID: 99, Cmd: func() {}, Priority: PriorityHigh})
+	j, ok := q.pop()
+	if !ok || j.CmdID != 99 {
+		t.Fatalf("high-priority insert after popIf got %+v ok=%v, want CmdID=99", j, ok)
+	}
+	j, ok = q.pop()
+	if !ok || j.CmdID != 2 {
+		t.Fatalf("remaining normal got %+v ok=%v, want CmdID=2", j, ok)
 	}
 }

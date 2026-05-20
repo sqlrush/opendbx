@@ -181,6 +181,42 @@ func TestWorker_TrySubmitAfterStop(t *testing.T) {
 	}
 }
 
+// TestWorker_TrySubmitConcurrentStopNoPanic — TrySubmit and Stop may
+// race during scheduler shutdown. TrySubmit must return false rather
+// than panicking with send-on-closed-channel.
+func TestWorker_TrySubmitConcurrentStopNoPanic(t *testing.T) {
+	t.Parallel()
+	p := newWorkerPool(1)
+
+	start := make(chan struct{})
+	panicCh := make(chan any, 16)
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func(seed uint64) {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					panicCh <- r
+				}
+			}()
+			<-start
+			for i := uint64(0); i < 1000; i++ {
+				_ = p.TrySubmit(jobItem{Cmd: func() {}, CmdID: seed*1000 + i})
+			}
+		}(uint64(g))
+	}
+
+	close(start)
+	time.Sleep(time.Millisecond)
+	p.Stop()
+	wg.Wait()
+	close(panicCh)
+	if r, ok := <-panicCh; ok {
+		t.Fatalf("TrySubmit raced with Stop and panicked: %v", r)
+	}
+}
+
 // TestWorker_DurationRecorded — workerResult.duration is non-zero for
 // real Cmds.
 func TestWorker_DurationRecorded(t *testing.T) {

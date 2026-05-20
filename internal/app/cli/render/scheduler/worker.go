@@ -38,7 +38,8 @@ type workerPool struct {
 	wg      sync.WaitGroup
 
 	stopOnce sync.Once
-	stopped  chan struct{} // closed by Stop; SubmitWithCtx checks it
+	stopMu   sync.Mutex    // serializes TrySubmit sends with Stop closing jobs
+	stopped  chan struct{} // closed by Stop; TrySubmit checks it
 }
 
 // newWorkerPool constructs and starts a worker pool with n workers.
@@ -65,8 +66,8 @@ func newWorkerPool(n int) *workerPool {
 // Cmd's panic from the next (CRIT-C).
 //
 // Result-send is non-blocking: if the consumer (main loop) hasn't
-// drained Results in time we'd otherwise deadlock with SubmitWithCtx
-// (main loop blocked submitting; workers blocked on results-send).
+// drained Results in time we'd otherwise risk a shutdown deadlock
+// (workers blocked on results-send while Stop waits for them).
 // Dropped results lose their ErrorMsg correlation context — the same
 // drop policy as the msgCh emit (spec-1.4 R2 H-3); we log when the
 // dropped result carried a panic so caller doesn't silently miss
@@ -123,11 +124,14 @@ func runCmd(j jobItem) (res workerResult) {
 // spec-1.4 R2 H-1 + R3 user 决策 Option B: scheduler is the UI frame
 // loop; it MUST NOT block on a full worker channel — that would stall
 // frame rendering and break CC/Bubbletea-style responsiveness. The
-// frame loop is expected to peek the queue head, TrySubmit, and (on
-// failure) leave the item at the queue head for the next frame retry.
+// frame loop is expected to call queue.popIf with TrySubmit so success
+// removes exactly the submitted head and failure leaves it queued.
 // Backpressure is absorbed by the unbounded queue lane rather than
 // the bounded channel.
 func (p *workerPool) TrySubmit(j jobItem) bool {
+	p.stopMu.Lock()
+	defer p.stopMu.Unlock()
+
 	select {
 	case <-p.stopped:
 		return false
@@ -148,7 +152,7 @@ func (p *workerPool) Results() <-chan workerResult { return p.results }
 
 // Stop shuts the pool down in the order required by spec-1.4 R2 H-4:
 //
-//  1. close(stopped) — concurrent SubmitWithCtx observes shutdown
+//  1. close(stopped) — concurrent TrySubmit observes shutdown
 //  2. close(jobs)    — workers' for-range loops exit naturally
 //  3. drain results  — background goroutine drops any pending sends
 //     so wg.Wait can complete (workers MAY have
@@ -159,8 +163,10 @@ func (p *workerPool) Results() <-chan workerResult { return p.results }
 //  5. close(results) — final close after all sends are done
 func (p *workerPool) Stop() {
 	p.stopOnce.Do(func() {
+		p.stopMu.Lock()
 		close(p.stopped)
 		close(p.jobs)
+		p.stopMu.Unlock()
 
 		// Concurrent drain: prevents wg.Wait deadlocking when the
 		// main loop has stopped consuming p.Results before Stop is

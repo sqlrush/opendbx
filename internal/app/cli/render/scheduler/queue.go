@@ -69,52 +69,45 @@ func (q *queue) push(j jobItem) {
 	}
 }
 
-// peek returns the head of the highest-priority non-empty lane WITHOUT
-// removing it. spec-1.4 R3 Option B: combined with dropHead, this lets
-// the frame loop attempt a non-blocking TrySubmit and leave the Cmd at
-// the queue head for the next frame if the worker channel is full —
-// so the UI frame loop is never blocked by background backpressure.
-func (q *queue) peek() (jobItem, bool) {
+// popIf attempts to submit the highest-priority head while holding the
+// queue lock. On submit success it removes exactly that item; on submit
+// failure it leaves the item at the same head for a later frame.
+//
+// This must remain atomic: a split peek()+dropHead() lets a concurrent
+// high-priority ScheduleAt insert between the two calls, causing the
+// frame loop to delete the newly inserted high-priority item while the
+// already-submitted normal item stays queued and later runs twice.
+func (q *queue) popIf(submit func(jobItem) bool) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.high) > 0 {
-		return q.high[0], true
-	}
-	if len(q.normal) > 0 {
-		return q.normal[0], true
-	}
-	if len(q.idle) > 0 {
-		return q.idle[0], true
-	}
-	return jobItem{}, false
-}
-
-// dropHead removes the highest-priority lane's head. Pairs with peek
-// after a successful TrySubmit. The freed slot is nil'd out so the
-// underlying Cmd closure becomes GC-eligible (spec-1.4 R3 M-B fix:
-// slice front-pop alone retains a reference to the popped element).
-func (q *queue) dropHead() {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if len(q.high) > 0 {
+		if !submit(q.high[0]) {
+			return false
+		}
 		q.high[0] = jobItem{}
 		q.high = q.high[1:]
-		return
+		return true
 	}
 	if len(q.normal) > 0 {
+		if !submit(q.normal[0]) {
+			return false
+		}
 		q.normal[0] = jobItem{}
 		q.normal = q.normal[1:]
-		return
+		return true
 	}
 	if len(q.idle) > 0 {
+		if !submit(q.idle[0]) {
+			return false
+		}
 		q.idle[0] = jobItem{}
 		q.idle = q.idle[1:]
+		return true
 	}
+	return false
 }
 
-// pop is the convenience peek+dropHead for non-retain use cases. Retained
-// for compatibility with existing tests; frame loop uses peek+dropHead
-// explicitly so it can leave items at the queue head on TrySubmit failure.
+// pop is the convenience head-removal method for tests and non-retain use cases.
 func (q *queue) pop() (jobItem, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
