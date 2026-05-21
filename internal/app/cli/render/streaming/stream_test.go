@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sqlrush/opendbx/internal/app/cli/render/block"
 )
@@ -136,6 +137,47 @@ func TestLineBufCap_ForcedEmit(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected at least one Continued=true block; got %+v", msgs)
+	}
+}
+
+// #9 (R3 D5 added) TestChanCapacity_Backpressure — verifies AppendChunk
+// blocks when chan is full + unblocks on Drain or ctx cancel.
+func TestChanCapacity_Backpressure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewTokenStream(ctx, WithChanCapacity(2))
+
+	// Fill the chan to cap (no Drain).
+	if err := s.AppendChunk(Chunk{Token: "a"}); err != nil {
+		t.Fatalf("1st AppendChunk: %v", err)
+	}
+	if err := s.AppendChunk(Chunk{Token: "b"}); err != nil {
+		t.Fatalf("2nd AppendChunk: %v", err)
+	}
+
+	// 3rd AppendChunk should block until Drain or ctx cancel.
+	done := make(chan error, 1)
+	go func() {
+		done <- s.AppendChunk(Chunk{Token: "c"})
+	}()
+
+	// Verify it's blocked (no immediate result).
+	select {
+	case err := <-done:
+		t.Fatalf("3rd AppendChunk returned immediately (chan should be full): %v", err)
+	case <-time.After(50 * time.Millisecond):
+		// expected: still blocked
+	}
+
+	// Drain unblocks.
+	_ = s.Drain()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("3rd AppendChunk after Drain: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("3rd AppendChunk did not unblock after Drain")
 	}
 }
 

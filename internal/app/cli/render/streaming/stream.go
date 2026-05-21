@@ -129,6 +129,25 @@ func NewTokenStream(ctx context.Context, opts ...Option) *TokenStream {
 // Safe from any goroutine (multi-producer). Returns ErrStreamCancelled
 // if the stream is already closed or ctx is done.
 //
+// **Caller contract (R3 D3 MVP limit acknowledged)**: caller MUST stop
+// all producer goroutines BEFORE (or concurrently with) Close. Calling
+// AppendChunk after Close has begun is **best-effort invalid usage** —
+// the chunk may be accepted into a non-full chan but never drained,
+// because Close has already completed `drainChunksUnsafe()`. The
+// closed-flag check + chan-send select are NOT atomically serialized
+// (intentional, to avoid serializing producers behind the channel).
+// Race detector silent on this path (lock orders all updates; the issue
+// is semantic, not data-race). Recommended caller pattern:
+//
+//	go func() {
+//	    defer stream.Close()           // stops accepting after this returns
+//	    for evt := range llmEvents {
+//	        stream.AppendChunk(toChunk(evt))
+//	    }
+//	}()                                // producer goroutine returns → Close fires
+//
+// spec-1.6a may revisit with chan-under-lock if real callers hit this.
+//
 // 痛点 1.1 防御: callers MUST pass finish_reason via this entry — Close
 // does not invent finish_reason from absence.
 func (s *TokenStream) AppendChunk(c Chunk) error {
@@ -352,6 +371,13 @@ func (s *TokenStream) flushPartialUnsafe(truncated bool) {
 // **R2.2 修正 2 ordering**: drainChunksUnsafe first (process pending so
 // pending chunk blocks appear before the final partial in the caller's
 // next Drain), then flushPartialUnsafe.
+//
+// **R3 D3 caller race contract**: AppendChunk and Close are NOT
+// atomically linearized. If a producer goroutine is mid-flight in the
+// AppendChunk select when Close runs, the late chunk may enqueue into a
+// non-full chan AFTER Close drained pending — that chunk is lost.
+// Caller MUST stop all producers before/while calling Close
+// (see AppendChunk godoc).
 func (s *TokenStream) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

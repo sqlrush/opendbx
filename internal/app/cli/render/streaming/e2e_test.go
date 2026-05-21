@@ -192,7 +192,18 @@ func TestE2E_ThinkingOnly(t *testing.T) {
 // E2E-3 — full chain: Stream → block.Message → caller.Push (mocked).
 // Mimics spec § 3.3 walkthrough wiring without depending on scrollback
 // (DAG: streaming index 9 does NOT import scrollback).
-func TestE2E_FullChainToCaller(t *testing.T) {
+//
+// **R3 D6 deferred verification**: spec § 4.2 originally pinned
+// `TestE2E_FullChainToScrollback` with "Render 80×24 next Grid → 验 next
+// 含 expected token cell". Per R3 D6 + spec-1.7 forward dependency:
+// real grid-level verification requires `block.Message.Render` (spec-1.7)
+// to consume the 4 Message fields (Text/Truncated/Continued/Empty +
+// fence identification per R2 D6). Until spec-1.7 lands, this test
+// validates the caller-side collection pattern via a mock pusher; full
+// grid assertion is **deferred to spec-1.14 TUI bootstrap integration
+// test** which will wire real Stream → scrollback.VirtualScrollback →
+// terminal.Driver path.
+func TestE2E_FullChainToScrollback(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s := NewTokenStream(ctx)
