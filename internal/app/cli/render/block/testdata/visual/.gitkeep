@@ -1,0 +1,16 @@
+CC fixture capture directory (spec-1.7 R2 D5 T-2.5 CC fixture live capture).
+See CAPTURE_SOP.md for capture procedure.
+
+Expected fixture subdirectories (7 per R2 D7 M-5):
+- MessagePlain/        — single-line plain text
+- MessageMultiline/    — 3-line plain text
+- MessageMixedProseFence/ — intro prose + ```go fence (spec-1.6 R-12 关键场景)
+- MessageCodeFenceGo/  — fence-only with Go lang
+- MessageTruncated/    — Truncated marker "…" + StyleWarning
+- MessageContinued/    — Continued marker "…" + StyleDimmed
+- MessageEmpty/        — "(no output)" placeholder
+
+Each subdirectory contains:
+- input.ansi           — raw ANSI capture from CC session
+- golden.png           — reference PNG (freeze rendered or screenshot)
+- metadata.json        — capture metadata (cc_version / terminal / cols / rows / theme / font / prompt / sanitizer)
