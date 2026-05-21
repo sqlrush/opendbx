@@ -24,7 +24,7 @@ import "github.com/sqlrush/opendbx/internal/platform/errcode"
 //
 //nolint:gochecknoglobals // spec-0.6 contract: errcode sentinels are package-level.
 var ErrInvalidDimension = errcode.Register(
-	"RENDER.INVALID_DIMENSION",
+	"RENDER.LAYOUT.INVALID_DIMENSION",
 	"flex layout received an invalid dimension or tree shape",
 	"check viewport > 0, grow/shrink ≥ 0, basis ≥ 0, intrinsic ≥ 0, children are non-nil, no node is shared by multiple parents, children ≤ 1000 per container, and no main-axis sum overflow",
 )

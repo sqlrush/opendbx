@@ -22,7 +22,7 @@ import "github.com/sqlrush/opendbx/internal/platform/errcode"
 //
 //nolint:gochecknoglobals // spec-0.6 contract: errcode sentinels are package-level.
 var ErrInvalidDimension = errcode.Register(
-	"RENDER.INVALID_DIMENSION",
+	"RENDER.BUFFER.INVALID_DIMENSION",
 	"buffer grid received an invalid dimension",
 	"check cols > 0 and rows > 0 from terminal resize event, and ensure cols × rows does not overflow int32 (~2.1×10^9 cells, far above any practical viewport)",
 )
