@@ -1,0 +1,9 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/sqlrush/opendbx/internal/app/cli/render/block
+cpu: Apple M5 Max
+BenchmarkMessage_render_text-18           	  335053	      6693 ns/op	   44656 B/op	      60 allocs/op
+BenchmarkMessage_render_fence-18          	  265770	      8789 ns/op	   34044 B/op	      46 allocs/op
+BenchmarkMessage_render_measureonly-18    	 1233446	      1956 ns/op	    3760 B/op	      58 allocs/op
+PASS
+ok  	github.com/sqlrush/opendbx/internal/app/cli/render/block	9.924s

@@ -11,15 +11,21 @@ import (
 	"github.com/sqlrush/opendbx/internal/platform/errcode"
 )
 
-// TestAll8Stubs_ReturnUnsupported verifies each of the 8 spec-0.13 D-3
-// block type stubs returns (nil, ErrUnsupportedNode) from Render().
-func TestAll8Stubs_ReturnUnsupported(t *testing.T) {
+// TestNonMessageStubs_ReturnUnsupported verifies the 7 non-Message
+// spec-0.13 D-3 block type stubs still return (nil, ErrUnsupportedNode).
+// spec-1.7 D-6 R2 D6 HIGH-C: Message is upgraded to production; the
+// other 7 (Toolcall/Markdown/Code/Diff/Banner/Progress/Compact)
+// preserve the spec-0.13 stub contract; future spec-1.x produces each.
+//
+// **Code is intentionally included here** — code.go hosts the
+// renderCodeBlock helper used by Message but Code.Render itself remains
+// unsupported until spec-1.12 code-highlight-block.
+func TestNonMessageStubs_ReturnUnsupported(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
 		node RenderNode
 	}{
-		{"message", Message{}},
 		{"toolcall", Toolcall{}},
 		{"compact", Compact{}},
 		{"markdown", Markdown{}},
