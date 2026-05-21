@@ -1,0 +1,10 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/sqlrush/opendbx/internal/app/cli/render/scrollback
+cpu: Apple M5 Max
+BenchmarkScrollback_Push_1k-18                    	    1405	   1561111 ns/op	 8229650 B/op	    3034 allocs/op
+BenchmarkScrollback_Render_visible_viewport-18    	  255849	      9451 ns/op	       0 B/op	       0 allocs/op
+BenchmarkScrollback_ScrollBy_overscan_hit-18      	   35560	     70621 ns/op	  139926 B/op	      85 allocs/op
+BenchmarkScrollback_Resize_10k-18                 	     189	  12530084 ns/op	62582887 B/op	   30181 allocs/op
+PASS
+ok  	github.com/sqlrush/opendbx/internal/app/cli/render/scrollback	14.491s

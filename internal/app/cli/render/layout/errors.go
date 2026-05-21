@@ -4,7 +4,10 @@
 
 package layout
 
-import "github.com/sqlrush/opendbx/internal/platform/errcode"
+import (
+	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
+	"github.com/sqlrush/opendbx/internal/platform/errcode"
+)
 
 // ErrInvalidDimension is returned by Layouter.Layout when input
 // constraints are violated:
@@ -22,12 +25,17 @@ import "github.com/sqlrush/opendbx/internal/platform/errcode"
 // The Hint enumerates the most likely cause so callers can correct the
 // input tree before retrying.
 //
+// **Cross-package sharing (spec-1.5 R3 errata 2026-05-21)**: buffer also
+// has an `ErrInvalidDimension` with the same `RENDER.INVALID_DIMENSION`
+// Code (spec-0.6 forbids same Code registered twice). To preserve the
+// frozen Code contracts of spec-1.1 (layout) and spec-1.2 (buffer)
+// without panicking at init, layout aliases the sentinel registered in
+// buffer. Callers can still write `errors.Is(err, layout.
+// ErrInvalidDimension)` because the underlying sentinel is identical.
+// DAG: layout(4) → buffer(3) is allowed (4 > 3).
+//
 //nolint:gochecknoglobals // spec-0.6 contract: errcode sentinels are package-level.
-var ErrInvalidDimension = errcode.Register(
-	"RENDER.INVALID_DIMENSION",
-	"flex layout received an invalid dimension or tree shape",
-	"check viewport > 0, grow/shrink ≥ 0, basis ≥ 0, intrinsic ≥ 0, children are non-nil, no node is shared by multiple parents, children ≤ 1000 per container, and no main-axis sum overflow",
-)
+var ErrInvalidDimension = buffer.ErrInvalidDimension
 
 // ErrLayoutCycle is returned by Layouter.Layout when an Intrinsic()
 // callback re-enters layout on the same active Node through the same
