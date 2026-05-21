@@ -3,7 +3,13 @@
 // Author: sqlrush
 
 // Bench raw artifact target: tests/perf/stage1.5-scrollback-bench.txt
-// (R2-2 raw pattern, no auto gate; T-8 wrap-up freeze baseline).
+// (R2-2 raw pattern, no auto gate).
+//
+// These benchmarks do NOT auto-generate the raw artifact. T-8 wrap-up
+// manually freezes a baseline by running `go test -bench=BenchmarkScrollback
+// -benchmem -run=^$ ./internal/app/cli/render/scrollback/...
+// -benchtime=2s | tee tests/perf/stage1.5-scrollback-bench.txt`
+// (R3 review claude NIT-1: header originally read as if auto-generated).
 //
 // spec § 4.3 targets (R2 MED-7 + MED-8 realistic):
 //   - Push_1k (fakeBlock): < 100ms (full block.Render per measureHeight)
@@ -38,7 +44,10 @@ func BenchmarkScrollback_Push_1k(b *testing.B) {
 }
 
 // BenchmarkScrollback_Render_visible_viewport renders a populated
-// scrollback at the warm-cache scrollY=middle position.
+// scrollback at the warm-cache scrollY=middle position. Each iteration
+// resets `next` so allocation counters reflect a fresh frame (R3 review
+// claude MED-2: without reset, repeated SetCell into the same grid
+// reports 0 B/op which conflates cache hit + grid reuse).
 func BenchmarkScrollback_Render_visible_viewport(b *testing.B) {
 	sb := NewVirtualScrollback()
 	g, _ := buffer.NewGrid(80, 24)
@@ -52,6 +61,9 @@ func BenchmarkScrollback_Render_visible_viewport(b *testing.B) {
 	sb.Render(next, layout.Box{Width: 80, Height: 24})
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
+		b.StopTimer()
+		next.Reset()
+		b.StartTimer()
 		sb.Render(next, layout.Box{Width: 80, Height: 24})
 	}
 }

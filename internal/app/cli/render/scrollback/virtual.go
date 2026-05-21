@@ -178,7 +178,15 @@ func (s *VirtualScrollback) Len() int {
 // ScrollBy adjusts scrollY by delta (positive=down, negative=up). The
 // sticky state toggles based on the resulting position: arriving at the
 // bottom enables sticky; scrolling up away from the bottom disables it.
+//
+// delta == 0 is a no-op (R3 review codex R1 MED-1 / claude LOW-1: the
+// "arrival at bottom" branch fires unconditionally, so without this
+// guard ScrollBy(0) at scrollY==maxY would silently re-enable sticky
+// after the user had explicitly disabled it).
 func (s *VirtualScrollback) ScrollBy(delta int) {
+	if delta == 0 {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.scrollY += delta
@@ -336,6 +344,14 @@ func (s *VirtualScrollback) Render(next *buffer.Grid, viewport layout.Box) {
 // Pre-first-Render Push (lastCols==0): returns 1 placeholder; Render's
 // resize handler calls rebuildHeightsUnsafe to compute real heights once
 // the viewport is known (R2 LOW-3 / MED-5).
+//
+// TODO(spec-1.7): pass block.Context{Cols: s.lastCols, MeasureOnly: true}
+// once spec-1.7 block-interface adds the MeasureOnly field. Hard
+// contract: block.Render MUST remain idempotent + side-effect-free +
+// cheap (typical text block < 100µs) under spec-1.7 — if it cannot,
+// spec-1.5's Push/measureHeight/rebuildHeights algorithm needs to be
+// rewritten (not merely slower). See spec-1.5 § 6 R-2 + R3 review
+// codex R2 MED-1 / claude MED-1.
 func (s *VirtualScrollback) measureHeightUnsafe(n block.RenderNode) int {
 	if s.lastCols == 0 {
 		return 1 // pre-Render fallback
@@ -351,6 +367,13 @@ func (s *VirtualScrollback) measureHeightUnsafe(n block.RenderNode) int {
 // rebuildHeightsUnsafe re-measures every node's height at the new cols
 // width. Caller must hold s.mu. O(N × block.Render cost) — invoked only
 // on viewport resize, not per Push (R-6).
+//
+// TODO(spec-1.7): use block.Context{Cols: cols, MeasureOnly: true}
+// to skip the actual grid write. Until spec-1.7 lands, this calls full
+// block.Render for every node on every resize — worst case 10k nodes ×
+// ~100µs ≈ 1s under the s.mu Lock. Also shares the idempotent / side-
+// effect-free / cheap contract assumed by measureHeightUnsafe (see its
+// TODO). spec-1.5 § 6 R-2 + R-6 amplify; R3 review claude HIGH-1.
 func (s *VirtualScrollback) rebuildHeightsUnsafe(cols int) {
 	if cols == 0 {
 		return

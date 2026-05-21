@@ -21,7 +21,7 @@ func TestErrors_RegistryEntries(t *testing.T) {
 		err  errcode.Error
 		code string
 	}{
-		{"INVALID_DIMENSION", ErrInvalidDimension, "RENDER.LAYOUT.INVALID_DIMENSION"},
+		{"INVALID_DIMENSION", ErrInvalidDimension, "RENDER.INVALID_DIMENSION"},
 		{"LAYOUT_CYCLE", ErrLayoutCycle, "RENDER.LAYOUT_CYCLE"},
 	}
 	for _, tc := range cases {

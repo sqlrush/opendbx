@@ -347,6 +347,84 @@ func TestRender_EmptyScrollback(t *testing.T) {
 	}
 }
 
+// TestRender_StickyOnResize (R3 review claude HIGH-2 + codex R1 LOW-1):
+// sticky=true + viewport resize → scrollY 重锚到 new (totalH - rows).
+// sticky=false + viewport resize → scrollY 不重锚 (preserve user
+// position; still clamped to new maxY if shrinks below).
+func TestRender_StickyOnResize(t *testing.T) {
+	t.Run("sticky=true re-anchors to new bottom on resize", func(t *testing.T) {
+		sb := NewVirtualScrollback()
+		for i := 0; i < 5; i++ {
+			sb.Push(fakeBlock{height: 4, tag: 'A'})
+		}
+		// First Render: rows=10, totalH=20 → maxY=10, sticky=true → scrollY=10.
+		sb.Render(mustGrid(t, 80, 10), layout.Box{Width: 80, Height: 10})
+		if got := sb.ScrollY(); got != 10 {
+			t.Fatalf("pre-resize sticky scrollY=%d, want 10", got)
+		}
+		// Resize: rows=5 (smaller). Sticky should re-anchor scrollY to
+		// new maxY = totalH - 5 = 15.
+		sb.Render(mustGrid(t, 80, 5), layout.Box{Width: 80, Height: 5})
+		if got := sb.ScrollY(); got != 15 {
+			t.Fatalf("post-resize sticky scrollY=%d, want 15 (totalH=20 - rows=5)", got)
+		}
+		if !sb.IsSticky() {
+			t.Fatal("sticky should remain true after resize")
+		}
+	})
+
+	t.Run("sticky=false preserves user position on resize (clamped)", func(t *testing.T) {
+		sb := NewVirtualScrollback()
+		for i := 0; i < 5; i++ {
+			sb.Push(fakeBlock{height: 4, tag: 'A'})
+		}
+		sb.Render(mustGrid(t, 80, 10), layout.Box{Width: 80, Height: 10})
+		sb.ScrollBy(-5) // sticky=false; scrollY = 10-5 = 5
+		if sb.IsSticky() {
+			t.Fatal("sticky should be false after scroll up")
+		}
+		preY := sb.ScrollY()
+		// Resize wider but same height; sticky=false → scrollY should NOT
+		// re-anchor (preserve user position).
+		sb.Render(mustGrid(t, 120, 10), layout.Box{Width: 120, Height: 10})
+		if got := sb.ScrollY(); got != preY {
+			t.Fatalf("post-resize non-sticky scrollY=%d, want %d (preserve)", got, preY)
+		}
+	})
+}
+
+// TestScrollBy_ZeroIsNoop (R3 review codex R1 MED-1 / claude LOW-1):
+// ScrollBy(0) must not toggle sticky state. The bug: non-sticky scrollback
+// sitting at scrollY==maxY (reachable via "scroll up to maxY-1 → resize
+// taller → Render clamp at new maxY") would silently re-enable sticky
+// because the bottom-arrival branch fires unconditionally after delta+=0.
+func TestScrollBy_ZeroIsNoop(t *testing.T) {
+	sb := NewVirtualScrollback()
+	for i := 0; i < 5; i++ {
+		sb.Push(fakeBlock{height: 4, tag: 'A'})
+	}
+	sb.Render(mustGrid(t, 80, 10), layout.Box{Width: 80, Height: 10})
+
+	// Construct the state: scroll up so sticky=false, then arrange for
+	// scrollY==maxY without re-enabling sticky. Easiest path: scroll up by 1.
+	sb.ScrollBy(-1) // sticky=false; scrollY=9
+	if sb.IsSticky() {
+		t.Fatal("setup: expected sticky=false after ScrollBy(-1)")
+	}
+	preY := sb.ScrollY()
+	preSticky := sb.IsSticky()
+
+	// ScrollBy(0): must NOT change scrollY or sticky.
+	sb.ScrollBy(0)
+
+	if sb.ScrollY() != preY {
+		t.Fatalf("ScrollBy(0) changed scrollY: pre=%d post=%d", preY, sb.ScrollY())
+	}
+	if sb.IsSticky() != preSticky {
+		t.Fatalf("ScrollBy(0) toggled sticky: pre=%v post=%v", preSticky, sb.IsSticky())
+	}
+}
+
 // TestRange_BoundsClampingAndEmpty — bounds-safety on Range.
 func TestRange_BoundsClampingAndEmpty(t *testing.T) {
 	sb := NewVirtualScrollback()
