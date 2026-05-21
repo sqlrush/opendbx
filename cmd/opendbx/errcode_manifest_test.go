@@ -6,9 +6,13 @@ package main
 
 import (
 	"bufio"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -28,6 +32,10 @@ import (
 // errcode is whitelisted via CmdPlatformExceptionPaths (spec-0.6 § 5.2)
 // alongside platform/version.
 //
+// Runtime registration alone only covers packages reachable from newRootCommand.
+// The static scan below catches packages such as render/* whose registered
+// sentinels are real production API but are not imported by the CLI yet.
+//
 // codex MED-4 R2 enforcement.
 func TestCodesFrozenManifest(t *testing.T) {
 	// Side-effect: build the root command to trigger every package's
@@ -41,9 +49,21 @@ func TestCodesFrozenManifest(t *testing.T) {
 	}
 
 	live := errcode.All()
-	liveCodes := make([]string, len(live))
-	for i, def := range live {
-		liveCodes[i] = def.Code
+	liveSet := make(map[string]bool, len(live))
+	for _, def := range live {
+		liveSet[def.Code] = true
+	}
+
+	staticCodes, err := scanRegisteredCodes(t, "../..")
+	if err != nil {
+		t.Fatalf("scan registered codes: %v", err)
+	}
+	for _, code := range staticCodes {
+		liveSet[code] = true
+	}
+	liveCodes := make([]string, 0, len(liveSet))
+	for code := range liveSet {
+		liveCodes = append(liveCodes, code)
 	}
 	sort.Strings(liveCodes)
 
@@ -51,11 +71,6 @@ func TestCodesFrozenManifest(t *testing.T) {
 	for _, code := range manifest {
 		manifestSet[code] = true
 	}
-	liveSet := make(map[string]bool, len(liveCodes))
-	for _, code := range liveCodes {
-		liveSet[code] = true
-	}
-
 	var removed, added []string
 	for _, code := range manifest {
 		if !liveSet[code] {
@@ -88,6 +103,68 @@ func TestCodesFrozenManifest(t *testing.T) {
 			strings.Join(added, "\n  "),
 		)
 	}
+}
+
+func scanRegisteredCodes(t *testing.T, relRoot string) ([]string, error) {
+	t.Helper()
+	root, err := filepath.Abs(relRoot)
+	if err != nil {
+		return nil, err
+	}
+	codes := make(map[string]bool)
+	fset := token.NewFileSet()
+	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "vendor", "node_modules", "testdata":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return err
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) == 0 {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "Register" {
+				return true
+			}
+			ident, ok := sel.X.(*ast.Ident)
+			if !ok || ident.Name != "errcode" {
+				return true
+			}
+			lit, ok := call.Args[0].(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			code, err := strconv.Unquote(lit.Value)
+			if err == nil && code != "" && !strings.HasPrefix(code, "TEST.") {
+				codes[code] = true
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(codes))
+	for code := range codes {
+		out = append(out, code)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func readManifest(t *testing.T, relPath string) ([]string, error) {
