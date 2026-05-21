@@ -1,0 +1,18 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/sqlrush/opendbx/internal/app/cli/render/scheduler
+cpu: Apple M5 Max
+BenchmarkFrame_60fps_NoChange_baseline-18    	   57147	     19145 ns/op	    4100 B/op	       1 allocs/op
+BenchmarkFrame_60fps_FullChange_budget-18    	2026/05/20 21:48:49 WARN frame budget overshoot elapsed=20.783958ms deadline=16.666666ms frame=3917
+2026/05/20 21:48:49 WARN frame budget overshoot elapsed=31.468916ms deadline=16.666666ms frame=4896
+2026/05/20 21:48:49 WARN frame budget overshoot elapsed=56.57875ms deadline=16.666666ms frame=6120
+2026/05/20 21:48:49 WARN frame budget overshoot elapsed=71.001667ms deadline=16.666666ms frame=7650
+2026/05/20 21:48:49 WARN frame budget overshoot elapsed=58.300625ms deadline=16.666666ms frame=9563
+2026/05/20 21:48:50 WARN frame budget overshoot elapsed=27.984458ms deadline=16.666666ms frame=7650
+2026/05/20 21:48:50 WARN frame budget overshoot elapsed=47.497917ms deadline=16.666666ms frame=9563
+2026/05/20 21:48:50 WARN frame budget overshoot elapsed=100.400333ms deadline=16.666666ms frame=11953
+2026/05/20 21:48:50 WARN frame budget overshoot elapsed=129.347875ms deadline=16.666666ms frame=14941
+   16920	     60711 ns/op	  678959 B/op	       7 allocs/op
+BenchmarkWorkerPool_Throughput-18            	 2925505	       362.1 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/sqlrush/opendbx/internal/app/cli/render/scheduler	5.054s

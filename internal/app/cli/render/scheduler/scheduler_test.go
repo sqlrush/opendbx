@@ -36,3 +36,18 @@ func TestScheduler_InterfaceContract(t *testing.T) {
 		t.Errorf("Tick Frame = %d want 1", got.Frame)
 	}
 }
+
+// TestErrPanicRecovered_Triple verifies the errcode three-piece
+// contract per CLAUDE rule 7 and spec-1.4 D-3.
+func TestErrPanicRecovered_Triple(t *testing.T) {
+	t.Parallel()
+	if got := ErrPanicRecovered.Code(); got != "RENDER.SCHEDULER_PANIC_RECOVERED" {
+		t.Errorf("Code = %q, want RENDER.SCHEDULER_PANIC_RECOVERED", got)
+	}
+	if ErrPanicRecovered.Message() == "" {
+		t.Errorf("Message must be non-empty")
+	}
+	if ErrPanicRecovered.Hint() == "" {
+		t.Errorf("Hint must be non-empty")
+	}
+}
