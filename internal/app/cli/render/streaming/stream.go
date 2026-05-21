@@ -379,6 +379,7 @@ func (s *TokenStream) Close() error {
 				s.finish == FinishError,
 		)
 	}
+	// errcode-lint:exempt -- spec-1.6 D-5: errForFinishUnsafe returns one of the registered errcode sentinels (ErrStreamTruncated/Filtered/Cancelled) or the underlying Chunk.Err (already from provider boundary). Wrapping again would shadow the sentinel.
 	return s.errForFinishUnsafe()
 }
 
@@ -397,6 +398,7 @@ func (s *TokenStream) Flush() (block.RenderNode, error) {
 				s.finish == FinishError,
 		)
 	}
+	// errcode-lint:exempt -- spec-1.6 D-5: errForFinishUnsafe returns a registered errcode sentinel or the underlying provider error from Chunk.Err.
 	err := s.errForFinishUnsafe()
 	blocks := s.emitted
 	s.emitted = nil

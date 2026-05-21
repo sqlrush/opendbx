@@ -27,11 +27,11 @@ const (
 )
 
 type sseEvent struct {
-	typ     sseEventType
-	token   string
-	reason  FinishReason
-	err     error
-	delay   time.Duration
+	typ    sseEventType
+	token  string
+	reason FinishReason
+	err    error
+	delay  time.Duration
 }
 
 type fakeSSESource struct {
@@ -105,6 +105,7 @@ func TestE2E_ChunkErrWithPartial(t *testing.T) {
 	defer cancel()
 	s := NewTokenStream(ctx)
 
+	// errcode-lint:exempt -- spec-1.6 D-7: E2E test mock for upstream LLM provider error path; not production code.
 	provErr := errors.New("provider connection closed")
 	src := &fakeSSESource{events: []sseEvent{
 		{typ: sseContent, token: "Begin "},

@@ -187,6 +187,7 @@ func TestFinishLength_ReturnsErrTruncated(t *testing.T) {
 // #14 (R2 D5 + R2.1 align) — Err with partial Token processed first.
 func TestFinishError_PartialTokenFirst(t *testing.T) {
 	s := NewTokenStream(context.Background())
+	// errcode-lint:exempt -- spec-1.6 D-7: test mock for Anthropic SSE error event partial-Token path; not production code.
 	someErr := errors.New("provider error")
 	_ = s.AppendChunk(Chunk{Token: "partial\nfinal", Err: someErr})
 	msgs := drainAllMsgs(t, s)
@@ -291,6 +292,7 @@ func TestFinishReason_Getter(t *testing.T) {
 // #21 — Err takes priority over FinishReason in same chunk.
 func TestFinishReason_ErrTakesPriority(t *testing.T) {
 	s := NewTokenStream(context.Background())
+	// errcode-lint:exempt -- spec-1.6 D-7: test mock for Err-priority-over-FinishReason path; not production code.
 	someErr := errors.New("oops")
 	_ = s.AppendChunk(Chunk{Token: "x\n", Err: someErr, FinishReason: FinishStop})
 	_ = s.Drain()

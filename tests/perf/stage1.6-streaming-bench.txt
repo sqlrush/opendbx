@@ -1,0 +1,9 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/sqlrush/opendbx/internal/app/cli/render/streaming
+cpu: Apple M5 Max
+BenchmarkStream_Append_per_token-18         	  934389	      3389 ns/op	       1 B/op	       0 allocs/op
+BenchmarkStream_Drain_per_frame-18          	 2249395	      1082 ns/op	     176 B/op	       7 allocs/op
+BenchmarkStream_FullSession_10k_token-18    	    4077	    580542 ns/op	   93016 B/op	    1255 allocs/op
+PASS
+ok  	github.com/sqlrush/opendbx/internal/app/cli/render/streaming	179.578s
