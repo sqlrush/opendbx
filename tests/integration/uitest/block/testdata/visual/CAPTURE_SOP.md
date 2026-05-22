@@ -104,3 +104,71 @@ EOF
 - 用 R2 placeholder ("…" + StyleDimmed/Warning + "(no output)")
 - T-3 实施推进
 - T-9 用 mock fixture 测; **R3 errata 用 fixture verify gate blocking T-10**
+
+---
+
+## spec-1.9 ToolUse fixture extension (2026-05-22 加)
+
+> spec-1.9-toolcall-block.md APPROVED 2026-05-22 → R2.1.3 D-9 7 fixture 需同 session 捕获 (用户拍板: 14 fixture/session 复用 1 次 CC capture 防 spec-1.7 / 1.9 基线不一致).
+>
+> **重要**: spec-1.9 impl 在 spec-1.7 merge 后才开新 PR; 本节 ToolUse fixtures **捕获后 parked**, 待 spec-1.9 impl T-8 创建 `ui-tooluse-golden` Makefile target + `tests/integration/uitest/block/tooluse_render_test.go` 消费. 当前 ui-block-golden 仅消费 Message fixtures.
+
+### 范围 (spec-1.9 R2.1.3 D-9 fixture 列表)
+
+| # | TestName | 触发场景 (CC prompt + 上下文) | 期望 ToolUse 形态 (per CC source 验证) |
+|---|---|---|---|
+| 1 | `ToolUseQueued` | 触发多个 Bash 调用，第 2 个 Bash 处 queued 状态时截屏 (CC 默认 1 个 Bash 并发); 例: `运行: pwd && ls && date && echo done` (CC 串行多 bash) | Bash header (`pwd` etc.) + dim `Waiting…` 二行 (BashTool/UI.tsx:154-158) |
+| 2 | `ToolUseRunningGeneric` | 触发未注册 tool name (即 generic fallback 路径). MVP 无好触发点 — **deferred: mock**, 用 placeholder header `Foo(key=val)` mock fixture | Generic compact `Name(key=val, key2=val2)` ≤ cols/2 |
+| 3 | `ToolUseRunningBash` | `跑这命令: sleep 3 && echo done` — sleep 期间 ToolUse 处 Running (无 progress), 立即截屏 (3 秒窗口) | Bash header (`sleep 3 && echo done` 或截断) + dim `Running…` 二行 (BashTool/UI.tsx:148) |
+| 4 | `ToolUseRunningRead` | `读 main.go 第 1-100 行` (触发 Read tool). Read 通常 instant, 难截 Running 态 — **若不易捕**, 截 Resolved 后 mark in metadata `state_at_capture: resolved-not-running`; 或用 `读 /Users/sqlrush/very/large/file.txt` 慢 IO | Read header `path · lines 1-100` (FileReadTool/UI.tsx:30-65); 无 progress (Read 不 implement ProgressRenderer) |
+| 5 | `ToolUseWaitingPermission` | 配置 CC permission mode 非 auto (需 user 确认 Bash); 触发 Bash 然后**不点确认**, 截屏 permission 等待态. 例 prompt: `运行: rm /tmp/test-permission` (敏感命令必弹 permission) | Bash header (`rm /tmp/test-permission`) + dim 二行 `Waiting for permission…` (AssistantToolUseMessage.tsx:240) |
+| 6 | `ToolUseRunningBashWithProgress` | `运行: for i in $(seq 1 100); do echo line $i; sleep 0.05; done` (5 秒 100 行 progress); progress 滚动期间截屏 | Bash header + ShellProgressMessage block (elapsedSeconds / totalLines / totalBytes; BashTool/UI.tsx:131-153) |
+| 7 | `ToolUseResolvedRead` | `读 main.go 第 1-100 行` — Read 完成后保留状态 (Resolved) 截屏 | Read header `path · lines 1-100` 单行 (无 progress); AssistantToolUseMessage.tsx:103 `lookups.resolvedToolUseIDs.has(param.id)` 路径 |
+
+### 时序敏感 fixture (#1 / #3 / #5 / #6) capture 提示
+
+- `ToolUseQueued`: CC 串行多 Bash; 同时 trigger 多个 bash tool calls 然后立即截屏 (queued window < 1s)
+- `ToolUseRunningBash` / `RunningBashWithProgress`: 用 `sleep N` / 长 loop 制造 N 秒 capture 窗口
+- `ToolUseWaitingPermission`: CC 必须不在 auto-approve mode (`/permission` 检查); 用 sensitive 命令触发 prompt 不点确认
+- 建议: 每个 transient state 录 asciinema 全程 + 事后挑帧 / `script -t` 时间戳 replay
+
+### 路径 & 文件结构 (与 spec-1.7 一致)
+
+```
+tests/integration/uitest/block/testdata/visual/<ToolUseTestName>/
+├── golden.png       (PNG screenshot of just the ToolUse block region)
+├── input.ansi       (ANSI escape capture, sanitized)
+└── metadata.json    (cc_version / terminal / cols / rows / prompt / sanitizer / notes)
+```
+
+每 metadata.json 加 spec-1.9 特有字段 `tool_use_state` ∈ {`queued`, `running`, `waiting_permission`, `resolved`} + `adapter` ∈ {`bash`, `read`, `generic`} for tooluse_render_test.go consumer 时筛选.
+
+### Parking 状态 + 解锁路径
+
+| 状态 | 含义 |
+|---|---|
+| **本 session capture** | spec-1.7 Message 7 + spec-1.9 ToolUse 7 = 14 fixture 一次抓 |
+| **spec-1.7 PR #54 merge** | Message 7 fixture 立 wire 进 `make ui-block-golden`; ToolUse 7 fixture **parked** in testdata (CI 不消费, no harness yet) |
+| **spec-1.9 impl PR T-8** | 创建 `tooluse_render_test.go` + `ui-tooluse-golden` Makefile target + ci.yml step; 解锁 ToolUse fixture CI 消费; **BLOCK_VISUAL_REQUIRED=1 make ui-tooluse-golden** 跑通 = T-8 DoD |
+| **spec-1.9 T-10 FROZEN** | 14 fixture 全 CI gate; 任何 CC visual drift 触发 spec-1.7a / 1.9a errata |
+
+### ToolUse fixture lock-in 决策 (本 capture session 后)
+
+- D-7 stateIndicator: per CC source, 用 `BLACK_CIRCLE` / `ToolUseLoader` / `MessageResponse` composition. fixture 后 lock 真实 rune/text/style.
+- Q3 indicator 矩阵: A. fixture-derived (★A R2.1.3 MED-2). Capture 后 finalize.
+- Q5 fixture list: 7 fixtures **R2.1.3 锁定**, 不再扩张 (10 fixture 边际收益低).
+- WaitingPermission CC text 已 R2.1.3 HIGH-3 verified: `Waiting for permission…` + dimColor + MessageResponse height=1 (CC AssistantToolUseMessage.tsx:240).
+- Bash empty-progress fallback `Running…` 已 R2.1.3 HIGH-2 verified: BashTool/UI.tsx:148.
+
+### Sanitizer 加项 (spec-1.9 specific)
+
+- ToolUse Input map 中可能含**文件路径** (Read) / **命令字符串** (Bash); 路径含 `/Users/<name>/` 必匿名 → `/Users/user/`
+- Bash command output 中任何 shell prompt / hostname / username 必匿名
+- 截图 crop 仅 ToolUse block region, 不含 surrounding session context (减泄漏面)
+
+### 半天卡退路径 B (spec-1.9 specific)
+
+若任一 ToolUse fixture 7 个内 capture 卡住 (尤其 #2 generic / #5 permission 配置不通):
+- 当前卡住 fixture mark `deferred: mock` in metadata, 用 spec-1.9 R2.1.3 placeholder mock; 优先抓其他 fixture
+- spec-1.9 R3 errata 期补真 fixture 替 mock
+- T-10 FROZEN 前所有 7 fixture 必真 (mock 是 stage 1 卡退, FROZEN gate 不接受 mock)

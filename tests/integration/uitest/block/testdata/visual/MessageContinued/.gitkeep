@@ -1,0 +1,9 @@
+# spec-1.7 Message fixture parking slot (T-2.5 capture session 2026-05-22)
+#
+# Expected files after CC capture:
+#   golden.png    PNG screenshot (block region crop)
+#   input.ansi    sanitized ANSI capture
+#   metadata.json
+#
+# Consumer: tests/integration/uitest/block/message_render_test.go TestMessageVisualGolden
+# Status:   capture pending T-2.5 user-driven session

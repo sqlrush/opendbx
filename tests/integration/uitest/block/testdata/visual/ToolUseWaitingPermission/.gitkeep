@@ -1,0 +1,9 @@
+# spec-1.9 ToolUse fixture parking slot (T-2.5 capture session 2026-05-22)
+#
+# Expected files after CC capture:
+#   golden.png    PNG screenshot (block region crop)
+#   input.ansi    sanitized ANSI capture
+#   metadata.json (含 tool_use_state + adapter fields)
+#
+# Consumer: spec-1.9 impl T-8 tooluse_render_test.go (尚未存在)
+# Status:   parked until spec-1.9 impl PR opens after spec-1.7 PR #54 merge
