@@ -11,15 +11,6 @@ import (
 	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
 )
 
-// Test helper: assert buffer at (x,y) matches expected rune.
-func assertCell(t *testing.T, buf buffer.Buffer, x, y int, want rune) {
-	t.Helper()
-	c := buf.Cell(x, y)
-	if c.Ch != want {
-		t.Errorf("Cell(%d,%d).Ch = %q, want %q", x, y, c.Ch, want)
-	}
-}
-
 // Test helper: render row to string for assertions.
 func rowToString(buf buffer.Buffer, y, cols int) string {
 	var b strings.Builder
