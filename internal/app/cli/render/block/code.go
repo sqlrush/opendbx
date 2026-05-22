@@ -9,6 +9,7 @@ import (
 
 	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/style"
+	"github.com/sqlrush/opendbx/internal/app/cli/render/width"
 )
 
 // Code is the spec-0.13 stub for the code block type. Render returns
@@ -78,13 +79,20 @@ func renderCodeBlock(ctx Context, lang, body string) (buffer.Buffer, int) {
 			buf.SetCell(x, y, buffer.Cell{Ch: ' ', St: mergedStyle})
 		}
 		// Overlay code chars starting at x=1 (1-cell left padding).
+		// spec-1.7 T-9 HIGH-2: advance x by RuneWidth so wide runes (CJK)
+		// occupy 2 cells; SetCell auto-writes WideContinuation at x+1 and
+		// x++ would clobber via clearWideOverlap invariant.
 		x := 1
 		for _, r := range line {
-			if x >= ctx.Cols-1 { // 1-cell right padding
+			rw := width.RuneWidth(r)
+			if rw <= 0 {
+				continue
+			}
+			if x+rw > ctx.Cols-1 { // 1-cell right padding
 				break
 			}
 			buf.SetCell(x, y, buffer.Cell{Ch: r, St: mergedStyle})
-			x++
+			x += rw
 		}
 	}
 	return buf, rows

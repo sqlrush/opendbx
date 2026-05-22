@@ -316,3 +316,72 @@ func TestMessage_RenderTruncatedContinuedExclusive(t *testing.T) {
 		t.Errorf("Truncated should win: got Style %+v, want StyleWarning %+v", c.St, want)
 	}
 }
+
+// #26 (spec-1.7 T-9 HIGH-1) — renderMixed marker tail overflow:
+// fence-first + prose last-row exactly cols wide + Truncated must
+// produce +1 row (marker on new row), NOT overwrite last content cell.
+func TestMessage_RenderMixedFenceFirstFullProseLastRowTruncated(t *testing.T) {
+	// "abcde" exactly cols=5 wide on last prose row (no trailing space).
+	text := "```go\npackage main\n```\nabcde"
+	buf, _ := Message{Text: text, Truncated: true}.Render(ctxWithCols(5))
+	cols, rows := buf.Size()
+	if cols != 5 {
+		t.Fatalf("expected cols=5, got %d", cols)
+	}
+	// Expected layout: fence (2 rows: lang label + body) + prose (1 row "abcde") + marker on +1 row.
+	// At minimum the last row must contain just the marker "…", not "abcd…" overlap.
+	lastRow := rows - 1
+	// Marker '…' must be at lastRow col 0 (or some position with theme StyleWarning).
+	found := false
+	for x := 0; x < cols; x++ {
+		c := buf.Cell(x, lastRow)
+		if c.Ch == '…' && c.St == (DefaultTheme{}).Style(StyleWarning) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		// Diagnostic: dump last row + the row above it.
+		dumpRow := func(y int) string {
+			var b strings.Builder
+			for x := 0; x < cols; x++ {
+				c := buf.Cell(x, y)
+				if c.Ch == 0 || c.Ch == ' ' {
+					b.WriteRune(' ')
+				} else {
+					b.WriteRune(c.Ch)
+				}
+			}
+			return b.String()
+		}
+		prev := ""
+		if lastRow >= 1 {
+			prev = dumpRow(lastRow - 1)
+		}
+		t.Errorf("marker '…' StyleWarning not found on last row %d\nrow-1: %q\nlast:  %q",
+			lastRow, prev, dumpRow(lastRow))
+	}
+}
+
+// #27 (spec-1.7 T-9 HIGH-2) — renderCodeBlock body advances x by RuneWidth
+// for wide-rune (CJK) chars; no clobber from clearWideOverlap.
+func TestMessage_RenderCodeFenceCJKBody(t *testing.T) {
+	text := "```go\n中文测试\n```"
+	buf, _ := Message{Text: text}.Render(ctxWithCols(20))
+	// Body row is index 1 (row 0 = lang label "─── go ───").
+	// "中文测试" = 4 wide runes × 2 cells = 8 cells; starting at x=1 (1-cell left padding).
+	// Expected: Cell(1)='中', Cell(3)='文', Cell(5)='测', Cell(7)='试'.
+	wantChars := []rune{'中', '文', '测', '试'}
+	wantXs := []int{1, 3, 5, 7}
+	for i, want := range wantChars {
+		c := buf.Cell(wantXs[i], 1)
+		if c.Ch != want {
+			t.Errorf("body wide rune #%d: at col %d got Ch=%q (raw %U), want %q",
+				i, wantXs[i], c.Ch, c.Ch, want)
+		}
+	}
+}
+
+func ctxWithCols(cols int) Context {
+	return Context{Cols: cols, Rows: 24, Wrap: WrapSoft}
+}

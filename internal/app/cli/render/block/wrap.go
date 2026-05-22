@@ -69,7 +69,6 @@ func wrapSoft(line string, cols int) []string {
 	var cur strings.Builder
 	curW := 0
 	lastSpace := -1 // byte offset in cur where last ASCII space was emitted
-	lastSpaceW := 0
 
 	i := 0
 	for i < len(line) {
@@ -82,7 +81,6 @@ func wrapSoft(line string, cols int) []string {
 				cur.Reset()
 				curW = 0
 				lastSpace = -1
-				lastSpaceW = 0
 				i += size
 				// Skip leading spaces on the new line for cleaner wrap.
 				for i < len(line) && line[i] == ' ' {
@@ -93,7 +91,6 @@ func wrapSoft(line string, cols int) []string {
 			cur.WriteRune(r)
 			curW += rw
 			lastSpace = cur.Len()
-			lastSpaceW = curW
 			i += size
 			continue
 		}
@@ -108,7 +105,6 @@ func wrapSoft(line string, cols int) []string {
 				cur.WriteString(suffix)
 				curW = width.Width(suffix)
 				lastSpace = -1
-				lastSpaceW = 0
 			} else {
 				// No space to break at: hard-break the single word.
 				lines = append(lines, cur.String())
@@ -119,7 +115,6 @@ func wrapSoft(line string, cols int) []string {
 		cur.WriteRune(r)
 		curW += rw
 		i += size
-		_ = lastSpaceW
 	}
 	if cur.Len() > 0 || len(lines) == 0 {
 		lines = append(lines, cur.String())

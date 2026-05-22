@@ -2,6 +2,12 @@
 //
 // Author: sqlrush
 
+// File message.go — production Message.Render implementation (spec-1.7 D-2).
+// 4-branch dispatch (Empty / 0-fence Plain / ≥1-fence Mixed) consuming
+// spec-1.6 forward 4 fields + R2 D6 raw markers + R2 D11 Continued +
+// 痛点 1.5 Empty. Marker tail-overflow handled symmetrically across
+// renderPlainText (rowsWithMarker pre-count) and renderMixed (last-segment
+// width check; spec-1.7 T-9 HIGH-1).
 package block
 
 import (
@@ -144,13 +150,22 @@ func renderMixed(ctx Context, m Message, fences []fenceRange) buffer.Buffer {
 		}
 	}
 	// Account for marker tail overflow on stitched buffer.
-	markerExtra := 0
-	if (m.Truncated || m.Continued) && totalRows > 0 {
-		// Conservative: if last segment may overflow, +1 row.
-		// We can refine via last-row width check after stitch.
-		markerExtra = 0 // applyTailMarker handles overflow inline if room exists
+	// spec-1.7 T-9 HIGH-1: if last seg's last row is exactly cols-wide,
+	// the marker "…" must occupy a new row (else it overwrites the last
+	// content cell, e.g. "abcde" cols=5 + Truncated → "abcd…" wrong).
+	// Symmetric with rowsWithMarker's +1 row accounting in renderPlainText.
+	if (m.Truncated || m.Continued) && len(rs) > 0 && totalRows > 0 {
+		lastSeg := rs[len(rs)-1]
+		if grid, ok := lastSeg.buf.(*buffer.Grid); ok {
+			_, srcRows := grid.Size()
+			if srcRows > 0 {
+				lastRowWidth := lastRowOccupiedWidth(grid, srcRows-1, ctx.Cols)
+				if lastRowWidth >= ctx.Cols {
+					totalRows++
+				}
+			}
+		}
 	}
-	totalRows += markerExtra
 	if ctx.MeasureOnly {
 		return measureOnlyBuf(ctx.Cols, totalRows)
 	}
@@ -172,7 +187,15 @@ func renderMixed(ctx Context, m Message, fences []fenceRange) buffer.Buffer {
 		_, srcRows := grid.Size()
 		for sy := 0; sy < srcRows && y+sy < totalRows; sy++ {
 			for sx := 0; sx < ctx.Cols; sx++ {
-				stitched.SetCell(sx, y+sy, grid.Cell(sx, sy))
+				src := grid.Cell(sx, sy)
+				// Skip continuation cells; stitched.SetCell on a wide-main
+				// auto-writes its continuation. Calling SetCell with the
+				// continuation Ch would trigger clearWideOverlap and erase
+				// the wide-main at sx-1 (spec-1.7 T-9 HIGH-2 latent bug).
+				if buffer.IsContinuation(src) {
+					continue
+				}
+				stitched.SetCell(sx, y+sy, src)
 			}
 		}
 		y += r.rows
@@ -274,4 +297,21 @@ func writeTextRow(buf *buffer.Grid, x0, y int, text string, s style.Style, cols 
 		x += rw
 		i += size
 	}
+}
+
+// lastRowOccupiedWidth scans row y of grid and returns the visual width
+// (cells used by content) up to the last non-space, non-zero cell. Wide-rune
+// continuation cells count as occupied. Used by renderMixed marker tail-
+// overflow accounting (spec-1.7 T-9 HIGH-1).
+func lastRowOccupiedWidth(grid *buffer.Grid, y, cols int) int {
+	last := 0
+	for x := 0; x < cols; x++ {
+		c := grid.Cell(x, y)
+		if c.Ch == 0 || c.Ch == ' ' {
+			continue
+		}
+		// Either main char or continuation cell counts as occupied.
+		last = x + 1
+	}
+	return last
 }

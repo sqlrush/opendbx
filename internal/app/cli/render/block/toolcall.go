@@ -10,7 +10,7 @@ import "github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
 // (nil, ErrUnsupportedNode) per the spec-0.13 D-3 contract (replaces R1
 // panic path; R2 codex HIGH-5).
 //
-// TODO(spec-X.Y): replace stub Render with real implementation; see spec-1.7 D-6 R2 D6 deferred-stub contract.
+// TODO(spec-1.9): replace stub Render with real implementation; see spec-1.7 D-6 R2 D6 deferred-stub contract.
 type Toolcall struct{}
 
 // Render satisfies the RenderNode interface but returns the unsupported
