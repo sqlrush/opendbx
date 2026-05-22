@@ -81,9 +81,10 @@ EOF
 ### Update protocol
 
 - CC visual change (e.g. Anthropic 发新版 改了 marker rune / lang label style) 时:
-  1. 跑 `make ui-block-golden -update-visual` 拉新 fixture
-  2. 用户视觉 review 新 golden 是否 acceptable
-  3. 若 acceptable: commit; 若不: spec-1.7 errata 改 const 与 CC 对齐
+  1. 重新按本 SOP capture CC fixture (`golden.png` + `input.ansi` + metadata)
+  2. 跑 `BLOCK_VISUAL_REQUIRED=1 make ui-block-golden` 验证 opendbx 输出对齐新 fixture
+  3. 用户视觉 review 新 golden 是否 acceptable
+  4. 若 acceptable: commit; 若不: spec-1.7 errata 改 const 与 CC 对齐
 - Quarterly review: 用户跑全 7 fixtures 重 capture 1 次, drift check
 
 ## 后续 lock-in (spec-1.7 R2 D5)
