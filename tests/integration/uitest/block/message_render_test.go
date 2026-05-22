@@ -9,7 +9,6 @@ package block_test
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -50,13 +49,14 @@ func TestMessageVisualGolden(t *testing.T) {
 			raw := bufferANSI(t, buf)
 			uiinvariant.CheckANSI(t, raw)
 			png := visualgolden.Render(t, raw, visualgolden.DefaultTheme())
-			if !visualgolden.Update() && !visualFixtureExists(t, "golden") {
+			fixturePath := visualFixturePath(t, tc.name, "golden.png")
+			if !visualgolden.Update() && !visualFixtureExists(t, fixturePath) {
 				if os.Getenv("BLOCK_VISUAL_REQUIRED") != "" {
 					t.Fatalf("missing CC visual fixture for %s (run T-2.5 capture SOP first)", tc.name)
 				}
 				t.Skipf("missing CC visual fixture for %s; T-2.5 capture pending", tc.name)
 			}
-			visualgolden.Compare(t, "golden", png, 0.01)
+			visualgolden.CompareFile(t, fixturePath, png, 0.01)
 		})
 	}
 }
@@ -99,19 +99,23 @@ func bufferANSI(t testing.TB, buf buffer.Buffer) []byte {
 	return []byte(b.String())
 }
 
-func visualFixtureExists(t testing.TB, name string) bool {
+func visualFixtureExists(t testing.TB, path string) bool {
 	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatalf("runtime.Caller failed")
-	}
-	path := filepath.Join(filepath.Dir(file), "testdata", "visual", t.Name(), name+".png")
 	if _, err := os.Stat(path); err == nil {
 		return true
 	} else if !os.IsNotExist(err) {
 		t.Fatalf("stat visual fixture %s: %v", path, err)
 	}
 	return false
+}
+
+func visualFixturePath(t testing.TB, fixture, name string) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+	return filepath.Join(wd, "testdata", "visual", fixture, name)
 }
 
 func TestBufferANSI_EmitsResetAndText(t *testing.T) {

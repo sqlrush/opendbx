@@ -70,6 +70,14 @@ func Compare(t testing.TB, name string, got []byte, maxMismatchFraction float64)
 	compareAt(t, path, got, maxMismatchFraction)
 }
 
+// CompareFile diffs got PNG against an explicit golden PNG path.
+// Use this when the fixture layout is part of a cross-spec contract and
+// should not be derived from t.Name().
+func CompareFile(t testing.TB, path string, got []byte, maxMismatchFraction float64) {
+	t.Helper()
+	compareAt(t, path, got, maxMismatchFraction)
+}
+
 func compareAt(t testing.TB, path string, got []byte, maxMismatchFraction float64) {
 	t.Helper()
 	if updateVisualOracle() {
