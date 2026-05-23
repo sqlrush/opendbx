@@ -8,6 +8,7 @@
 // 痛点 1.5 Empty. Marker tail-overflow handled symmetrically across
 // renderPlainText (rowsWithMarker pre-count) and renderMixed (last-segment
 // width check; spec-1.7 T-9 HIGH-1).
+
 package block
 
 import (
