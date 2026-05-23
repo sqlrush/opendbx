@@ -125,3 +125,42 @@ func BenchmarkToolResult_render_measureonly(b *testing.B) {
 		_, _ = tr.Render(ctx)
 	}
 }
+
+// spec-1.10 § 4.3 targets (R5 M-2 absorb: comment realigned to spec
+// § 4.3; collapsed_large fixture realigned to "20 reads + 10 searches"
+// per spec line 220):
+//   - compact_render_collapsed_small:   < 30µs   (1 read group)
+//   - compact_render_collapsed_large:   < 100µs  (20 reads + 10 searches)
+//   - compact_render_measureonly:       < 5µs
+
+func BenchmarkCompact_render_collapsed_small(b *testing.B) {
+	c := NewCompactSummary()
+	c.ReadCount = 1
+	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = c.Render(ctx)
+	}
+}
+
+func BenchmarkCompact_render_collapsed_large(b *testing.B) {
+	c := NewCompactSummary()
+	c.ReadCount = 20
+	c.SearchCount = 10
+	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = c.Render(ctx)
+	}
+}
+
+func BenchmarkCompact_render_measureonly(b *testing.B) {
+	c := NewCompactSummary()
+	c.ReadCount = 5
+	c.SearchCount = 2
+	ctx := Context{Cols: 80, MeasureOnly: true, Theme: DefaultTheme{}, Wrap: WrapSoft}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = c.Render(ctx)
+	}
+}

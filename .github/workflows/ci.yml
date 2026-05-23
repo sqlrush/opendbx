@@ -329,6 +329,15 @@ jobs:
         env:
           TOOLRESULT_VISUAL_REQUIRED: ${{ vars.TOOLRESULT_VISUAL_REQUIRED || '' }}
         run: make ui-toolresult-golden
+      - name: Layer 3 block Compact visual golden (spec-1.10 D-8)
+        # CompactSummary fixtures parked under tests/integration/uitest/block/
+        # testdata/visual/Compact*/ — captured in a future T-2.5 session.
+        # Independent env gate (COMPACT_VISUAL_REQUIRED) so spec-1.10
+        # CompactSummary fixture lifecycle is decoupled from the prior
+        # block types' gates (spec-1.9 decouple lesson; R4 MED-3).
+        env:
+          COMPACT_VISUAL_REQUIRED: ${{ vars.COMPACT_VISUAL_REQUIRED || '' }}
+        run: make ui-compact-golden
 
   # spec-0.11.5 D-4/D-5: Layer 5 screenshot evidence. Required context,
   # label-gated. PR body/label edits retrigger this workflow so stale

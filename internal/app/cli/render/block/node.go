@@ -3,8 +3,8 @@
 // Author: sqlrush
 
 // Package block defines the RenderNode interface for all user-visible
-// rendered blocks (message / toolcall / compact / markdown / code / diff
-// / banner / progress) and provides 8 type stubs.
+// rendered blocks (message / toolcall / toolresult / compact / markdown /
+// code / diff / banner / progress) and the remaining unsupported stubs.
 //
 // Each stub Render() returns (nil, ErrUnsupportedNode) — spec-1.7+
 // fills the real implementation per block type. Renaming this from R1's
@@ -50,6 +50,12 @@ type Context struct {
 	// transcript-mode verbose flag injected by spec-1.15 TUI; adapters use
 	// it for verbose vs condensed rendering. Default false preserves
 	// spec-1.7 Message.Render legacy behavior.
+	IsTranscript bool // **spec-1.10 D-6 forward errata (spec-1.7 R4)** — CC
+	// Ctrl+O `app:toggleTranscript` 全局 mode (per spec-1.9 R2 HIGH-3 / B-9).
+	// Injected by spec-1.15 TUI per-tick. block.CompactSummary.Render gates
+	// on this OR Verbose: when EITHER is true, expanded mode → 0 rows
+	// (caller renders 原 ToolUse/ToolResult); default false 不破 spec-1.7
+	// Message / spec-1.9 ToolUse / spec-1.9b ToolResult FROZEN 行为.
 }
 
 // RenderNode is the contract every block type implements. Render produces
@@ -67,7 +73,7 @@ type RenderNode interface {
 	Render(ctx Context) (buffer.Buffer, error)
 }
 
-// ErrUnsupportedNode is returned by the 8 type stubs in spec-0.13.
+// ErrUnsupportedNode is returned by the remaining unsupported block stubs.
 // Callers should check `errors.Is(err, ErrUnsupportedNode)` and surface
 // the actionable hint to the user.
 //
@@ -75,5 +81,5 @@ type RenderNode interface {
 var ErrUnsupportedNode = errcode.Register(
 	"RENDER.UNSUPPORTED_NODE",
 	"block.Render called on unimplemented block type",
-	"this block type is not yet implemented; see spec-1.7+ block-type specs (message / toolcall / markdown / code / diff / banner / progress / compact)",
+	"this block type is not yet implemented; see spec-1.7+ block-type specs (message / toolcall / toolresult / compact already implemented; markdown / code / diff / banner / progress pending)",
 )
