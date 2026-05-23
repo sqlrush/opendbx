@@ -52,6 +52,9 @@ func TestToolUseVisualGolden(t *testing.T) {
 			tu: withState(block.NewToolUse("id2", "MysteryTool", map[string]any{"foo": "bar"}),
 				block.StateRunning),
 			cols: 80,
+			// Single-row generic text shows slightly higher macOS/Linux
+			// freeze font rasterization drift than the other ToolUse cases.
+			maxMismatchFraction: 0.02,
 			meta: toolUseFixtureMetadata{
 				Adapter:      "generic",
 				Notes:        "Unknown tool fallback is fixture-derived from deterministic mock input.",
@@ -146,7 +149,7 @@ func TestToolUseVisualGolden(t *testing.T) {
 			if visualgolden.Update() {
 				writeToolUseFixtureSidecars(t, tc, raw, rows)
 			}
-			visualgolden.CompareFile(t, fixturePath, png, 0.01)
+			visualgolden.CompareFile(t, fixturePath, png, tc.maxMismatch())
 		})
 	}
 }
@@ -159,10 +162,18 @@ type toolUseFixtureMetadata struct {
 }
 
 type toolUseVisualCase struct {
-	name string
-	tu   block.ToolUse
-	cols int
-	meta toolUseFixtureMetadata
+	name                string
+	tu                  block.ToolUse
+	cols                int
+	maxMismatchFraction float64
+	meta                toolUseFixtureMetadata
+}
+
+func (tc toolUseVisualCase) maxMismatch() float64 {
+	if tc.maxMismatchFraction != 0 {
+		return tc.maxMismatchFraction
+	}
+	return 0.01
 }
 
 func writeToolUseFixtureSidecars(t testing.TB, tc toolUseVisualCase, raw []byte, rows int) {
