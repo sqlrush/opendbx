@@ -83,6 +83,15 @@ func resultIndicator(s ToolResultState) Indicator {
 // all collapsed groups per CollapsedReadSearchContent.tsx); the enum is
 // kept open for future Read/Search/List specialization if CC introduces
 // per-category indicators.
+//
+// **Extension contract** (R5 L-1: claude path 1/3 caught half-implemented
+// extension surface): spec-1.10 deliberately omits a `Category` field on
+// `CompactSummary` since the only consumer call site invokes
+// `compactIndicator(ToolGroupCategoryDefault)` unconditionally. When CC
+// (or a future opendbx spec) introduces per-category indicators, the
+// caller DTO change goes through spec-1.21 (diagnose-loop owner) plus a
+// new `Category ToolGroupCategory` field on CompactSummary in that spec,
+// **not** retroactively into spec-1.10.
 type ToolGroupCategory int
 
 const (

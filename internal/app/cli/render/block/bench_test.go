@@ -126,15 +126,16 @@ func BenchmarkToolResult_render_measureonly(b *testing.B) {
 	}
 }
 
-// spec-1.10 § 4.3 targets:
-//   - compact_render_collapsed_small:   < 30µs   (Read only, 1-2 parts)
-//   - compact_render_collapsed_large:   < 80µs   (5 categories mixed +
-//     hint row + 3 wrapped paths)
+// spec-1.10 § 4.3 targets (R5 M-2 absorb: comment realigned to spec
+// § 4.3; collapsed_large fixture realigned to "20 reads + 10 searches"
+// per spec line 220):
+//   - compact_render_collapsed_small:   < 30µs   (1 read group)
+//   - compact_render_collapsed_large:   < 100µs  (20 reads + 10 searches)
 //   - compact_render_measureonly:       < 5µs
 
 func BenchmarkCompact_render_collapsed_small(b *testing.B) {
 	c := NewCompactSummary()
-	c.ReadCount = 2
+	c.ReadCount = 1
 	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -144,13 +145,8 @@ func BenchmarkCompact_render_collapsed_small(b *testing.B) {
 
 func BenchmarkCompact_render_collapsed_large(b *testing.B) {
 	c := NewCompactSummary()
-	c.SearchCount = 3
-	c.ReadCount = 5
-	c.ListCount = 2
-	c.MemoryReadCount = 1
-	c.MemoryWriteCount = 2
-	c.IsActive = true
-	c.LatestDisplayHint = "/tmp/some/long/path/with/many/segments/file.go"
+	c.ReadCount = 20
+	c.SearchCount = 10
 	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

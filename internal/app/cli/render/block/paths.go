@@ -41,7 +41,11 @@ func getDisplayPath(p string) string {
 	if cwd, err := os.Getwd(); err == nil {
 		if rel, err := filepath.Rel(cwd, p); err == nil {
 			// R4 MED-1 guard: only accept when rel does not escape CWD.
-			if rel != ".." && !strings.HasPrefix(rel, "../") && !strings.HasPrefix(rel, "..\\") {
+			// Use OS separator (R5 NIT-1: claude path 1/3 caught literal
+			// `..\\` matched 2-char double-backslash, never produced by
+			// filepath.Rel; correct guard is OS-native separator).
+			parentEscape := ".." + string(filepath.Separator)
+			if rel != ".." && !strings.HasPrefix(rel, parentEscape) {
 				return rel
 			}
 		}

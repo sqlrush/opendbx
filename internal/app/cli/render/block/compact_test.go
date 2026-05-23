@@ -11,10 +11,25 @@ package block
 import (
 	"strings"
 	"testing"
+
+	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
 )
 
 func ctxCompact(cols int) Context {
 	return Context{Cols: cols, Rows: 24, Wrap: WrapSoft}
+}
+
+// mustRenderCompact surfaces Render errors as fatal — R5 M-3 absorb
+// (claude path 1/3 caught silent `_` discards across all 28 cases).
+// CompactSummary.Render currently never returns non-nil error, but
+// CLAUDE rule 7 requires explicit handling so regressions are caught.
+func mustRenderCompact(t *testing.T, c CompactSummary, ctx Context) buffer.Buffer {
+	t.Helper()
+	buf, err := c.Render(ctx)
+	if err != nil {
+		t.Fatalf("CompactSummary.Render: unexpected error: %v", err)
+	}
+	return buf
 }
 
 func readCompactRow(t *testing.T, buf interface {
@@ -39,7 +54,7 @@ func TestCompact_Dispatch_DefaultCollapsed(t *testing.T) {
 	t.Parallel()
 	c := NewCompactSummary()
 	c.ReadCount = 3
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	_, rows := buf.Size()
 	if rows != 1 {
 		t.Fatalf("default (IsTranscript=false, Verbose=false) collapsed: want 1 row, got %d", rows)
@@ -52,7 +67,7 @@ func TestCompact_Dispatch_TranscriptExpanded(t *testing.T) {
 	c.ReadCount = 3
 	ctx := ctxCompact(80)
 	ctx.IsTranscript = true
-	buf, _ := c.Render(ctx)
+	buf := mustRenderCompact(t, c, ctx)
 	_, rows := buf.Size()
 	if rows != 0 {
 		t.Fatalf("IsTranscript=true expanded: want 0 rows, got %d", rows)
@@ -65,7 +80,7 @@ func TestCompact_Dispatch_VerboseExpanded(t *testing.T) {
 	c.ReadCount = 3
 	ctx := ctxCompact(80)
 	ctx.Verbose = true
-	buf, _ := c.Render(ctx)
+	buf := mustRenderCompact(t, c, ctx)
 	_, rows := buf.Size()
 	if rows != 0 {
 		t.Fatalf("Verbose=true expanded: want 0 rows, got %d", rows)
@@ -79,7 +94,7 @@ func TestCompact_Dispatch_BothExpanded(t *testing.T) {
 	ctx := ctxCompact(80)
 	ctx.IsTranscript = true
 	ctx.Verbose = true
-	buf, _ := c.Render(ctx)
+	buf := mustRenderCompact(t, c, ctx)
 	_, rows := buf.Size()
 	if rows != 0 {
 		t.Fatalf("both true expanded: want 0 rows, got %d", rows)
@@ -92,7 +107,7 @@ func TestCompact_ReadCount_Singular(t *testing.T) {
 	t.Parallel()
 	c := NewCompactSummary()
 	c.ReadCount = 1
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	row0 := readCompactRow(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
 	if !strings.Contains(row0, "Read 1 file") || strings.Contains(row0, "files") {
 		t.Errorf("singular: want 'Read 1 file' (no 's'), got %q", row0)
@@ -103,7 +118,7 @@ func TestCompact_ReadCount_Plural(t *testing.T) {
 	t.Parallel()
 	c := NewCompactSummary()
 	c.ReadCount = 3
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	row0 := readCompactRow(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
 	if !strings.Contains(row0, "Read 3 files") {
 		t.Errorf("plural: want 'Read 3 files', got %q", row0)
@@ -114,7 +129,7 @@ func TestCompact_ListCount_DirectorySingular(t *testing.T) {
 	t.Parallel()
 	c := NewCompactSummary()
 	c.ListCount = 1
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	row0 := readCompactRow(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
 	if !strings.Contains(row0, "1 directory") || strings.Contains(row0, "directories") {
 		t.Errorf("singular: want '1 directory' (no 'ies'), got %q", row0)
@@ -125,7 +140,7 @@ func TestCompact_ListCount_DirectoriesPlural(t *testing.T) {
 	t.Parallel()
 	c := NewCompactSummary()
 	c.ListCount = 5
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	row0 := readCompactRow(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
 	if !strings.Contains(row0, "5 directories") {
 		t.Errorf("plural: want '5 directories', got %q", row0)
@@ -140,7 +155,7 @@ func TestCompact_SearchCount_PatternsPlural(t *testing.T) {
 	t.Parallel()
 	c := NewCompactSummary()
 	c.SearchCount = 2
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	row0 := readCompactRow(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
 	if !strings.Contains(row0, "2 patterns") {
 		t.Errorf("want '2 patterns', got %q", row0)
@@ -151,7 +166,7 @@ func TestCompact_SearchCount_PatternSingular(t *testing.T) {
 	t.Parallel()
 	c := NewCompactSummary()
 	c.SearchCount = 1
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	row0 := readCompactRow(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
 	if !strings.Contains(row0, "1 pattern") || strings.Contains(row0, "patterns") {
 		t.Errorf("singular: want '1 pattern' (no 's'), got %q", row0)
@@ -165,7 +180,7 @@ func TestCompact_Mixed_ReadSearch(t *testing.T) {
 	c := NewCompactSummary()
 	c.ReadCount = 2
 	c.SearchCount = 3
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	row0 := readCompactRow(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
 	// Search comes first (non-mem order: search/read/list).
 	if !strings.Contains(row0, "Searched for 3 patterns") {
@@ -188,7 +203,7 @@ func TestCompact_Mixed_ReadList(t *testing.T) {
 	c := NewCompactSummary()
 	c.ReadCount = 5
 	c.ListCount = 2
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	row0 := readCompactRow(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
 	if !strings.Contains(row0, "Read 5 files") || !strings.Contains(row0, "listed 2 directories") {
 		t.Errorf("mixed: %q", row0)
@@ -201,7 +216,7 @@ func TestCompact_Mixed_AllThree(t *testing.T) {
 	c.SearchCount = 1
 	c.ReadCount = 2
 	c.ListCount = 3
-	buf, _ := c.Render(ctxCompact(120))
+	buf := mustRenderCompact(t, c, ctxCompact(120))
 	row0 := readCompactRow(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
 	// CC order: Search, Read, List
 	if !strings.Contains(row0, "Searched for 1 pattern, read 2 files, listed 3 directories") {
@@ -214,7 +229,7 @@ func TestCompact_Mixed_SeparatorOnlyComma(t *testing.T) {
 	c := NewCompactSummary()
 	c.ReadCount = 1
 	c.SearchCount = 1
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	row0 := readCompactRow(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
 	if strings.Contains(row0, "·") {
 		t.Errorf("must NOT use '·': %q", row0)
@@ -228,7 +243,7 @@ func TestCompact_Memory_NonMemoryFirst(t *testing.T) {
 	c := NewCompactSummary()
 	c.ReadCount = 2
 	c.MemoryReadCount = 1
-	buf, _ := c.Render(ctxCompact(120))
+	buf := mustRenderCompact(t, c, ctxCompact(120))
 	row0 := readCompactRow(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
 	// non-memory part (Read) first, memory part after (per R4 MED-3 visible order).
 	readIdx := strings.Index(row0, "Read 2 files")
@@ -245,7 +260,7 @@ func TestCompact_Memory_RecalledPerOp(t *testing.T) {
 	t.Parallel()
 	c := NewCompactSummary()
 	c.MemoryReadCount = 3
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	row0 := readCompactRow(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
 	if !strings.Contains(row0, "Recalled 3 memories") {
 		t.Errorf("want 'Recalled 3 memories' (per-op pattern), got %q", row0)
@@ -259,7 +274,7 @@ func TestCompact_Memory_SearchedNoCountWord(t *testing.T) {
 	t.Parallel()
 	c := NewCompactSummary()
 	c.MemorySearchCount = 1
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	row0 := readCompactRow(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
 	// CC pattern: "Searched memories" without count word.
 	if !strings.Contains(row0, "Searched memories") {
@@ -271,7 +286,7 @@ func TestCompact_Memory_WroteWithCount(t *testing.T) {
 	t.Parallel()
 	c := NewCompactSummary()
 	c.MemoryWriteCount = 2
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	row0 := readCompactRow(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
 	if !strings.Contains(row0, "Wrote 2 memories") {
 		t.Errorf("want 'Wrote 2 memories', got %q", row0)
@@ -285,7 +300,7 @@ func TestCompact_Tense_Active_PresentVerb(t *testing.T) {
 	c := NewCompactSummary()
 	c.ReadCount = 2
 	c.IsActive = true
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	row0 := readCompactRow(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
 	if !strings.Contains(row0, "Reading 2 files") {
 		t.Errorf("active → present 'Reading', got %q", row0)
@@ -297,7 +312,7 @@ func TestCompact_Tense_Inactive_PastVerb(t *testing.T) {
 	c := NewCompactSummary()
 	c.ReadCount = 2
 	c.IsActive = false
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	row0 := readCompactRow(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
 	if !strings.Contains(row0, "Read 2 files") {
 		t.Errorf("inactive → past 'Read', got %q", row0)
@@ -312,7 +327,7 @@ func TestCompact_HintRow_ActiveWithHint(t *testing.T) {
 	c.ReadCount = 1
 	c.IsActive = true
 	c.LatestDisplayHint = "/etc/hosts"
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	_, rows := buf.Size()
 	if rows < 2 {
 		t.Fatalf("active + hint: want ≥2 rows, got %d", rows)
@@ -329,7 +344,7 @@ func TestCompact_HintRow_InactiveNoHint(t *testing.T) {
 	c.ReadCount = 1
 	c.IsActive = false
 	c.LatestDisplayHint = "/etc/hosts"
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	_, rows := buf.Size()
 	if rows != 1 {
 		t.Fatalf("inactive: hint row must NOT show (per CC B-26), got %d rows", rows)
@@ -342,7 +357,7 @@ func TestCompact_HintRow_EmptyHintNoRow(t *testing.T) {
 	c.ReadCount = 1
 	c.IsActive = true
 	c.LatestDisplayHint = ""
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	_, rows := buf.Size()
 	if rows != 1 {
 		t.Fatalf("empty hint: want 1 row, got %d", rows)
@@ -355,7 +370,7 @@ func TestCompact_HintRow_CJKPath(t *testing.T) {
 	c.ReadCount = 1
 	c.IsActive = true
 	c.LatestDisplayHint = "/tmp/中文测试.txt"
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	row1 := readCompactRow(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 1)
 	if !strings.ContainsRune(row1, '中') {
 		t.Errorf("CJK path lost: %q", row1)
@@ -370,7 +385,7 @@ func TestCompact_HintRow_NoElapsedSuffix(t *testing.T) {
 	c.ReadCount = 1
 	c.IsActive = true
 	c.LatestDisplayHint = "/tmp/x"
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	row1 := readCompactRow(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 1)
 	// hint row must NOT contain "s)" suffix or "ms" duration (R4 MED-4 / ❌-7).
 	if strings.Contains(row1, "ms") || strings.Contains(row1, "s)") {
@@ -383,7 +398,7 @@ func TestCompact_HintRow_NoElapsedSuffix(t *testing.T) {
 func TestCompact_AllZero_NoRows(t *testing.T) {
 	t.Parallel()
 	c := NewCompactSummary()
-	buf, _ := c.Render(ctxCompact(80))
+	buf := mustRenderCompact(t, c, ctxCompact(80))
 	_, rows := buf.Size()
 	if rows != 0 {
 		t.Fatalf("all zero degenerate: want 0 rows, got %d", rows)
@@ -394,7 +409,7 @@ func TestCompact_ZeroCols(t *testing.T) {
 	t.Parallel()
 	c := NewCompactSummary()
 	c.ReadCount = 1
-	buf, _ := c.Render(Context{Cols: 0})
+	buf := mustRenderCompact(t, c, Context{Cols: 0})
 	cols, rows := buf.Size()
 	if cols != 0 || rows != 0 {
 		t.Errorf("ctx.Cols=0: want (0,0), got (%d,%d)", cols, rows)
@@ -408,7 +423,7 @@ func TestCompact_MeasureOnly(t *testing.T) {
 	c.IsActive = true
 	c.LatestDisplayHint = "/tmp/x"
 	ctx := Context{Cols: 80, Rows: 24, MeasureOnly: true}
-	buf, _ := c.Render(ctx)
+	buf := mustRenderCompact(t, c, ctx)
 	_, rows := buf.Size()
 	if rows != 2 {
 		t.Fatalf("MeasureOnly: want 2 rows (summary + hint), got %d", rows)

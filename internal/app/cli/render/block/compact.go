@@ -118,17 +118,6 @@ func (c CompactSummary) Render(ctx Context) (buffer.Buffer, error) {
 func (c CompactSummary) collectParts() []string {
 	var parts []string
 
-	addPart := func(verb, lowerVerb, noun string, n int) {
-		if n <= 0 {
-			return
-		}
-		v := lowerVerb
-		if len(parts) == 0 {
-			v = verb
-		}
-		parts = append(parts, fmt.Sprintf("%s %d %s", v, n, plural(n, noun, noun+"s")))
-	}
-
 	// Non-memory parts first (CC B-22 :294-415 visible order; R4 MED-3).
 	// Search uses "patterns" noun; Read uses "files"; List uses
 	// "directory/directories".
@@ -169,7 +158,6 @@ func (c CompactSummary) collectParts() []string {
 		addTenseCountPart(&parts, writeVerb, writeVerbLower, "memory", "memories", c.MemoryWriteCount)
 	}
 
-	_ = addPart // future use if uniform path needed
 	return parts
 }
 
