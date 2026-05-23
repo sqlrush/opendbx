@@ -390,3 +390,85 @@ func (erroringResultRenderer) RenderResult(_ any, _ adapter.Context) (string, er
 type errResultMock string
 
 func (e errResultMock) Error() string { return string(e) }
+
+// === T-9 R3 absorb additions ===
+
+// T1-31 (R3 HIGH-3 / T-9 MED-1) — NewToolResult preserves ToolName + empty
+// ToolName Success path with non-empty content uses Generic fallback rows.
+func TestToolResult_NewToolResult_PreservesToolName(t *testing.T) {
+	t.Parallel()
+	tr := NewToolResult("idTN", "Bash", "ok", false)
+	if tr.ToolName != "Bash" {
+		t.Errorf("ToolName preserve: got %q, want \"Bash\"", tr.ToolName)
+	}
+}
+
+// T1-31b (R3 HIGH-3 / T-9 MED-1) — empty ToolName + non-empty content +
+// Success → Generic fallback produces ≥1 row (production callers MUST NOT
+// pass empty ToolName per R3 HIGH-3; this guards the dev-only / test
+// fallback path).
+func TestToolResult_EmptyToolName_NonEmptyContent_GenericFallback(t *testing.T) {
+	t.Parallel()
+	tr := NewToolResult("idTNE", "", "result payload", false)
+	buf, _ := tr.Render(ctxToolResult(80))
+	_, rows := buf.Size()
+	if rows != 1 {
+		t.Fatalf("empty ToolName + content via Generic: want 1 row, got %d", rows)
+	}
+	row0 := resultRowText(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
+	if !strings.Contains(row0, "result payload") {
+		t.Errorf("expected Generic to render content, got %q", row0)
+	}
+}
+
+// T1-32 (R3 / T-9 MED-2) — []byte content Success path exercises
+// isEmptyContent + Bash RenderResult []byte branch.
+func TestToolResult_Success_BytesContent_Bash(t *testing.T) {
+	t.Parallel()
+	tr := NewToolResult("idBS", "Bash", []byte("byte content\nline2"), false)
+	buf, _ := tr.Render(ctxToolResult(80))
+	_, rows := buf.Size()
+	if rows < 1 {
+		t.Fatalf("[]byte content: want ≥1 row, got %d", rows)
+	}
+	row0 := resultRowText(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
+	if !strings.Contains(row0, "byte content") {
+		t.Errorf("[]byte content not rendered: %q", row0)
+	}
+}
+
+// T1-32b (R3 / T-9 MED-2) — empty []byte content Success path triggers
+// isEmptyContent → Generic skip → 0 rows (R3 MED-1 null path).
+func TestToolResult_Success_EmptyBytesContent_ZeroRows(t *testing.T) {
+	t.Parallel()
+	tr := NewToolResult("idBSE", "definitely_unknown_tool_xyz", []byte{}, false)
+	buf, _ := tr.Render(ctxToolResult(80))
+	_, rows := buf.Size()
+	if rows != 0 {
+		t.Errorf("empty []byte content: want 0 rows, got %d", rows)
+	}
+}
+
+// T1-32c (R3 / T-9 MED-2) — []byte content Error path exercises
+// fallbackContent []byte branch.
+func TestToolResult_Error_BytesContent_GenericFallback(t *testing.T) {
+	t.Parallel()
+	tr := NewToolResult("idBE", "definitely_unknown_tool_xyz", []byte("boom error"), true)
+	buf, _ := tr.Render(ctxToolResult(80))
+	row0 := resultRowText(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
+	if !strings.Contains(row0, "boom error") {
+		t.Errorf("[]byte error content via fallbackContent: got %q", row0)
+	}
+}
+
+// T1-32d (R3 / T-9 MED-2) — int content Generic fallback (covers default
+// type-switch branch in contentToString).
+func TestToolResult_Success_IntContent_GenericFallback(t *testing.T) {
+	t.Parallel()
+	tr := NewToolResult("idIS", "definitely_unknown_tool_xyz", 42, false)
+	buf, _ := tr.Render(ctxToolResult(80))
+	_, rows := buf.Size()
+	if rows < 1 {
+		t.Fatalf("int content via Generic: want ≥1 row, got %d", rows)
+	}
+}

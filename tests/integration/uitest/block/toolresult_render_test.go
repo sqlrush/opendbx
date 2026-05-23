@@ -96,17 +96,25 @@ func TestToolResultVisualGolden(t *testing.T) {
 	}
 }
 
-// buildRejectedToolResult constructs a Rejected ToolResult using the
-// CC REJECT_MESSAGE prefix to exercise the state derivation path.
+// buildRejectedToolResult constructs a Rejected ToolResult using a
+// prefix substring of the unexported block.rejectMessagePrefix const
+// (matches the first sentence of CC messages.ts:210 REJECT_MESSAGE).
+// Since `deriveResultState` uses `strings.HasPrefix(content,
+// rejectMessagePrefix)`, our prefix-substring also matches because the
+// full REJECT_MESSAGE starts with this string.
+//
+// NIT-1 (R3): substring used because test file (block_test package)
+// cannot import unexported const from block package. Future
+// alternative: expose a test helper `block.ForTesting_RejectMessagePrefix`.
 func buildRejectedToolResult(id string) block.ToolResult {
-	// We can't directly reach the unexported rejectMessagePrefix const,
-	// so we use a known-prefix string per spec-1.9b § 2 / messages.ts:210.
 	prefix := "The user doesn't want to proceed with this tool use."
 	return block.NewToolResult(id, "Bash", prefix, false)
 }
 
-// buildCanceledToolResult constructs a Canceled ToolResult using the
-// CC CANCEL_MESSAGE prefix to exercise the state derivation path.
+// buildCanceledToolResult constructs a Canceled ToolResult using a
+// prefix substring of the unexported block.cancelMessagePrefix const
+// (matches CC messages.ts:207 CANCEL_MESSAGE first sentence).
+// Same prefix-substring rationale as buildRejectedToolResult.
 func buildCanceledToolResult(id string) block.ToolResult {
 	prefix := "The user doesn't want to take this action right now."
 	return block.NewToolResult(id, "Bash", prefix, false)

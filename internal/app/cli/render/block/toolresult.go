@@ -253,6 +253,12 @@ func callResultRenderer(rdr adapter.HeaderRenderer, content any, ctx adapter.Con
 	// actual data (spec-1.9b D-4: "fallback Generic only for explicit
 	// Generic/unknown-tool rendering"). Empty / nil content triggers
 	// R3 MED-1 null-row path (CC `renderToolResultMessage` absent).
+	//
+	// spec-1.9b T-9 LOW-1 note: a registered HeaderRenderer that does NOT
+	// implement ResultRenderer (e.g., future ToolUse-only adapter) also
+	// falls through to Generic here. spec-1.21 may revisit if a tool
+	// needs explicit "result side absent" semantics — current behavior is
+	// the same as unregistered (Generic compact text).
 	if isEmptyContent(content) {
 		return "", nil
 	}
@@ -327,7 +333,12 @@ func expandToolResultRows(ctx Context, rows []toolResultRow) []toolResultRow {
 
 // resultErrorPlaceholder returns a 1-row "[render result error: <ToolName>]"
 // buffer when an adapter returns an error. block is a leaf renderer;
-// errors must not propagate to caller (CLAUDE rule 7).
+// errors must not propagate to caller (CLAUDE rule 7). Mirrors
+// errorPlaceholder pattern in spec-1.9 toolcall.go (block-leaf contract);
+// "[render result error: …]" vs "[render error: …]" suffix distinguishes
+// the ToolResult side from ToolUse side. Format echoes CC
+// FallbackToolUseErrorMessage (B-14) ancestry — minimal warning row,
+// not custom stderr tail (R2 MED-1).
 func resultErrorPlaceholder(ctx Context, theme StyleTheme, name string) (buffer.Buffer, error) {
 	if ctx.MeasureOnly {
 		return measureOnlyBuf(ctx.Cols, 1), nil
