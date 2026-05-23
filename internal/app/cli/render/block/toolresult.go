@@ -214,7 +214,7 @@ func (t ToolResult) collectRows(rdr adapter.HeaderRenderer, actx adapter.Context
 			return nil, err
 		}
 		if text == "" {
-			text = fallbackContent(t.Content)
+			text = adapter.FormatFallbackToolUseError(t.Content, actx)
 		}
 		return []toolResultRow{{
 			text:  fmt.Sprintf("%c %s", ind.Rune, text),
@@ -292,22 +292,6 @@ func isEmptyContent(content any) bool {
 		return len(v) == 0
 	}
 	return false
-}
-
-// fallbackContent formats arbitrary content for the Error fallback
-// (when no ErrorResultRenderer implemented; CC FallbackToolUseErrorMessage
-// equivalent — compact display per B-14:174-184).
-func fallbackContent(content any) string {
-	if content == nil {
-		return "(no error message)"
-	}
-	if s, ok := content.(string); ok && s != "" {
-		return s
-	}
-	if b, ok := content.([]byte); ok && len(b) > 0 {
-		return string(b)
-	}
-	return fmt.Sprintf("%v", content)
 }
 
 // expandToolResultRows applies ctx.Wrap to each logical row (local

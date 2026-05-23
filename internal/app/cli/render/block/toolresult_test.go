@@ -118,7 +118,7 @@ func TestToolResult_Error_Read(t *testing.T) {
 func TestToolResult_Error_Generic_FallbackContent(t *testing.T) {
 	t.Parallel()
 	// Generic doesn't implement ErrorResultRenderer; block falls back to
-	// fallbackContent(Content).
+	// the shared CC FallbackToolUseErrorMessage-equivalent.
 	tr := NewToolResult("id6", "UnknownTool", "raw error message", true)
 	buf, _ := tr.Render(ctxToolResult(80))
 	row0 := resultRowText(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
@@ -263,11 +263,13 @@ func TestToolResult_EmptyToolName_Generic(t *testing.T) {
 	tr := NewToolResult("id15", "", "result text", false)
 	buf, _ := tr.Render(ctxToolResult(80))
 	row0 := resultRowText(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
-	// Empty ToolName → adapter Lookup nil → callResultRenderer returns ""
-	// → R3 MED-1: 0 rows for Success. But content non-empty would normally
-	// flow through Generic; since Generic is NOT auto-registered for empty
-	// name lookup, this falls into 0-row case.
-	_ = row0 // best-effort: just verify no panic and row count consistent
+	_, rows := buf.Size()
+	if rows != 1 {
+		t.Fatalf("empty ToolName + non-empty content: want Generic fallback row, got %d", rows)
+	}
+	if !strings.Contains(row0, "result text") {
+		t.Errorf("empty ToolName Generic fallback content missing: %q", row0)
+	}
 }
 
 func TestToolResult_ZeroCols(t *testing.T) {
@@ -450,14 +452,14 @@ func TestToolResult_Success_EmptyBytesContent_ZeroRows(t *testing.T) {
 }
 
 // T1-32c (R3 / T-9 MED-2) — []byte content Error path exercises
-// fallbackContent []byte branch.
+// CC fallback non-string branch.
 func TestToolResult_Error_BytesContent_GenericFallback(t *testing.T) {
 	t.Parallel()
 	tr := NewToolResult("idBE", "definitely_unknown_tool_xyz", []byte("boom error"), true)
 	buf, _ := tr.Render(ctxToolResult(80))
 	row0 := resultRowText(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
-	if !strings.Contains(row0, "boom error") {
-		t.Errorf("[]byte error content via fallbackContent: got %q", row0)
+	if !strings.Contains(row0, "Tool execution failed") {
+		t.Errorf("[]byte error content via CC fallback: got %q", row0)
 	}
 }
 

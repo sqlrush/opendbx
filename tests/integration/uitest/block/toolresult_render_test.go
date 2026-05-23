@@ -16,6 +16,10 @@ import (
 	"github.com/sqlrush/opendbx/internal/testing/visualgolden"
 )
 
+const toolResultRejectMessage = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."
+
+const toolResultCancelMessage = "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed."
+
 // TestToolResultVisualGolden consumes 6 ToolResult CC fixtures parked
 // under tests/integration/uitest/block/testdata/visual/ToolResult*/.
 //
@@ -60,12 +64,12 @@ func TestToolResultVisualGolden(t *testing.T) {
 		},
 		{
 			name: "ToolResultRejectedBash",
-			tr:   buildRejectedToolResult("id5"),
+			tr:   buildRejectedToolResult(t, "id5"),
 			cols: 80,
 		},
 		{
 			name: "ToolResultCanceledBash",
-			tr:   buildCanceledToolResult("id6"),
+			tr:   buildCanceledToolResult(t, "id6"),
 			cols: 80,
 		},
 	}
@@ -96,28 +100,27 @@ func TestToolResultVisualGolden(t *testing.T) {
 	}
 }
 
-// buildRejectedToolResult constructs a Rejected ToolResult using a
-// prefix substring of the unexported block.rejectMessagePrefix const
-// (matches the first sentence of CC messages.ts:210 REJECT_MESSAGE).
-// Since `deriveResultState` uses `strings.HasPrefix(content,
-// rejectMessagePrefix)`, our prefix-substring also matches because the
-// full REJECT_MESSAGE starts with this string.
-//
-// NIT-1 (R3): substring used because test file (block_test package)
-// cannot import unexported const from block package. Future
-// alternative: expose a test helper `block.ForTesting_RejectMessagePrefix`.
-func buildRejectedToolResult(id string) block.ToolResult {
-	prefix := "The user doesn't want to proceed with this tool use."
-	return block.NewToolResult(id, "Bash", prefix, false)
+// buildRejectedToolResult constructs a Rejected ToolResult using the full
+// CC REJECT_MESSAGE literal. The state assertion prevents the visual fixture
+// from silently covering Success when the sentence drifts.
+func buildRejectedToolResult(t *testing.T, id string) block.ToolResult {
+	t.Helper()
+	tr := block.NewToolResult(id, "Bash", toolResultRejectMessage, false)
+	if tr.State != block.ResultRejected {
+		t.Fatalf("Rejected fixture state: got %v, want %v", tr.State, block.ResultRejected)
+	}
+	return tr
 }
 
-// buildCanceledToolResult constructs a Canceled ToolResult using a
-// prefix substring of the unexported block.cancelMessagePrefix const
-// (matches CC messages.ts:207 CANCEL_MESSAGE first sentence).
-// Same prefix-substring rationale as buildRejectedToolResult.
-func buildCanceledToolResult(id string) block.ToolResult {
-	prefix := "The user doesn't want to take this action right now."
-	return block.NewToolResult(id, "Bash", prefix, false)
+// buildCanceledToolResult constructs a Canceled ToolResult using the full
+// CC CANCEL_MESSAGE literal and asserts the intended derived state.
+func buildCanceledToolResult(t *testing.T, id string) block.ToolResult {
+	t.Helper()
+	tr := block.NewToolResult(id, "Bash", toolResultCancelMessage, false)
+	if tr.State != block.ResultCanceled {
+		t.Fatalf("Canceled fixture state: got %v, want %v", tr.State, block.ResultCanceled)
+	}
+	return tr
 }
 
 // TestToolResultVisualGolden_ParkedFixtures verifies the 6 fixture

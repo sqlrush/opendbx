@@ -236,6 +236,72 @@ func TestBash_RenderResult_Empty(t *testing.T) {
 	}
 }
 
+func TestBash_RenderResult_StructuredStdoutStderr(t *testing.T) {
+	t.Parallel()
+	b := Bash{}
+	out, _ := b.RenderResult(map[string]any{
+		"stdout": "ok",
+		"stderr": "warn",
+	}, Context{Verbose: true})
+	if !strings.Contains(out, "ok") || !strings.Contains(out, "warn") {
+		t.Errorf("structured stdout/stderr missing: %q", out)
+	}
+}
+
+func TestBash_RenderResult_StructuredNoOutputExpected(t *testing.T) {
+	t.Parallel()
+	b := Bash{}
+	out, _ := b.RenderResult(map[string]any{"noOutputExpected": true}, Context{})
+	if out != "Done" {
+		t.Errorf("noOutputExpected: got %q", out)
+	}
+}
+
+func TestBash_RenderResult_StructuredImage(t *testing.T) {
+	t.Parallel()
+	b := Bash{}
+	out, _ := b.RenderResult(map[string]any{"isImage": true, "stdout": "..."}, Context{})
+	if out != "[Image data detected and sent to Claude]" {
+		t.Errorf("image summary: got %q", out)
+	}
+}
+
+func TestBash_RenderResult_StructuredBackground(t *testing.T) {
+	t.Parallel()
+	b := Bash{}
+	out, _ := b.RenderResult(map[string]any{"backgroundTaskId": "bg1"}, Context{})
+	if !strings.Contains(out, "Running in the background") {
+		t.Errorf("background summary: got %q", out)
+	}
+}
+
+func TestBash_RenderResult_StructuredReturnCodeInterpretation(t *testing.T) {
+	t.Parallel()
+	b := Bash{}
+	out, _ := b.RenderResult(map[string]any{"returnCodeInterpretation": "No matches found"}, Context{})
+	if out != "No matches found" {
+		t.Errorf("returnCodeInterpretation: got %q", out)
+	}
+}
+
+func TestBash_RenderResult_StructuredNoOutput(t *testing.T) {
+	t.Parallel()
+	b := Bash{}
+	out, _ := b.RenderResult(map[string]any{}, Context{})
+	if out != "(No output)" {
+		t.Errorf("empty structured output: got %q", out)
+	}
+}
+
+func TestBash_RenderResult_MapStringString(t *testing.T) {
+	t.Parallel()
+	b := Bash{}
+	out, _ := b.RenderResult(map[string]string{"stdout": "ok"}, Context{})
+	if out != "ok" {
+		t.Errorf("map[string]string stdout: got %q", out)
+	}
+}
+
 func TestBash_RenderRejected_Empty_DefersToCallerFallback(t *testing.T) {
 	t.Parallel()
 	b := Bash{}
@@ -267,7 +333,7 @@ func TestBash_RenderErrorResult_Empty(t *testing.T) {
 	t.Parallel()
 	b := Bash{}
 	out, _ := b.RenderErrorResult(nil, Context{})
-	if out != "(no error message)" {
+	if out != "Tool execution failed" {
 		t.Errorf("got %q", out)
 	}
 }
@@ -279,6 +345,41 @@ func TestBash_RenderErrorResult_Verbose(t *testing.T) {
 	out, _ := b.RenderErrorResult(multi, Context{Verbose: true})
 	if !strings.Contains(out, "line3") {
 		t.Errorf("verbose should include all lines: %q", out)
+	}
+}
+
+func TestFormatFallbackToolUseError_InputValidation(t *testing.T) {
+	t.Parallel()
+	out := FormatFallbackToolUseError("InputValidationError: bad args", Context{})
+	if out != "Invalid tool parameters" {
+		t.Errorf("input validation compact: got %q", out)
+	}
+}
+
+func TestFormatFallbackToolUseError_ToolUseErrorTag(t *testing.T) {
+	t.Parallel()
+	out := FormatFallbackToolUseError("prefix <tool_use_error><error>boom</error></tool_use_error> suffix", Context{})
+	if out != "Error: boom" {
+		t.Errorf("tool_use_error extraction: got %q", out)
+	}
+}
+
+func TestFormatFallbackToolUseError_RemovesSandboxViolations(t *testing.T) {
+	t.Parallel()
+	out := FormatFallbackToolUseError("Error: denied\n<sandbox_violations>secret</sandbox_violations>", Context{})
+	if strings.Contains(out, "secret") || !strings.Contains(out, "denied") {
+		t.Errorf("sandbox tag cleanup: got %q", out)
+	}
+}
+
+func TestFormatFallbackToolUseError_CompactTenLines(t *testing.T) {
+	t.Parallel()
+	out := FormatFallbackToolUseError("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11", Context{})
+	if got := strings.Count(out, "\n") + 1; got != 10 {
+		t.Errorf("compact line count: got %d lines in %q", got, out)
+	}
+	if strings.Contains(out, "l11") {
+		t.Errorf("compact should omit line 11: %q", out)
 	}
 }
 
@@ -318,12 +419,102 @@ func TestRead_RenderResult_Verbose(t *testing.T) {
 	}
 }
 
+func TestRead_RenderResult_StructuredText(t *testing.T) {
+	t.Parallel()
+	r := Read{}
+	out, _ := r.RenderResult(map[string]any{"type": "text", "file": map[string]any{"numLines": 7}}, Context{})
+	if out != "Read 7 lines" {
+		t.Errorf("structured text: got %q", out)
+	}
+}
+
+func TestRead_RenderResult_StructuredFileUnchanged(t *testing.T) {
+	t.Parallel()
+	r := Read{}
+	out, _ := r.RenderResult(map[string]any{"type": "file_unchanged"}, Context{})
+	if out != "Unchanged since last read" {
+		t.Errorf("file_unchanged: got %q", out)
+	}
+}
+
+func TestRead_RenderResult_StructuredImage(t *testing.T) {
+	t.Parallel()
+	r := Read{}
+	out, _ := r.RenderResult(map[string]any{"type": "image", "file": map[string]any{"originalSize": 1536}}, Context{})
+	if out != "Read image (1.5KB)" {
+		t.Errorf("image summary: got %q", out)
+	}
+}
+
+func TestRead_RenderResult_StructuredNotebookEmpty(t *testing.T) {
+	t.Parallel()
+	r := Read{}
+	out, _ := r.RenderResult(map[string]any{"type": "notebook", "file": map[string]any{"cells": []any{}}}, Context{})
+	if out != "No cells found in notebook" {
+		t.Errorf("empty notebook: got %q", out)
+	}
+}
+
+func TestRead_RenderResult_StructuredNotebookCells(t *testing.T) {
+	t.Parallel()
+	r := Read{}
+	out, _ := r.RenderResult(map[string]any{"type": "notebook", "file": map[string]any{"cells": []map[string]any{{"cell_type": "code"}}}}, Context{})
+	if out != "Read 1 cells" {
+		t.Errorf("notebook cells: got %q", out)
+	}
+}
+
+func TestRead_RenderResult_StructuredPDF(t *testing.T) {
+	t.Parallel()
+	r := Read{}
+	out, _ := r.RenderResult(map[string]any{"type": "pdf", "file": map[string]any{"originalSize": 1048576}}, Context{})
+	if out != "Read PDF (1MB)" {
+		t.Errorf("pdf summary: got %q", out)
+	}
+}
+
+func TestRead_RenderResult_StructuredParts(t *testing.T) {
+	t.Parallel()
+	r := Read{}
+	out, _ := r.RenderResult(map[string]any{"type": "parts", "file": map[string]any{"count": "1", "originalSize": 1073741824}}, Context{})
+	if out != "Read 1 page (1GB)" {
+		t.Errorf("parts summary: got %q", out)
+	}
+}
+
+func TestRead_RenderResult_StructuredTextSingular(t *testing.T) {
+	t.Parallel()
+	r := Read{}
+	out, _ := r.RenderResult(map[string]any{"type": "text", "file": map[string]any{"numLines": float64(1)}}, Context{})
+	if out != "Read 1 line" {
+		t.Errorf("structured text singular: got %q", out)
+	}
+}
+
+func TestRead_RenderResult_StructuredSmallImage(t *testing.T) {
+	t.Parallel()
+	r := Read{}
+	out, _ := r.RenderResult(map[string]any{"type": "image", "file": map[string]any{"originalSize": 42}}, Context{})
+	if out != "Read image (42 bytes)" {
+		t.Errorf("small image summary: got %q", out)
+	}
+}
+
+func TestRead_RenderResult_UnknownStructuredFallsBack(t *testing.T) {
+	t.Parallel()
+	r := Read{}
+	out, _ := r.RenderResult(map[string]any{"type": "unknown", "file": map[string]any{"x": 1}}, Context{})
+	if !strings.Contains(out, "unknown") {
+		t.Errorf("unknown structured fallback: got %q", out)
+	}
+}
+
 func TestRead_RenderErrorResult_NotFound(t *testing.T) {
 	t.Parallel()
 	r := Read{}
-	out, _ := r.RenderErrorResult("File not found: /tmp/x", Context{})
-	if !strings.Contains(out, "File not found") || strings.HasPrefix(out, "Error: ") {
-		t.Errorf("'File not found' should pass through: %q", out)
+	out, _ := r.RenderErrorResult("File does not exist. Note: your current working directory is /tmp.", Context{})
+	if out != "File not found" {
+		t.Errorf("cwd-note file-not-found compact: got %q", out)
 	}
 }
 
@@ -331,8 +522,17 @@ func TestRead_RenderErrorResult_Empty(t *testing.T) {
 	t.Parallel()
 	r := Read{}
 	out, _ := r.RenderErrorResult("", Context{})
-	if out != "Error reading file" {
+	if out != "Error: " {
 		t.Errorf("got %q", out)
+	}
+}
+
+func TestRead_RenderErrorResult_ToolUseErrorTag(t *testing.T) {
+	t.Parallel()
+	r := Read{}
+	out, _ := r.RenderErrorResult("<tool_use_error>permission denied</tool_use_error>", Context{})
+	if out != "Error reading file" {
+		t.Errorf("tool_use_error compact: got %q", out)
 	}
 }
 
@@ -378,6 +578,42 @@ func TestContentToString_Types(t *testing.T) {
 		got := contentToString(c.in)
 		if got != c.want {
 			t.Errorf("contentToString(%v): got %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestStringFromMap_BytesAndMissing(t *testing.T) {
+	t.Parallel()
+	m := map[string]any{"bytes": []byte("payload")}
+	if got := stringFromMap(m, "bytes"); got != "payload" {
+		t.Errorf("[]byte string field: got %q", got)
+	}
+	if got := stringFromMap(m, "missing"); got != "" {
+		t.Errorf("missing string field: got %q", got)
+	}
+}
+
+func TestIntFromMap_Types(t *testing.T) {
+	t.Parallel()
+	m := map[string]any{
+		"int":     int(1),
+		"int8":    int8(2),
+		"int16":   int16(3),
+		"int32":   int32(4),
+		"int64":   int64(5),
+		"uint":    uint(6),
+		"uint8":   uint8(7),
+		"uint16":  uint16(8),
+		"uint32":  uint32(9),
+		"uint64":  uint64(10),
+		"float32": float32(11),
+		"float64": float64(12),
+		"string":  "13",
+	}
+	for key, want := range map[string]int{"int": 1, "int8": 2, "int16": 3, "int32": 4, "int64": 5, "uint": 6, "uint8": 7, "uint16": 8, "uint32": 9, "uint64": 10, "float32": 11, "float64": 12, "string": 13} {
+		got, ok := intFromMap(m, key)
+		if !ok || got != want {
+			t.Errorf("intFromMap(%s): got (%d,%v), want (%d,true)", key, got, ok, want)
 		}
 	}
 }

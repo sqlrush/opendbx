@@ -26,9 +26,15 @@ import (
 //	"image"                     (binary image)
 //	"PDF · 3 pages"             (PDF preview)
 //
-// Compact format keyed on Content shape. Verbose ctx returns the raw
-// content (caller responsibility to format).
+// Compact format keyed on Content shape. Structured CC output maps always
+// render as summaries; verbose ctx returns raw string content for legacy
+// string/[]byte paths.
 func (Read) RenderResult(content any, ctx Context) (string, error) {
+	if m, ok := mapFromContent(content); ok {
+		if summary, ok := readSummaryFromMap(m); ok {
+			return summary, nil
+		}
+	}
 	if ctx.Verbose {
 		return contentToString(content), nil
 	}
@@ -45,19 +51,20 @@ func (Read) RenderResult(content any, ctx Context) (string, error) {
 }
 
 // RenderErrorResult formats Read error output (FileReadTool/UI.tsx:144-164
-// equivalent). CC examples: "File not found" / "Error reading file: …".
-// opendbx returns the content directly when it already looks like an
-// error message; otherwise prefixes "Error: ".
-func (Read) RenderErrorResult(content any, _ Context) (string, error) {
-	text := contentToString(content)
-	if text == "" {
-		return "Error reading file", nil
+// equivalent). Read has two compact special cases, then delegates to the
+// shared CC fallback formatter.
+func (Read) RenderErrorResult(content any, ctx Context) (string, error) {
+	if !ctx.Verbose {
+		if text, ok := content.(string); ok {
+			if strings.Contains(text, fileNotFoundCWDNote) {
+				return "File not found", nil
+			}
+			if _, found := extractTag(text, "tool_use_error"); found {
+				return "Error reading file", nil
+			}
+		}
 	}
-	lower := strings.ToLower(text)
-	if strings.HasPrefix(lower, "error") || strings.Contains(lower, "not found") {
-		return text, nil
-	}
-	return "Error: " + text, nil
+	return FormatFallbackToolUseError(content, ctx), nil
 }
 
 // readSummaryFromString produces a "Read N lines" preview without
@@ -77,4 +84,76 @@ func readSummaryFromString(s string) string {
 		n = 1
 	}
 	return fmt.Sprintf("Read %d lines", n)
+}
+
+const fileNotFoundCWDNote = "Note: your current working directory is"
+
+func readSummaryFromMap(m map[string]any) (string, bool) {
+	typ := stringFromMap(m, "type")
+	file, _ := mapFromContent(m["file"])
+	switch typ {
+	case "image":
+		size, _ := intFromMap(file, "originalSize")
+		return fmt.Sprintf("Read image (%s)", formatFileSize(size)), true
+	case "notebook":
+		count := sliceLen(file["cells"])
+		if count < 1 {
+			return "No cells found in notebook", true
+		}
+		return fmt.Sprintf("Read %d cells", count), true
+	case "pdf":
+		size, _ := intFromMap(file, "originalSize")
+		return fmt.Sprintf("Read PDF (%s)", formatFileSize(size)), true
+	case "parts":
+		count, _ := intFromMap(file, "count")
+		size, _ := intFromMap(file, "originalSize")
+		return fmt.Sprintf("Read %d %s (%s)", count, plural(count, "page", "pages"), formatFileSize(size)), true
+	case "text":
+		lines, _ := intFromMap(file, "numLines")
+		return fmt.Sprintf("Read %d %s", lines, plural(lines, "line", "lines")), true
+	case "file_unchanged":
+		return "Unchanged since last read", true
+	default:
+		return "", false
+	}
+}
+
+func sliceLen(v any) int {
+	switch s := v.(type) {
+	case []any:
+		return len(s)
+	case []map[string]any:
+		return len(s)
+	case []string:
+		return len(s)
+	default:
+		return 0
+	}
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+func formatFileSize(size int) string {
+	kb := float64(size) / 1024
+	if kb < 1 {
+		return fmt.Sprintf("%d bytes", size)
+	}
+	if kb < 1024 {
+		return trimTrailingZero(kb) + "KB"
+	}
+	mb := kb / 1024
+	if mb < 1024 {
+		return trimTrailingZero(mb) + "MB"
+	}
+	return trimTrailingZero(mb/1024) + "GB"
+}
+
+func trimTrailingZero(n float64) string {
+	s := fmt.Sprintf("%.1f", n)
+	return strings.TrimSuffix(s, ".0")
 }
