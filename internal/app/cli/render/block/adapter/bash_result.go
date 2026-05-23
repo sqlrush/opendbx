@@ -12,6 +12,7 @@ package adapter
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -164,6 +165,11 @@ func intFromMap(m map[string]any, key string) (int, bool) {
 	case int64:
 		return int(n), true
 	case uint:
+		// Clamp to math.MaxInt to satisfy gosec G115; file size /
+		// line counts beyond MaxInt are not realistic for tool output.
+		if n > uint(math.MaxInt) {
+			return math.MaxInt, true
+		}
 		return int(n), true
 	case uint8:
 		return int(n), true
@@ -172,6 +178,9 @@ func intFromMap(m map[string]any, key string) (int, bool) {
 	case uint32:
 		return int(n), true
 	case uint64:
+		if n > uint64(math.MaxInt) {
+			return math.MaxInt, true
+		}
 		return int(n), true
 	case float32:
 		return int(n), true
