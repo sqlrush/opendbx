@@ -97,10 +97,15 @@ func TestToolUseVisualGolden(t *testing.T) {
 			png := visualgolden.Render(t, raw, visualgolden.DefaultTheme())
 			fixturePath := visualFixturePath(t, tc.name, "golden.png")
 			if !visualgolden.Update() && !visualFixtureExists(t, fixturePath) {
-				if os.Getenv("BLOCK_VISUAL_REQUIRED") != "" {
+				// spec-1.9 D-9: ToolUse fixtures use a separate env gate
+				// from spec-1.7 Message fixtures so that turning
+				// BLOCK_VISUAL_REQUIRED=1 for Message doesn't fatal on
+				// ToolUse fixtures that haven't been captured yet.
+				// Set TOOLUSE_VISUAL_REQUIRED=1 once ToolUse capture lands.
+				if os.Getenv("TOOLUSE_VISUAL_REQUIRED") != "" {
 					t.Fatalf("missing CC visual fixture for %s (run T-2.5 capture SOP first)", tc.name)
 				}
-				t.Skipf("missing CC visual fixture for %s; T-2.5 capture pending", tc.name)
+				t.Skipf("missing CC visual fixture for %s; T-2.5 ToolUse capture pending (set TOOLUSE_VISUAL_REQUIRED=1 once captured)", tc.name)
 			}
 			visualgolden.CompareFile(t, fixturePath, png, 0.01)
 		})
