@@ -52,3 +52,28 @@ func stateIndicator(s ToolUseState) Indicator {
 	// production since caller controls State enum).
 	return Indicator{Rune: '?', Style: StyleDimmed}
 }
+
+// resultIndicator maps ToolResultState → visual Indicator (spec-1.9b D-5).
+//
+// **PLACEHOLDER per spec-1.9b R2 absorbing spec-1.9 R2.1.3 MED-2**: rune
+// values are chosen for opendbx TUI legibility; spec-1.9b T-9 R3 CC
+// fixture capture will lock the canonical form.
+//
+// Mapping rationale:
+//   - Success '✓' Normal        — generic check mark
+//   - Error '✗' Warning         — generic error glyph
+//   - Rejected '⊘' Warning      — rejected / forbidden
+//   - Canceled '⏹' Dimmed       — stop / interrupted
+func resultIndicator(s ToolResultState) Indicator {
+	switch s {
+	case ResultSuccess:
+		return Indicator{Rune: '✓', Style: StyleNormal}
+	case ResultError:
+		return Indicator{Rune: '✗', Style: StyleWarning}
+	case ResultRejected:
+		return Indicator{Rune: '⊘', Style: StyleWarning}
+	case ResultCanceled:
+		return Indicator{Rune: '⏹', Style: StyleDimmed}
+	}
+	return Indicator{Rune: '?', Style: StyleDimmed}
+}
