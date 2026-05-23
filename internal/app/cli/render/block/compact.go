@@ -78,15 +78,20 @@ func (c CompactSummary) Render(ctx Context) (buffer.Buffer, error) {
 
 	theme := themeOrDefault(ctx.Theme)
 	parts := c.collectParts()
-	if len(parts) == 0 && c.LatestDisplayHint == "" {
-		// Degenerate empty group → 0 rows.
+	if len(parts) == 0 {
+		// Degenerate empty group → 0 rows even when an active hint is present;
+		// CC returns null before rendering the hint row.
 		return measureOnlyBuf(ctx.Cols, 0), nil
 	}
 
 	rows := make([]blockRow, 0, 2)
 	if len(parts) > 0 {
 		ind := compactIndicator(ToolGroupCategoryDefault)
-		summary := fmt.Sprintf("%c %s", ind.Rune, strings.Join(parts, ", "))
+		text := strings.Join(parts, ", ")
+		if c.IsActive {
+			text += "…"
+		}
+		summary := fmt.Sprintf("%c %s", ind.Rune, text)
 		rows = append(rows, blockRow{text: summary, style: ind.Style})
 	}
 	if c.IsActive && c.LatestDisplayHint != "" {

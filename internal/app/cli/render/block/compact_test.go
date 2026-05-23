@@ -305,6 +305,9 @@ func TestCompact_Tense_Active_PresentVerb(t *testing.T) {
 	if !strings.Contains(row0, "Reading 2 files") {
 		t.Errorf("active → present 'Reading', got %q", row0)
 	}
+	if !strings.Contains(row0, "Reading 2 files…") {
+		t.Errorf("active summary must append CC ellipsis, got %q", row0)
+	}
 }
 
 func TestCompact_Tense_Inactive_PastVerb(t *testing.T) {
@@ -402,6 +405,18 @@ func TestCompact_AllZero_NoRows(t *testing.T) {
 	_, rows := buf.Size()
 	if rows != 0 {
 		t.Fatalf("all zero degenerate: want 0 rows, got %d", rows)
+	}
+}
+
+func TestCompact_AllZeroActiveHint_NoRows(t *testing.T) {
+	t.Parallel()
+	c := NewCompactSummary()
+	c.IsActive = true
+	c.LatestDisplayHint = "/tmp/orphan-hint.go"
+	buf := mustRenderCompact(t, c, ctxCompact(80))
+	_, rows := buf.Size()
+	if rows != 0 {
+		t.Fatalf("all zero with active hint: want 0 rows, got %d", rows)
 	}
 }
 
