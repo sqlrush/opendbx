@@ -498,3 +498,73 @@ func TestDefaultRegistry_HasBuiltinAdapters(t *testing.T) {
 		t.Errorf("Default registry should have Read registered")
 	}
 }
+
+// erroringRenderer satisfies HeaderRenderer but always returns an error,
+// to exercise the errorPlaceholder fallback path (spec-1.9 T-9 MED-2).
+type erroringRenderer struct{}
+
+func (erroringRenderer) RenderHeader(_ map[string]any, _ adapter.Context) (string, error) {
+	return "", errAdapterTest
+}
+
+var errAdapterTest = errAdapterMock("boom")
+
+type errAdapterMock string
+
+func (e errAdapterMock) Error() string { return string(e) }
+
+// #29 (spec-1.9 T-9 MED-2) — adapter RenderHeader 返 error → errorPlaceholder
+// 1-row "[render error: <name>]" buffer (rule 7 block-leaf contract).
+func TestToolUse_AdapterError_RendersPlaceholder(t *testing.T) {
+	t.Parallel()
+	reg := adapter.NewRegistry()
+	reg.Register("Boom", erroringRenderer{})
+	// Inject mock registry by registering in Default just for this test.
+	// (No public adapter.SetDefault — test names a unique tool ensuring
+	// no collision with production Bash/Read/Generic.)
+	adapter.Default.Register("__boom_test__", erroringRenderer{})
+	tu := NewToolUse("idErr", "__boom_test__", map[string]any{})
+	tu.State = StateRunning
+	buf, _ := tu.Render(ctxToolUse(40))
+	_, rows := buf.Size()
+	if rows != 1 {
+		t.Errorf("error placeholder: want 1 row, got %d", rows)
+	}
+	got := readRowText(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
+	if !strings.Contains(got, "render error") {
+		t.Errorf("placeholder text: got %q", got)
+	}
+}
+
+// #30 (spec-1.9 T-9 MED-1) — ctx.Verbose 流到 adapter (Read verbose path).
+func TestToolUse_VerbosePropagated(t *testing.T) {
+	t.Parallel()
+	tu := NewToolUse("idV", "Read", map[string]any{"path": "x.go", "offset": 5, "limit": 10})
+	tu.State = StateResolved
+	ctx := Context{Cols: 80, Rows: 24, Wrap: WrapSoft, Verbose: true}
+	buf, _ := tu.Render(ctx)
+	got := readRowText(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
+	if !strings.Contains(got, "lines 5-14") {
+		t.Errorf("ctx.Verbose propagation failed: want 'lines 5-14', got %q", got)
+	}
+}
+
+// #31 (spec-1.9 T-9 HIGH-1) — Bash CJK truncation produces valid UTF-8.
+func TestToolUse_Bash_CJKTruncation_ValidUTF8(t *testing.T) {
+	t.Parallel()
+	cmd := strings.Repeat("x", 158) + "中文测试abc"
+	b := adapter.Bash{}
+	out, _ := b.RenderHeader(map[string]any{"command": cmd}, adapter.Context{})
+	if !isValidUTF8(out) {
+		t.Errorf("CJK truncation produced invalid UTF-8: %q", out)
+	}
+}
+
+func isValidUTF8(s string) bool {
+	for _, r := range s {
+		if r == '�' && !strings.Contains(s, "�") {
+			return false
+		}
+	}
+	return true
+}

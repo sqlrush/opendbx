@@ -126,7 +126,7 @@ func (t ToolUse) Render(ctx Context) (buffer.Buffer, error) {
 	rdr := adapter.Default.Lookup(t.Name)
 	useGeneric := rdr == nil
 	adapterCtx := adapter.Context{
-		Verbose: false, // ctx.Verbose forward (spec-1.7 R3); not yet in block.Context
+		Verbose: ctx.Verbose, // spec-1.7 R3 / spec-1.9 D-6 Q4 ★A propagation
 		Cols:    ctx.Cols,
 	}
 

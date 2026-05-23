@@ -15,6 +15,7 @@ package adapter
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -28,9 +29,8 @@ const (
 type Bash struct{}
 
 // RenderHeader returns the Bash command preview per CC behavior.
-//   - Empty Input → "(no command)" placeholder
-//   - input["command"] non-string → "(invalid command)"
-//   - verbose=false: truncate to 160 char + ≤2 lines (CC convention)
+//   - Empty Input or non-string `command` → "(no command)" placeholder
+//   - verbose=false: truncate to 160 runes + ≤2 lines (CC convention)
 //   - verbose=true: full command
 func (Bash) RenderHeader(input map[string]any, ctx Context) (string, error) {
 	cmd, ok := input["command"].(string)
@@ -75,9 +75,10 @@ func (Bash) RenderQueued() (string, error) {
 	return "Waiting…", nil
 }
 
-// truncateCommand applies CC's MAX_COMMAND_DISPLAY_CHARS / _LINES
-// limits. Long single line → first 160 chars + "…". Multi-line >2 →
-// first 2 lines + "…" on second.
+// truncateCommand applies CC's MAX_COMMAND_DISPLAY_CHARS / _LINES limits.
+// Long single line → first 160 RUNES + "…" (rune-aware to keep UTF-8 valid
+// when CJK/emoji straddles boundary; spec-1.9 T-9 HIGH-1). Multi-line >2
+// → first 2 lines + "…" on second.
 func truncateCommand(cmd string) string {
 	// Normalize: keep at most 2 lines.
 	lines := strings.SplitN(cmd, "\n", 3)
@@ -87,8 +88,9 @@ func truncateCommand(cmd string) string {
 		lines[len(lines)-1] = ellipsizeLine(lines[len(lines)-1])
 	}
 	out := strings.Join(lines, "\n")
-	if len(out) > bashMaxDisplayChars {
-		out = out[:bashMaxDisplayChars-1] + "…"
+	if utf8.RuneCountInString(out) > bashMaxDisplayChars {
+		runes := []rune(out)
+		out = string(runes[:bashMaxDisplayChars-1]) + "…"
 	}
 	return out
 }
