@@ -126,7 +126,8 @@ func TestRenderOrder_Sequence(t *testing.T) {
 	t.Parallel()
 	want := []string{
 		"width", "style", "terminal", "buffer", "layout",
-		"optimizer", "scheduler", "block", "scrollback", "streaming",
+		"optimizer", "scheduler", "block/adapter", "block",
+		"scrollback", "streaming",
 	}
 	if len(RenderOrder) != len(want) {
 		t.Fatalf("RenderOrder length %d, want %d", len(RenderOrder), len(want))

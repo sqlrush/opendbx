@@ -2,15 +2,9 @@
 //
 // Author: sqlrush
 
-// Package adapter hosts per-tool render adapters consumed by
-// block.ToolUse.Render. Mirrors CC Tool.ts:605-667 ToolUse subset
-// (renderToolUseMessage / renderToolUseProgressMessage /
-// renderToolUseQueuedMessage); ToolResult-side methods are owned by
-// spec-1.9b (renderToolResultMessage / renderToolUseRejectedMessage /
-// renderToolUseErrorMessage).
-//
-// Spec: spec-1.9-toolcall-block.md D-2 (R2 HIGH-4 + R2.1 HIGH-2 +
-// R2.1.3 HIGH-1 — interface segregation: required + optional).
+// File types.go — adapter interfaces + shared types (Context, ProgressMessage,
+// ThemeName). See doc.go for package-level overview.
+
 package adapter
 
 // ThemeName is an opaque tag for the active CC theme, propagated from

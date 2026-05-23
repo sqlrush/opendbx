@@ -94,23 +94,24 @@ func NewToolUse(id, name string, input map[string]any) ToolUse {
 // Render produces a Buffer per spec-1.9 D-6 (R2.1/R2.1.3 layout matrix).
 //
 // Per-state layout:
-//   StateQueued:
-//     "<indicator> <queued-text>"
-//     queued-text from adapter.QueuedRenderer if implemented else "Waiting…"
-//   StateRunning:
-//     "<indicator> <header>"
-//     + IF adapter implements ProgressRenderer THEN
-//         <progress-text>  (may be multi-line; nil/empty progress OK;
-//          Bash returns "Running…" for empty per BashTool/UI.tsx:148)
-//       ELSE header-only (Read/Generic default)
-//   StateWaitingPermission:
-//     "<indicator> <header>"
-//     + dim row "Waiting for permission…"
-//       (AssistantToolUseMessage.tsx:240; R2.1.3 HIGH-3 verified)
-//   StateResolved:
-//     "<indicator> <header>"  (single row, no progress)
-//   StateError:
-//     "<indicator> <header>"  (StyleWarning indicator + dim error row if Input has "_error")
+//
+//	StateQueued:
+//	  "<indicator> <queued-text>"
+//	  queued-text from adapter.QueuedRenderer if implemented else "Waiting…"
+//	StateRunning:
+//	  "<indicator> <header>"
+//	  + IF adapter implements ProgressRenderer THEN
+//	      <progress-text>  (may be multi-line; nil/empty progress OK;
+//	       Bash returns "Running…" for empty per BashTool/UI.tsx:148)
+//	    ELSE header-only (Read/Generic default)
+//	StateWaitingPermission:
+//	  "<indicator> <header>"
+//	  + dim row "Waiting for permission…"
+//	    (AssistantToolUseMessage.tsx:240; R2.1.3 HIGH-3 verified)
+//	StateResolved:
+//	  "<indicator> <header>"  (single row, no progress)
+//	StateError:
+//	  "<indicator> <header>"  (StyleWarning indicator + dim error row if Input has "_error")
 //
 // Adapter dispatch: adapter.Default.Lookup(t.Name); fallback Generic
 // (which expects "_name" synthetic key — Render adds it).
