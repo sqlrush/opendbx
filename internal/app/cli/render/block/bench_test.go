@@ -98,3 +98,30 @@ func BenchmarkToolUse_render_measureonly(b *testing.B) {
 		_, _ = tu.Render(ctx)
 	}
 }
+
+func BenchmarkToolResult_render_success(b *testing.B) {
+	tr := NewToolResult("idR1", "Bash", "stdout line\nstdout line 2", false)
+	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = tr.Render(ctx)
+	}
+}
+
+func BenchmarkToolResult_render_error(b *testing.B) {
+	tr := NewToolResult("idR2", "Bash", "command not found: xyz", true)
+	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = tr.Render(ctx)
+	}
+}
+
+func BenchmarkToolResult_render_measureonly(b *testing.B) {
+	tr := NewToolResult("idR3", "Bash", "x", false)
+	ctx := Context{Cols: 80, MeasureOnly: true, Theme: DefaultTheme{}, Wrap: WrapSoft}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = tr.Render(ctx)
+	}
+}

@@ -320,6 +320,15 @@ jobs:
         env:
           TOOLUSE_VISUAL_REQUIRED: ${{ vars.TOOLUSE_VISUAL_REQUIRED || '' }}
         run: make ui-tooluse-golden
+      - name: Layer 3 block ToolResult visual golden (spec-1.9b D-8)
+        # ToolResult fixtures parked under tests/integration/uitest/block/
+        # testdata/visual/ToolResult*/ — captured in a future T-2.5 session.
+        # Independent env gate (TOOLRESULT_VISUAL_REQUIRED) so each block
+        # type's fixture lifecycle can be enabled independently per
+        # spec-1.9 decouple lesson.
+        env:
+          TOOLRESULT_VISUAL_REQUIRED: ${{ vars.TOOLRESULT_VISUAL_REQUIRED || '' }}
+        run: make ui-toolresult-golden
 
   # spec-0.11.5 D-4/D-5: Layer 5 screenshot evidence. Required context,
   # label-gated. PR body/label edits retrigger this workflow so stale

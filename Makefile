@@ -308,7 +308,7 @@ errcode-check: ## Verify exported public API errors use errcode (D-2)
 	@$(GO) run ./tools/errcode-lint ./...
 
 # spec-0.11.5 D-5: UI Review 5-layer gate targets.
-.PHONY: ui-invariant ui-visual-golden ui-ai-review ui-block-golden ui-block-ai-review ui-tooluse-golden
+.PHONY: ui-invariant ui-visual-golden ui-ai-review ui-block-golden ui-block-ai-review ui-tooluse-golden ui-toolresult-golden
 ui-invariant: ## Layer 1 static invariants (uiinvariant package tests)
 	$(GO) test -race -count=1 ./internal/testing/uiinvariant/...
 
@@ -326,6 +326,9 @@ ui-block-golden: ## Block Message visual golden harness
 
 ui-tooluse-golden: ## Block ToolUse visual golden harness (spec-1.9 D-9)
 	TOOLUSE_VISUAL_REQUIRED=$${TOOLUSE_VISUAL_REQUIRED:-} $(GO) test -race -count=1 -run TestToolUseVisualGolden ./tests/integration/uitest/block/...
+
+ui-toolresult-golden: ## Block ToolResult visual golden harness (spec-1.9b D-8)
+	TOOLRESULT_VISUAL_REQUIRED=$${TOOLRESULT_VISUAL_REQUIRED:-} $(GO) test -race -count=1 -run TestToolResultVisualGolden ./tests/integration/uitest/block/...
 
 ui-block-ai-review: ## Block Message AI visual review wrapper
 	$(MAKE) ui-ai-review

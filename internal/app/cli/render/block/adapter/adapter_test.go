@@ -205,3 +205,179 @@ func TestGeneric_SkipsSyntheticKeys(t *testing.T) {
 		t.Errorf("should skip _meta synthetic key: %q", out)
 	}
 }
+
+// === spec-1.9b ToolResult-side adapter tests ===
+
+func TestBash_RenderResult_Compact(t *testing.T) {
+	t.Parallel()
+	b := Bash{}
+	out, _ := b.RenderResult("line1\nline2\nline3", Context{})
+	lines := strings.Split(out, "\n")
+	if len(lines) > 2 {
+		t.Errorf("Bash RenderResult non-verbose: want ≤2 lines, got %d: %q", len(lines), out)
+	}
+}
+
+func TestBash_RenderResult_Verbose(t *testing.T) {
+	t.Parallel()
+	b := Bash{}
+	out, _ := b.RenderResult("line1\nline2\nline3", Context{Verbose: true})
+	if !strings.Contains(out, "line3") {
+		t.Errorf("Bash verbose should include all lines: %q", out)
+	}
+}
+
+func TestBash_RenderResult_Empty(t *testing.T) {
+	t.Parallel()
+	b := Bash{}
+	out, _ := b.RenderResult("", Context{})
+	if out != "(empty)" {
+		t.Errorf("empty content: got %q", out)
+	}
+}
+
+func TestBash_RenderRejected_Empty_DefersToCallerFallback(t *testing.T) {
+	t.Parallel()
+	b := Bash{}
+	out, _ := b.RenderRejected("", Context{})
+	if out != "" {
+		t.Errorf("Bash rejected empty should return \"\" to defer to block fallback, got %q", out)
+	}
+}
+
+func TestBash_RenderRejected_WithContent(t *testing.T) {
+	t.Parallel()
+	b := Bash{}
+	out, _ := b.RenderRejected("user said no", Context{})
+	if out != "user said no" {
+		t.Errorf("got %q", out)
+	}
+}
+
+func TestBash_RenderErrorResult(t *testing.T) {
+	t.Parallel()
+	b := Bash{}
+	out, _ := b.RenderErrorResult("exit 1\nsome error", Context{})
+	if !strings.Contains(out, "exit 1") {
+		t.Errorf("got %q", out)
+	}
+}
+
+func TestBash_RenderErrorResult_Empty(t *testing.T) {
+	t.Parallel()
+	b := Bash{}
+	out, _ := b.RenderErrorResult(nil, Context{})
+	if out != "(no error message)" {
+		t.Errorf("got %q", out)
+	}
+}
+
+func TestBash_RenderErrorResult_Verbose(t *testing.T) {
+	t.Parallel()
+	b := Bash{}
+	multi := "line1\nline2\nline3"
+	out, _ := b.RenderErrorResult(multi, Context{Verbose: true})
+	if !strings.Contains(out, "line3") {
+		t.Errorf("verbose should include all lines: %q", out)
+	}
+}
+
+func TestRead_RenderResult_LineCount(t *testing.T) {
+	t.Parallel()
+	r := Read{}
+	out, _ := r.RenderResult("a\nb\nc", Context{})
+	if !strings.Contains(out, "Read 3 lines") {
+		t.Errorf("got %q", out)
+	}
+}
+
+func TestRead_RenderResult_TrailingNewline(t *testing.T) {
+	t.Parallel()
+	r := Read{}
+	out, _ := r.RenderResult("a\nb\nc\n", Context{})
+	if !strings.Contains(out, "Read 3 lines") {
+		t.Errorf("trailing newline shouldn't inflate: %q", out)
+	}
+}
+
+func TestRead_RenderResult_Empty(t *testing.T) {
+	t.Parallel()
+	r := Read{}
+	out, _ := r.RenderResult("", Context{})
+	if out != "(empty file)" {
+		t.Errorf("got %q", out)
+	}
+}
+
+func TestRead_RenderResult_Verbose(t *testing.T) {
+	t.Parallel()
+	r := Read{}
+	out, _ := r.RenderResult("a\nb\nc", Context{Verbose: true})
+	if out != "a\nb\nc" {
+		t.Errorf("verbose raw: got %q", out)
+	}
+}
+
+func TestRead_RenderErrorResult_NotFound(t *testing.T) {
+	t.Parallel()
+	r := Read{}
+	out, _ := r.RenderErrorResult("File not found: /tmp/x", Context{})
+	if !strings.Contains(out, "File not found") || strings.HasPrefix(out, "Error: ") {
+		t.Errorf("'File not found' should pass through: %q", out)
+	}
+}
+
+func TestRead_RenderErrorResult_Empty(t *testing.T) {
+	t.Parallel()
+	r := Read{}
+	out, _ := r.RenderErrorResult("", Context{})
+	if out != "Error reading file" {
+		t.Errorf("got %q", out)
+	}
+}
+
+func TestRead_RenderErrorResult_GenericPrefix(t *testing.T) {
+	t.Parallel()
+	r := Read{}
+	out, _ := r.RenderErrorResult("something broke", Context{})
+	if !strings.HasPrefix(out, "Error: ") {
+		t.Errorf("expected 'Error: ' prefix: %q", out)
+	}
+}
+
+func TestGeneric_RenderResult_Empty(t *testing.T) {
+	t.Parallel()
+	g := Generic{}
+	out, _ := g.RenderResult("", Context{})
+	if out != "(result)" {
+		t.Errorf("got %q", out)
+	}
+}
+
+func TestGeneric_RenderResult_WithContent(t *testing.T) {
+	t.Parallel()
+	g := Generic{}
+	out, _ := g.RenderResult("done", Context{})
+	if out != "done" {
+		t.Errorf("got %q", out)
+	}
+}
+
+func TestContentToString_Types(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in   any
+		want string
+	}{
+		{nil, ""},
+		{"x", "x"},
+		{[]byte("y"), "y"},
+		{42, "42"},
+	}
+	for _, c := range cases {
+		got := contentToString(c.in)
+		if got != c.want {
+			t.Errorf("contentToString(%v): got %q, want %q", c.in, got, c.want)
+		}
+	}
+}

@@ -248,8 +248,15 @@ func callResultRenderer(rdr adapter.HeaderRenderer, content any, ctx adapter.Con
 	if rr, ok := rdr.(adapter.ResultRenderer); ok {
 		return rr.RenderResult(content, ctx)
 	}
-	// No adapter or no implementer → empty (caller decides null vs default).
-	return "", nil
+	// No registered adapter or registered adapter doesn't implement
+	// ResultRenderer: Generic fallback applies only when content has
+	// actual data (spec-1.9b D-4: "fallback Generic only for explicit
+	// Generic/unknown-tool rendering"). Empty / nil content triggers
+	// R3 MED-1 null-row path (CC `renderToolResultMessage` absent).
+	if isEmptyContent(content) {
+		return "", nil
+	}
+	return adapter.Generic{}.RenderResult(content, ctx)
 }
 
 func callErrorResultRenderer(rdr adapter.HeaderRenderer, content any, ctx adapter.Context) (string, error) {
@@ -264,6 +271,21 @@ func callRejectedRenderer(rdr adapter.HeaderRenderer, content any, ctx adapter.C
 		return rj.RenderRejected(content, ctx)
 	}
 	return "", nil
+}
+
+// isEmptyContent reports whether content is effectively empty (nil,
+// empty string, or empty []byte). Used by callResultRenderer to gate
+// Generic fallback per R3 MED-1.
+func isEmptyContent(content any) bool {
+	switch v := content.(type) {
+	case nil:
+		return true
+	case string:
+		return v == ""
+	case []byte:
+		return len(v) == 0
+	}
+	return false
 }
 
 // fallbackContent formats arbitrary content for the Error fallback

@@ -1,0 +1,11 @@
+# spec-1.9b ToolResult fixture parking slot (T-8 scaffolding 2026-05-23)
+#
+# Expected files after CC capture session:
+#   golden.png    PNG screenshot (block region crop)
+#   input.ansi    sanitized ANSI capture
+#   metadata.json (含 tool_result_state + adapter + content_kind fields)
+#
+# Consumer: tests/integration/uitest/block/toolresult_render_test.go
+# TestToolResultVisualGolden
+# Status: parked until user-driven T-2.5 capture session;
+# TOOLRESULT_VISUAL_REQUIRED=1 enforces blocking gate.
