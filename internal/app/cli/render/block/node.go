@@ -23,11 +23,29 @@ import (
 )
 
 // Context carries cross-cutting render state passed to every block.Render
-// call. spec-0.13 D-3 ships a placeholder; spec-1.7+ extends with
-// viewport / theme / format flags.
+// call. spec-0.13 D-3 shipped a placeholder; spec-1.7 D-1 extends with
+// Theme / MeasureOnly / Wrap production fields per spec-1.6 forward and
+// spec-1.5 R-2 forward.
+//
+// **MeasureOnly** (spec-1.5 R-2 forward + spec-1.6 R-9): when true, Render
+// returns a Buffer whose Size() reports the real rows but cell writes are
+// no-ops. spec-1.5 scrollback's measureHeight + rebuildHeights cheap path.
+//
+// **Theme** (spec-1.7 D-1): style palette for Normal / Dimmed / Warning /
+// Code / CodeBg / LangLabel. Theme.Style(kind) returns a style.Style.
+// nil Theme = use DefaultTheme (spec-1.7 R3 fixture lock-in).
+//
+// **Wrap** (spec-1.7 D-1): text wrap policy. Hard / Soft (default; CJK-
+// aware word break) / None (single-line truncate). See WrapPolicy godoc.
+//
+// **Cols / Rows** (existing): viewport size in cells. Caller (spec-1.5
+// scrollback / spec-1.14 TUI) converts layout.Box.Width/Height → Cols/Rows
+// (spec-1.7 R2 D7 LOW-1: block does NOT directly import layout).
 type Context struct {
-	Cols, Rows int
-	// Future: Theme, OutputFormat, etc.
+	Cols, Rows  int
+	Theme       StyleTheme // nil → DefaultTheme; spec-1.7 D-1
+	MeasureOnly bool       // spec-1.5 R-2 forward + spec-1.6 R-9
+	Wrap        WrapPolicy // default Soft; spec-1.7 D-1
 }
 
 // RenderNode is the contract every block type implements. Render produces

@@ -308,7 +308,7 @@ errcode-check: ## Verify exported public API errors use errcode (D-2)
 	@$(GO) run ./tools/errcode-lint ./...
 
 # spec-0.11.5 D-5: UI Review 5-layer gate targets.
-.PHONY: ui-invariant ui-visual-golden ui-ai-review
+.PHONY: ui-invariant ui-visual-golden ui-ai-review ui-block-golden ui-block-ai-review
 ui-invariant: ## Layer 1 static invariants (uiinvariant package tests)
 	$(GO) test -race -count=1 ./internal/testing/uiinvariant/...
 
@@ -320,6 +320,12 @@ ui-ai-review: ## Layer 4 AI review (needs LOCAL_VL_ENDPOINT)
 		echo "ui-ai-review: LOCAL_VL_ENDPOINT unset, skipping" >&2; exit 0; \
 	fi
 	$(GO) test -race -count=1 ./internal/testing/aivisual/...
+
+ui-block-golden: ## Block Message visual golden harness
+	BLOCK_VISUAL_REQUIRED=$${BLOCK_VISUAL_REQUIRED:-} $(GO) test -race -count=1 -run TestMessageVisualGolden ./tests/integration/uitest/block/...
+
+ui-block-ai-review: ## Block Message AI visual review wrapper
+	$(MAKE) ui-ai-review
 
 # spec-0.2 governance gates (D-5 / D-6 / D-3) — see docs/cicd-and-methodology.md
 import-check: ## Run import-rules-check (spec-0.2 D-5)

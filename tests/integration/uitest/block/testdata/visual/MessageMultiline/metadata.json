@@ -1,0 +1,15 @@
+{
+  "captured_at": "2026-05-22T15:41:28Z",
+  "cc_version": "2.1.148",
+  "cols": 80,
+  "fixture": "MessageMultiline",
+  "font": "freeze default monospace",
+  "golden_source": "opendbx-rendered-block-message",
+  "input_ansi_source": "opendbx-rendered-block-message",
+  "notes": "Current enforced golden is generated from opendbx block.Message.Render.",
+  "prompt": "Write two lines: hello, world. One per line.",
+  "rows": 2,
+  "sanitizer": "v1 — no PII, generated from deterministic fixture text",
+  "terminal": "automated visualgolden.Render baseline; CC TUI smoke capture verified via script",
+  "theme": "opendbx DefaultTheme; CC fixture lock-in pending for non-deterministic states"
+}

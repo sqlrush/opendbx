@@ -303,6 +303,14 @@ jobs:
           rsvg-convert --version
       - name: Layer 3 freeze pixel diff
         run: make ui-visual-golden
+      - name: Layer 3 block Message visual golden (spec-1.7 T-8 D-7)
+        # Without BLOCK_VISUAL_REQUIRED, tests t.Skip per fixture absence
+        # (spec-1.7 T-2.5 CC fixture capture pending; user-driven). Once
+        # fixtures land, set BLOCK_VISUAL_REQUIRED=1 to enforce blocking
+        # gate per user 拍板 (T-9 FROZEN 前置门禁).
+        env:
+          BLOCK_VISUAL_REQUIRED: ${{ vars.BLOCK_VISUAL_REQUIRED || '' }}
+        run: make ui-block-golden
 
   # spec-0.11.5 D-4/D-5: Layer 5 screenshot evidence. Required context,
   # label-gated. PR body/label edits retrigger this workflow so stale
