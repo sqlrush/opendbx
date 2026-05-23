@@ -164,3 +164,66 @@ func BenchmarkCompact_render_measureonly(b *testing.B) {
 		_, _ = c.Render(ctx)
 	}
 }
+
+// spec-1.11 § 4.3 perf targets:
+//   - BenchmarkMarkdown_render_paragraph (40-char paragraph):   < 50µs
+//   - BenchmarkMarkdown_render_fence_block (10-line fence):    < 100µs
+//   - BenchmarkMarkdown_render_complex_doc_uncached:           < 400µs
+//   - BenchmarkMarkdown_render_complex_doc_cached:               < 5µs
+
+func BenchmarkMarkdown_render_paragraph(b *testing.B) {
+	m := NewMarkdown("The quick brown fox jumps over the lazy dog.")
+	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		resetMarkdownCacheForTest()
+		_, _ = m.Render(ctx)
+	}
+}
+
+func BenchmarkMarkdown_render_fence_block(b *testing.B) {
+	m := NewMarkdown("```go\n" +
+		"func main() {\n" +
+		"    fmt.Println(\"hello\")\n" +
+		"    for i := 0; i < 10; i++ {\n" +
+		"        x := i * 2\n" +
+		"        _ = x\n" +
+		"    }\n" +
+		"    return\n" +
+		"}\n" +
+		"```")
+	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		resetMarkdownCacheForTest()
+		_, _ = m.Render(ctx)
+	}
+}
+
+func BenchmarkMarkdown_render_complex_doc_uncached(b *testing.B) {
+	m := NewMarkdown("# Heading\n\nFirst paragraph with **bold** and *italic*.\n\n" +
+		"Second paragraph with `code` and [link](https://example.com).\n\n" +
+		"- list item 1\n- list item 2\n\n" +
+		"```go\nfunc x() {}\n```")
+	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		resetMarkdownCacheForTest()
+		_, _ = m.Render(ctx)
+	}
+}
+
+func BenchmarkMarkdown_render_complex_doc_cached(b *testing.B) {
+	m := NewMarkdown("# Heading\n\nFirst paragraph with **bold** and *italic*.\n\n" +
+		"Second paragraph with `code` and [link](https://example.com).\n\n" +
+		"- list item 1\n- list item 2\n\n" +
+		"```go\nfunc x() {}\n```")
+	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft}
+	// Prime the cache (1 render outside timer).
+	resetMarkdownCacheForTest()
+	_, _ = m.Render(ctx)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = m.Render(ctx) // cache hit every iter
+	}
+}

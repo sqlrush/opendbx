@@ -34,6 +34,15 @@ const (
 	StyleCodeBg
 	// StyleLangLabel — fence lang label decoration (e.g. `─── go ───`).
 	StyleLangLabel
+	// StyleBold — heading + **strong** emphasis (spec-1.11 D-3).
+	StyleBold
+	// StyleItalic — *italic* emphasis (spec-1.11 D-3).
+	StyleItalic
+	// StyleLink — link visible text + dim URL fallback (spec-1.11 D-3 ❌-8).
+	StyleLink
+	// StyleHeading — heading depth styling (CC formatToken permission-colored;
+	// spec-1.11 D-3 R3 baseline — no prefix glyph).
+	StyleHeading
 )
 
 // StyleTheme provides the palette resolution from semantic StyleKind to
@@ -81,6 +90,14 @@ func (DefaultTheme) Style(kind StyleKind) style.Style {
 		return style.Style{BG: style.RGB(0x28, 0x2C, 0x34)} // dark grey-blue
 	case StyleLangLabel:
 		return style.Style{FG: style.Palette(8)} // palette grey
+	case StyleBold:
+		return style.Style{Bold: true}
+	case StyleItalic:
+		return style.Style{Italic: true}
+	case StyleLink:
+		return style.Style{FG: style.Palette(8), Underline: true} // dim + underline
+	case StyleHeading:
+		return style.Style{Bold: true} // permission-colored TBD post T-9 fixture
 	default:
 		return style.Style{}
 	}
