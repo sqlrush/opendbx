@@ -103,6 +103,10 @@ func TestToolUseVisualGolden(t *testing.T) {
 					block.StateRunning),
 				[]adapter.ProgressMessage{{ElapsedSeconds: 5, TotalLines: 100, TotalBytes: 4096}}),
 			cols: 80,
+			// Multi-row + progress text shows higher freeze font rasterization
+			// drift than single-row cases (locally seen ~1.17% darwin/arm64);
+			// same calibration pattern as ToolUseRunningGeneric.
+			maxMismatchFraction: 0.02,
 			meta: toolUseFixtureMetadata{
 				Adapter:      "bash",
 				Prompt:       "Run a long shell command and capture Bash progress output.",
