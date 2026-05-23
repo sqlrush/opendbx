@@ -234,9 +234,6 @@ func (w *mdWalker) renderIndentedCodeBlock(c *ast.CodeBlock) {
 // Buffer is read cell-by-cell so the final buildBuffer write is uniform.
 func (w *mdWalker) renderCodeViaSpec17(lang, body string) {
 	codeBuf, _ := renderCodeBlock(w.ctx, lang, body)
-	if codeBuf == nil {
-		return
-	}
 	cols, rows := codeBuf.Size()
 	for y := 0; y < rows; y++ {
 		var b strings.Builder
