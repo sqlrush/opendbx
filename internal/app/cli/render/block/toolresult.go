@@ -125,13 +125,11 @@ func deriveResultState(content any, isError bool) ToolResultState {
 	return ResultSuccess
 }
 
-// toolResultRow is a logical row + style pair for ToolResult.Render
-// (local helper; ToolUse uses its own toolUseRow — kept separate to
-// preserve type-distinctness per spec-1.9b Q6 ★A no-cross-call rule).
-type toolResultRow struct {
-	text  string
-	style StyleKind
-}
+// toolResultRow is a type alias of blockRow per spec-1.10 D-5 consolidation
+// (rule 21 spec-1.9b R4 errata thin-wrapper preserve signature). spec-1.9b
+// FROZEN tests + Render path continue to use toolResultRow identifier;
+// the underlying type is the unified blockRow defined in expand.go.
+type toolResultRow = blockRow
 
 // Render produces a Buffer per spec-1.9b D-4 (R3 propagated layout).
 //
@@ -297,22 +295,14 @@ func isEmptyContent(content any) bool {
 // expandToolResultRows applies ctx.Wrap to each logical row (local
 // helper; rule 21 — does NOT call spec-1.9 expandToolUseRows since
 // spec-1.9 FROZEN; consolidate at spec-1.10 per Q6 ★A).
+// expandToolResultRows is now a thin wrapper around block-internal
+// expandBlockRows per spec-1.10 D-5 consolidation (rule 21 spec-1.9b R4
+// errata, signature preserved). spec-1.9b ToolResult semantics = pre-
+// split on "\n" before wrap (adapter output may contain newlines that
+// must produce separate rows; differs from spec-1.9 ToolUse which does
+// not pre-split — captured by ExpandOptions.SplitNewlines).
 func expandToolResultRows(ctx Context, rows []toolResultRow) []toolResultRow {
-	out := make([]toolResultRow, 0, len(rows))
-	for _, r := range rows {
-		// Adapter output may contain newlines; split first then wrap each
-		// segment via ctx.Wrap policy.
-		for _, segment := range strings.Split(r.text, "\n") {
-			lines := wrap(segment, ctx.Cols, ctx.Wrap)
-			if len(lines) == 0 {
-				lines = []string{segment}
-			}
-			for _, line := range lines {
-				out = append(out, toolResultRow{text: line, style: r.style})
-			}
-		}
-	}
-	return out
+	return expandBlockRows(ctx, rows, ExpandOptions{SplitNewlines: true})
 }
 
 // resultErrorPlaceholder returns a 1-row "[render result error: <ToolName>]"

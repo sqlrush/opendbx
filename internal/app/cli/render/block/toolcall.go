@@ -80,10 +80,11 @@ type ToolUse struct {
 	ProgressMessages []adapter.ProgressMessage
 }
 
-type toolUseRow struct {
-	text  string
-	style StyleKind
-}
+// toolUseRow is a type alias of blockRow per spec-1.10 D-5 consolidation
+// (rule 21 spec-1.7 R4 errata thin-wrapper preserve signature). spec-1.9
+// FROZEN tests + Render path continue to use toolUseRow identifier; the
+// underlying type is the unified blockRow defined in expand.go.
+type toolUseRow = blockRow
 
 // NewToolUse constructs a ToolUse with State=StateQueued init default
 // (CC AssistantToolUseMessage.tsx:113 derived state 起点).
@@ -198,19 +199,12 @@ func (t ToolUse) Render(ctx Context) (buffer.Buffer, error) {
 	return buf, nil
 }
 
+// expandToolUseRows is now a thin wrapper around block-internal
+// expandBlockRows per spec-1.10 D-5 consolidation (rule 21 spec-1.9 R4
+// errata, signature preserved). spec-1.9 ToolUse semantics = no newline
+// pre-split (wrap handles embedded newlines natively).
 func expandToolUseRows(ctx Context, rows []toolUseRow) []toolUseRow {
-	out := make([]toolUseRow, 0, len(rows))
-	for _, r := range rows {
-		lines := wrap(r.text, ctx.Cols, ctx.Wrap)
-		if len(lines) == 0 {
-			out = append(out, r)
-			continue
-		}
-		for _, line := range lines {
-			out = append(out, toolUseRow{text: line, style: r.style})
-		}
-	}
-	return out
+	return expandBlockRows(ctx, rows, ExpandOptions{SplitNewlines: false})
 }
 
 // resolveHeader runs the appropriate adapter.RenderHeader call. If

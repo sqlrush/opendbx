@@ -77,3 +77,23 @@ func resultIndicator(s ToolResultState) Indicator {
 	}
 	return Indicator{Rune: '?', Style: StyleDimmed}
 }
+
+// ToolGroupCategory enumerates the spec-1.10 D-4 collapsed group category.
+// Currently only a single Default category exists (CC uses 单 ⤿ glyph for
+// all collapsed groups per CollapsedReadSearchContent.tsx); the enum is
+// kept open for future Read/Search/List specialization if CC introduces
+// per-category indicators.
+type ToolGroupCategory int
+
+const (
+	// ToolGroupCategoryDefault matches CC's single ⤿ collapsed-group glyph.
+	ToolGroupCategoryDefault ToolGroupCategory = iota
+)
+
+// compactIndicator maps a ToolGroupCategory to its visual Indicator.
+// **PLACEHOLDER per spec-1.10 D-4 R2.1.3 MED-2 pattern**: CC uses a
+// single ⤿ glyph; T-9 R3 CC fixture verify may errata to text-only.
+func compactIndicator(c ToolGroupCategory) Indicator {
+	_ = c
+	return Indicator{Rune: '⤿', Style: StyleDimmed}
+}

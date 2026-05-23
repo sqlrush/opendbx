@@ -27,7 +27,6 @@ func TestNonProductionStubs_ReturnUnsupported(t *testing.T) {
 		name string
 		node RenderNode
 	}{
-		{"compact", Compact{}},
 		{"markdown", Markdown{}},
 		{"code", Code{}},
 		{"diff", Diff{}},

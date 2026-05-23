@@ -42,14 +42,20 @@ import (
 // scrollback / spec-1.14 TUI) converts layout.Box.Width/Height → Cols/Rows
 // (spec-1.7 R2 D7 LOW-1: block does NOT directly import layout).
 type Context struct {
-	Cols, Rows  int
-	Theme       StyleTheme // nil → DefaultTheme; spec-1.7 D-1
-	MeasureOnly bool       // spec-1.5 R-2 forward + spec-1.6 R-9
-	Wrap        WrapPolicy // default Soft; spec-1.7 D-1
-	Verbose     bool       // spec-1.7 R3 forward / spec-1.9 D-6 + Q4 ★A —
+	Cols, Rows   int
+	Theme        StyleTheme // nil → DefaultTheme; spec-1.7 D-1
+	MeasureOnly  bool       // spec-1.5 R-2 forward + spec-1.6 R-9
+	Wrap         WrapPolicy // default Soft; spec-1.7 D-1
+	Verbose      bool       // spec-1.7 R3 forward / spec-1.9 D-6 + Q4 ★A —
 	// transcript-mode verbose flag injected by spec-1.15 TUI; adapters use
 	// it for verbose vs condensed rendering. Default false preserves
 	// spec-1.7 Message.Render legacy behavior.
+	IsTranscript bool // **spec-1.10 D-6 forward errata (spec-1.7 R4)** — CC
+	// Ctrl+O `app:toggleTranscript` 全局 mode (per spec-1.9 R2 HIGH-3 / B-9).
+	// Injected by spec-1.15 TUI per-tick. block.CompactSummary.Render gates
+	// on this OR Verbose: when EITHER is true, expanded mode → 0 rows
+	// (caller renders 原 ToolUse/ToolResult); default false 不破 spec-1.7
+	// Message / spec-1.9 ToolUse / spec-1.9b ToolResult FROZEN 行为.
 }
 
 // RenderNode is the contract every block type implements. Render produces
