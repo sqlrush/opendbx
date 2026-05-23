@@ -1,0 +1,17 @@
+{
+  "adapter": "bash",
+  "captured_at": "2026-05-23T00:00:00Z",
+  "cc_version": "2.1.148",
+  "cols": 80,
+  "fixture": "ToolUseQueued",
+  "font": "freeze default monospace",
+  "golden_source": "opendbx-rendered-block-tooluse",
+  "input_ansi_source": "opendbx-rendered-block-tooluse",
+  "notes": "",
+  "prompt": "Run several shell commands and capture the queued Bash tool use.",
+  "rows": 1,
+  "sanitizer": "v1 - no PII, generated from deterministic fixture text",
+  "terminal": "automated visualgolden.Render baseline; CC source-fidelity audit reviewed separately",
+  "theme": "opendbx DefaultTheme; CC ToolUse fixture lock-in pending for transient states",
+  "tool_use_state": "queued"
+}

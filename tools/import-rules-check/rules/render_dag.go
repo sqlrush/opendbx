@@ -47,17 +47,24 @@ const RenderRoot = ModulePrefix + "internal/app/cli/render/"
 // RenderOrder is the canonical strict DAG order (leaf→root post spec-0.13).
 // Higher-index entries may import lower-index entries; the reverse is
 // FORBIDDEN. See package godoc for rationale.
+//
+// **block sub-DAG** (spec-1.9 § 5 / R2.1.3): `block/adapter` is a
+// sub-package owned by block; its DAG index falls between block (7) and
+// scrollback (8) so that block(7) may import block/adapter(7.5) and
+// block/adapter may import lower indices (style/width). Treated as a
+// distinct first-segment-style entry by renderClassify.
 var RenderOrder = []string{
-	"width",      // 0 — leaf: pure utility, no internal deps
-	"style",      // 1 — leaf: pure data + ANSI generation
-	"terminal",   // 2 — depends on style
-	"buffer",     // 3 — depends on style + width
-	"layout",     // 4 — depends on width
-	"optimizer",  // 5 — depends on buffer + terminal
-	"scheduler",  // 6 — depends on optimizer + terminal
-	"block",      // 7 — intermediate root: depends on layout + buffer + width + style
-	"scrollback", // 8 — depends on buffer + layout + block
-	"streaming",  // 9 — true root: depends on scrollback + block
+	"width",         // 0 — leaf: pure utility, no internal deps
+	"style",         // 1 — leaf: pure data + ANSI generation
+	"terminal",      // 2 — depends on style
+	"buffer",        // 3 — depends on style + width
+	"layout",        // 4 — depends on width
+	"optimizer",     // 5 — depends on buffer + terminal
+	"scheduler",     // 6 — depends on optimizer + terminal
+	"block/adapter", // 7 — block sub-DAG leaf (spec-1.9 § 5): style/width only
+	"block",         // 8 — intermediate root: depends on layout + buffer + width + style + block/adapter
+	"scrollback",    // 9 — depends on buffer + layout + block
+	"streaming",     // 10 — true root: depends on scrollback + block
 }
 
 // renderClassify inspects an import path. Returns:
@@ -77,12 +84,35 @@ func renderClassify(importPath string) (idx int, ok bool, unknown string) {
 	if first == "" {
 		return 0, false, ""
 	}
+	// Two-segment sub-DAG check first (spec-1.9 § 5 block/adapter):
+	// match "block/adapter" before falling back to single-segment "block".
+	if first == "block" {
+		second := secondSegment(rel)
+		if second == "adapter" {
+			for i, name := range RenderOrder {
+				if name == "block/adapter" {
+					return i, true, ""
+				}
+			}
+		}
+	}
 	for i, name := range RenderOrder {
 		if first == name {
 			return i, true, ""
 		}
 	}
 	return 0, false, first
+}
+
+// secondSegment returns the second path segment of a/b/c → "b".
+func secondSegment(rel string) string {
+	first := firstSegment(rel)
+	if first == "" {
+		return ""
+	}
+	rest := strings.TrimPrefix(rel, first)
+	rest = strings.TrimPrefix(rest, "/")
+	return firstSegment(rest)
 }
 
 // CheckRenderDAG returns "" if the edge obeys the render strict DAG, or a

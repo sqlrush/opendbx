@@ -46,6 +46,10 @@ type Context struct {
 	Theme       StyleTheme // nil → DefaultTheme; spec-1.7 D-1
 	MeasureOnly bool       // spec-1.5 R-2 forward + spec-1.6 R-9
 	Wrap        WrapPolicy // default Soft; spec-1.7 D-1
+	Verbose     bool       // spec-1.7 R3 forward / spec-1.9 D-6 + Q4 ★A —
+	// transcript-mode verbose flag injected by spec-1.15 TUI; adapters use
+	// it for verbose vs condensed rendering. Default false preserves
+	// spec-1.7 Message.Render legacy behavior.
 }
 
 // RenderNode is the contract every block type implements. Render produces
