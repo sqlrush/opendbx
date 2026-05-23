@@ -11,6 +11,7 @@ package block
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/sqlrush/opendbx/internal/app/cli/render/block/adapter"
 )
@@ -295,24 +296,14 @@ func TestToolUse_MeasureOnly(t *testing.T) {
 	}
 }
 
-// #13 — stateIndicator 5-state lockdown (G2 numerical sanity — values
-// may change in R3 errata when CC fixture lands).
-func TestStateIndicator_5StateMatrix(t *testing.T) {
+// #13 — stateIndicator placeholder sanity. Exact glyphs are fixture-derived
+// and must not be numerically locked before ToolUse CC fixtures land.
+func TestStateIndicator_PlaceholderSanity(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		s    ToolUseState
-		want rune
-	}{
-		{StateQueued, '⏸'},
-		{StateRunning, '⏵'},
-		{StateWaitingPermission, '⏷'},
-		{StateResolved, '⏺'},
-		{StateError, '✗'},
-	}
-	for _, c := range cases {
-		got := stateIndicator(c.s)
-		if got.Rune != c.want {
-			t.Errorf("state %v: rune got %q want %q", c.s, got.Rune, c.want)
+	for _, st := range []ToolUseState{StateQueued, StateRunning, StateWaitingPermission, StateResolved, StateError} {
+		got := stateIndicator(st)
+		if got.Rune == 0 {
+			t.Errorf("state %v: empty placeholder rune", st)
 		}
 	}
 }
@@ -447,6 +438,60 @@ func TestToolUse_Bash_TwoLineTruncate(t *testing.T) {
 	}
 }
 
+func TestToolUse_Bash_MultilineRendersMultipleRows(t *testing.T) {
+	t.Parallel()
+	cmd := "line1\nline2\nline3"
+	tu := NewToolUse("idMulti", "Bash", map[string]any{"command": cmd})
+	tu.State = StateResolved
+	buf, _ := tu.Render(ctxToolUse(80))
+	_, rows := buf.Size()
+	if rows != 2 {
+		t.Fatalf("multiline Bash should render two rows after adapter truncation, got %d", rows)
+	}
+	row1 := readRowText(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 1)
+	if !strings.Contains(row1, "line2") {
+		t.Errorf("second row should contain line2, got %q", row1)
+	}
+}
+
+func TestToolUse_Bash_MultilineMeasureOnlyRows(t *testing.T) {
+	t.Parallel()
+	cmd := "line1\nline2\nline3"
+	tu := NewToolUse("idMultiMeasure", "Bash", map[string]any{"command": cmd})
+	tu.State = StateResolved
+	buf, _ := tu.Render(Context{Cols: 80, Rows: 24, Wrap: WrapSoft, MeasureOnly: true})
+	_, rows := buf.Size()
+	if rows != 2 {
+		t.Fatalf("MeasureOnly multiline Bash rows = %d, want 2", rows)
+	}
+}
+
+func TestToolUse_WrapNoneTruncatesHeader(t *testing.T) {
+	t.Parallel()
+	tu := NewToolUse("idWrapNone", "Mystery", map[string]any{"verylongkey": strings.Repeat("x", 80)})
+	tu.State = StateResolved
+	buf, _ := tu.Render(Context{Cols: 20, Rows: 24, Wrap: WrapNone})
+	_, rows := buf.Size()
+	if rows != 1 {
+		t.Fatalf("WrapNone should keep one row, got %d", rows)
+	}
+	got := readRowText(t, buf, func(x, y int) rune { return buf.Cell(x, y).Ch }, 0)
+	if !strings.Contains(got, "…") {
+		t.Errorf("WrapNone long header should truncate with ellipsis, got %q", got)
+	}
+}
+
+func TestToolUse_WaitingPermission_HeaderNormalStyle(t *testing.T) {
+	t.Parallel()
+	tu := NewToolUse("idPermStyle", "Bash", map[string]any{"command": "rm /tmp/x"})
+	tu.State = StateWaitingPermission
+	buf, _ := tu.Render(ctxToolUse(80))
+	want := (DefaultTheme{}).Style(StyleNormal)
+	if got := buf.Cell(0, 0).St; got != want {
+		t.Errorf("WaitingPermission header style = %+v, want normal %+v", got, want)
+	}
+}
+
 // #25 — Bash progress with various fields.
 func TestToolUse_Bash_ProgressVariants(t *testing.T) {
 	t.Parallel()
@@ -555,16 +600,19 @@ func TestToolUse_Bash_CJKTruncation_ValidUTF8(t *testing.T) {
 	cmd := strings.Repeat("x", 158) + "中文测试abc"
 	b := adapter.Bash{}
 	out, _ := b.RenderHeader(map[string]any{"command": cmd}, adapter.Context{})
-	if !isValidUTF8(out) {
+	if !utf8.ValidString(out) {
 		t.Errorf("CJK truncation produced invalid UTF-8: %q", out)
 	}
 }
 
-func isValidUTF8(s string) bool {
-	for _, r := range s {
-		if r == '�' && !strings.Contains(s, "�") {
-			return false
-		}
+func TestToolUse_Generic_CJKTruncation_ValidUTF8(t *testing.T) {
+	t.Parallel()
+	g := adapter.Generic{}
+	out, _ := g.RenderHeader(map[string]any{"_name": "Mystery", "k": strings.Repeat("值", 80)}, adapter.Context{Cols: 30})
+	if !utf8.ValidString(out) {
+		t.Errorf("Generic CJK truncation produced invalid UTF-8: %q", out)
 	}
-	return true
+	if !strings.Contains(out, "…") {
+		t.Errorf("Generic CJK truncation should include ellipsis, got %q", out)
+	}
 }

@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/sqlrush/opendbx/internal/app/cli/render/width"
 )
 
 // Generic implements HeaderRenderer only (no Progress / Queued).
@@ -35,7 +37,7 @@ func (Generic) RenderHeader(input map[string]any, ctx Context) (string, error) {
 	if maxLen < 8 {
 		maxLen = 8
 	}
-	args := compactArgs(input, maxLen-len(name)-2) // -2 for parens
+	args := compactArgs(input, maxLen-width.Width(name)-2) // -2 for parens
 	return fmt.Sprintf("%s(%s)", name, args), nil
 }
 
@@ -56,22 +58,22 @@ func compactArgs(input map[string]any, budget int) string {
 	}
 	var b strings.Builder
 	for i, k := range keys {
-		if i > 0 {
-			b.WriteString(", ")
-		}
 		pair := fmt.Sprintf("%s=%v", k, input[k])
-		if b.Len()+len(pair) > budget {
+		sep := ""
+		if i > 0 {
+			sep = ", "
+		}
+		candidate := sep + pair
+		if width.Width(b.String())+width.Width(candidate) > budget {
 			if b.Len() == 0 {
 				// Single pair too long: truncate.
-				if budget > 3 {
-					b.WriteString(pair[:budget-1])
-					b.WriteRune('…')
-				}
+				b.WriteString(width.Truncate(pair, budget))
 			} else {
 				b.WriteString("…")
 			}
 			break
 		}
+		b.WriteString(sep)
 		b.WriteString(pair)
 	}
 	return b.String()

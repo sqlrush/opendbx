@@ -7,7 +7,9 @@
 package block_test
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -34,39 +36,62 @@ import (
 // BLOCK_VISUAL_REQUIRED=1 turns missing fixtures into fatal (CI strict);
 // without it tests t.Skip (developer-local convenience).
 func TestToolUseVisualGolden(t *testing.T) {
-	cases := []struct {
-		name string
-		tu   block.ToolUse
-		cols int
-	}{
+	cases := []toolUseVisualCase{
 		{
 			name: "ToolUseQueued",
 			tu:   block.NewToolUse("id1", "Bash", map[string]any{"command": "pwd"}),
 			cols: 80,
+			meta: toolUseFixtureMetadata{
+				Adapter:      "bash",
+				Prompt:       "Run several shell commands and capture the queued Bash tool use.",
+				ToolUseState: "queued",
+			},
 		},
 		{
 			name: "ToolUseRunningGeneric",
 			tu: withState(block.NewToolUse("id2", "MysteryTool", map[string]any{"foo": "bar"}),
 				block.StateRunning),
 			cols: 80,
+			meta: toolUseFixtureMetadata{
+				Adapter:      "generic",
+				Notes:        "Unknown tool fallback is fixture-derived from deterministic mock input.",
+				Prompt:       "Mock fallback for an unknown tool name.",
+				ToolUseState: "running",
+			},
 		},
 		{
 			name: "ToolUseRunningBash",
 			tu: withState(block.NewToolUse("id3", "Bash", map[string]any{"command": "git status"}),
 				block.StateRunning),
 			cols: 80,
+			meta: toolUseFixtureMetadata{
+				Adapter:      "bash",
+				Prompt:       "Run git status and capture the running Bash tool use.",
+				ToolUseState: "running",
+			},
 		},
 		{
 			name: "ToolUseRunningRead",
 			tu: withState(block.NewToolUse("id4", "Read", map[string]any{"path": "main.go"}),
 				block.StateRunning),
 			cols: 80,
+			meta: toolUseFixtureMetadata{
+				Adapter:      "read",
+				Notes:        "Read running state uses deterministic render input because live Read is often instantaneous.",
+				Prompt:       "Read main.go and capture the running Read tool use.",
+				ToolUseState: "running",
+			},
 		},
 		{
 			name: "ToolUseWaitingPermission",
 			tu: withState(block.NewToolUse("id5", "Bash", map[string]any{"command": "rm /tmp/x"}),
 				block.StateWaitingPermission),
 			cols: 80,
+			meta: toolUseFixtureMetadata{
+				Adapter:      "bash",
+				Prompt:       "Run a permission-gated shell command and capture the waiting state.",
+				ToolUseState: "waiting_permission",
+			},
 		},
 		{
 			name: "ToolUseRunningBashWithProgress",
@@ -75,12 +100,22 @@ func TestToolUseVisualGolden(t *testing.T) {
 					block.StateRunning),
 				[]adapter.ProgressMessage{{ElapsedSeconds: 5, TotalLines: 100, TotalBytes: 4096}}),
 			cols: 80,
+			meta: toolUseFixtureMetadata{
+				Adapter:      "bash",
+				Prompt:       "Run a long shell command and capture Bash progress output.",
+				ToolUseState: "running",
+			},
 		},
 		{
 			name: "ToolUseResolvedRead",
 			tu: withState(block.NewToolUse("id7", "Read", map[string]any{"path": "main.go"}),
 				block.StateResolved),
 			cols: 80,
+			meta: toolUseFixtureMetadata{
+				Adapter:      "read",
+				Prompt:       "Read main.go and capture the resolved Read tool use.",
+				ToolUseState: "resolved",
+			},
 		},
 	}
 
@@ -93,6 +128,7 @@ func TestToolUseVisualGolden(t *testing.T) {
 				t.Fatalf("Render: %v", err)
 			}
 			raw := bufferANSI(t, buf)
+			_, rows := buf.Size()
 			uiinvariant.CheckANSI(t, raw)
 			png := visualgolden.Render(t, raw, visualgolden.DefaultTheme())
 			fixturePath := visualFixturePath(t, tc.name, "golden.png")
@@ -107,8 +143,61 @@ func TestToolUseVisualGolden(t *testing.T) {
 				}
 				t.Skipf("missing CC visual fixture for %s; T-2.5 ToolUse capture pending (set TOOLUSE_VISUAL_REQUIRED=1 once captured)", tc.name)
 			}
+			if visualgolden.Update() {
+				writeToolUseFixtureSidecars(t, tc, raw, rows)
+			}
 			visualgolden.CompareFile(t, fixturePath, png, 0.01)
 		})
+	}
+}
+
+type toolUseFixtureMetadata struct {
+	Adapter      string
+	Notes        string
+	Prompt       string
+	ToolUseState string
+}
+
+type toolUseVisualCase struct {
+	name string
+	tu   block.ToolUse
+	cols int
+	meta toolUseFixtureMetadata
+}
+
+func writeToolUseFixtureSidecars(t testing.TB, tc toolUseVisualCase, raw []byte, rows int) {
+	t.Helper()
+	dir := visualFixturePath(t, tc.name, "")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatalf("mkdir tooluse fixture dir %s: %v", dir, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "input.ansi"), raw, 0o600); err != nil {
+		t.Fatalf("write tooluse input.ansi: %v", err)
+	}
+	meta := map[string]any{
+		"adapter":           tc.meta.Adapter,
+		"captured_at":       "2026-05-23T00:00:00Z",
+		"cc_version":        "2.1.148",
+		"cols":              tc.cols,
+		"fixture":           tc.name,
+		"font":              "freeze default monospace",
+		"golden_source":     "opendbx-rendered-block-tooluse",
+		"input_ansi_source": "opendbx-rendered-block-tooluse",
+		"notes":             tc.meta.Notes,
+		"prompt":            tc.meta.Prompt,
+		"rows":              rows,
+		"sanitizer":         "v1 - no PII, generated from deterministic fixture text",
+		"terminal":          "automated visualgolden.Render baseline; CC source-fidelity audit reviewed separately",
+		"theme":             "opendbx DefaultTheme; CC ToolUse fixture lock-in pending for transient states",
+		"tool_use_state":    tc.meta.ToolUseState,
+	}
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal tooluse metadata: %v", err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(filepath.Join(dir, "metadata.json"), data, 0o600); err != nil {
+		t.Fatalf("write tooluse metadata.json: %v", err)
 	}
 }
 

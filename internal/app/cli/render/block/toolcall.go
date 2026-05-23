@@ -80,6 +80,11 @@ type ToolUse struct {
 	ProgressMessages []adapter.ProgressMessage
 }
 
+type toolUseRow struct {
+	text  string
+	style StyleKind
+}
+
 // NewToolUse constructs a ToolUse with State=StateQueued init default
 // (CC AssistantToolUseMessage.tsx:113 derived state 起点).
 func NewToolUse(id, name string, input map[string]any) ToolUse {
@@ -130,12 +135,10 @@ func (t ToolUse) Render(ctx Context) (buffer.Buffer, error) {
 		Cols:    ctx.Cols,
 	}
 
-	// Collect rows to render (each row = string + style).
-	type row struct {
-		text  string
-		style StyleKind
-	}
-	var rows []row
+	// Collect logical rows to render (each row = string + style). Adapter
+	// output may contain newlines or exceed ctx.Cols; logical rows are
+	// expanded through ctx.Wrap before measurement/allocation below.
+	var rows []toolUseRow
 
 	// Resolve header per state.
 	headerText, err := resolveHeader(rdr, useGeneric, t.Name, t.Input, adapterCtx)
@@ -144,11 +147,11 @@ func (t ToolUse) Render(ctx Context) (buffer.Buffer, error) {
 	}
 	ind := stateIndicator(t.State)
 	headerStyle := StyleNormal
-	if t.State == StateWaitingPermission || t.State == StateError {
+	if t.State == StateError {
 		headerStyle = ind.Style
 	}
 	headerLine := fmt.Sprintf("%c %s", ind.Rune, headerText)
-	rows = append(rows, row{text: headerLine, style: headerStyle})
+	rows = append(rows, toolUseRow{text: headerLine, style: headerStyle})
 
 	// Add per-state secondary rows.
 	switch t.State {
@@ -168,30 +171,46 @@ func (t ToolUse) Render(ctx Context) (buffer.Buffer, error) {
 		if pr, ok := rdr.(adapter.ProgressRenderer); ok {
 			pt, perr := pr.RenderProgress(t.ProgressMessages, adapterCtx)
 			if perr == nil && pt != "" {
-				rows = append(rows, row{text: pt, style: StyleDimmed})
+				rows = append(rows, toolUseRow{text: pt, style: StyleDimmed})
 			}
 		}
 	case StateWaitingPermission:
-		rows = append(rows, row{text: "Waiting for permission…", style: StyleDimmed})
+		rows = append(rows, toolUseRow{text: "Waiting for permission…", style: StyleDimmed})
 	case StateResolved:
 		// header-only
 	case StateError:
 		if msg, _ := t.Input["_error"].(string); msg != "" {
-			rows = append(rows, row{text: msg, style: StyleDimmed})
+			rows = append(rows, toolUseRow{text: msg, style: StyleDimmed})
 		}
 	}
 
+	renderRows := expandToolUseRows(ctx, rows)
 	if ctx.MeasureOnly {
-		return measureOnlyBuf(ctx.Cols, len(rows)), nil
+		return measureOnlyBuf(ctx.Cols, len(renderRows)), nil
 	}
-	buf, err := buffer.NewGrid(ctx.Cols, len(rows))
+	buf, err := buffer.NewGrid(ctx.Cols, len(renderRows))
 	if err != nil {
-		return measureOnlyBuf(ctx.Cols, len(rows)), nil
+		return measureOnlyBuf(ctx.Cols, len(renderRows)), nil
 	}
-	for y, r := range rows {
+	for y, r := range renderRows {
 		writeTextRow(buf, 0, y, r.text, theme.Style(r.style), ctx.Cols)
 	}
 	return buf, nil
+}
+
+func expandToolUseRows(ctx Context, rows []toolUseRow) []toolUseRow {
+	out := make([]toolUseRow, 0, len(rows))
+	for _, r := range rows {
+		lines := wrap(r.text, ctx.Cols, ctx.Wrap)
+		if len(lines) == 0 {
+			out = append(out, r)
+			continue
+		}
+		for _, line := range lines {
+			out = append(out, toolUseRow{text: line, style: r.style})
+		}
+	}
+	return out
 }
 
 // resolveHeader runs the appropriate adapter.RenderHeader call. If
