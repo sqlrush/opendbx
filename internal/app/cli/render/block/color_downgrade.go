@@ -57,31 +57,33 @@ func mapChromaColor(c chroma.Colour, depth int) style.Color {
 // color extended grayscale + 6x6x6 color cube.
 func nearest256(c chroma.Colour) style.Color {
 	palette256LUT.once.Do(palette256LUT.build)
-	bestIdx := 16
+	bestIdx := uint8(16)
 	bestDist := float64(1<<31 - 1)
 	for i, pc := range palette256LUT.colors {
 		d := c.Distance(pc)
 		if float64(d) < bestDist {
 			bestDist = float64(d)
-			bestIdx = i + 16 // palette colors 0..15 reserved for nearest16
+			// i ∈ [0, 239]; i+16 ∈ [16, 255] — fits uint8.
+			bestIdx = uint8(i + 16) //nolint:gosec // bounded by 240-entry LUT
 		}
 	}
-	return style.Palette(uint8(bestIdx))
+	return style.Palette(bestIdx)
 }
 
 // nearest16 returns the nearest 16-color palette index (0..15).
 func nearest16(c chroma.Colour) style.Color {
 	palette16LUT.once.Do(palette16LUT.build)
-	bestIdx := 0
+	bestIdx := uint8(0)
 	bestDist := float64(1<<31 - 1)
 	for i, pc := range palette16LUT.colors {
 		d := c.Distance(pc)
 		if float64(d) < bestDist {
 			bestDist = float64(d)
-			bestIdx = i
+			// i ∈ [0, 15] — fits uint8.
+			bestIdx = uint8(i) //nolint:gosec // bounded by 16-entry LUT
 		}
 	}
-	return style.Palette(uint8(bestIdx))
+	return style.Palette(bestIdx)
 }
 
 // paletteLUT holds a chroma.Colour slice for nearest-search.
