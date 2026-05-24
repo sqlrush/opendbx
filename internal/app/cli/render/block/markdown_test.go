@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
+	"github.com/sqlrush/opendbx/internal/app/cli/render/width"
 )
 
 func ctxMd(cols int) Context {
@@ -40,7 +41,7 @@ func rowText(buf buffer.Buffer, y int) string {
 	var b strings.Builder
 	for x := 0; x < cols; x++ {
 		c := buf.Cell(x, y)
-		if c.Ch == 0 {
+		if c.Ch == 0 || buffer.IsContinuation(c) {
 			continue
 		}
 		b.WriteRune(c.Ch)
@@ -173,6 +174,22 @@ func TestMarkdown_T10_BlockquoteSingleLine(t *testing.T) {
 	}
 }
 
+func TestMarkdown_BlockquoteInlineSpanByteShift(t *testing.T) {
+	resetMarkdownCacheForTest()
+	ctx := ctxMd(80)
+	ctx.Theme = DefaultTheme{}
+	m := NewMarkdown("> **bold**")
+	buf := mustRenderMd(t, m, ctx)
+	if got := rowText(buf, 0); !strings.HasPrefix(got, "▎ bold") {
+		t.Fatalf("blockquote text: got %q", got)
+	}
+	for _, x := range []int{2, 3, 4, 5} {
+		if c := buf.Cell(x, 0); !c.St.Bold {
+			t.Fatalf("blockquote bold span at x=%d: want bold cell, got Ch=%q style=%#v row=%q", x, c.Ch, c.St, rowText(buf, 0))
+		}
+	}
+}
+
 func TestMarkdown_T11_BlockquoteMultiLine(t *testing.T) {
 	resetMarkdownCacheForTest()
 	// CommonMark: two adjacent `>` lines form a single Paragraph in
@@ -197,6 +214,25 @@ func TestMarkdown_T12_FenceNoLang(t *testing.T) {
 	_, rows := buf.Size()
 	if rows == 0 {
 		t.Errorf("fence: want >0 rows via spec-1.7 renderCodeBlock delegate, got 0")
+	}
+}
+
+func TestMarkdown_FencePreservesRenderCodeBlockStyles(t *testing.T) {
+	resetMarkdownCacheForTest()
+	ctx := ctxMd(24)
+	ctx.Theme = DefaultTheme{}
+	m := NewMarkdown("```go\ncode\n```")
+	buf := mustRenderMd(t, m, ctx)
+	wantLabel := DefaultTheme{}.Style(StyleLangLabel)
+	if got := buf.Cell(0, 0).St; got != wantLabel {
+		t.Fatalf("fence label style: want %#v, got %#v", wantLabel, got)
+	}
+	wantCodeBg := DefaultTheme{}.Style(StyleCodeBg).BG
+	if got := buf.Cell(0, 1).St.BG; got != wantCodeBg {
+		t.Fatalf("fence body bg at padding cell: want %#v, got %#v", wantCodeBg, got)
+	}
+	if c := buf.Cell(1, 1); c.Ch != 'c' || c.St.BG != wantCodeBg {
+		t.Fatalf("fence body code cell: want 'c' with bg %#v, got Ch=%q style=%#v", wantCodeBg, c.Ch, c.St)
 	}
 }
 
@@ -242,6 +278,22 @@ func TestMarkdown_T16_Table2x2(t *testing.T) {
 	_, rows := buf.Size()
 	if rows < 4 {
 		t.Errorf("table 2x2: want ≥4 rows (sep+header+sep+data), got %d", rows)
+	}
+}
+
+func TestMarkdown_TableCJKUsesDisplayWidth(t *testing.T) {
+	resetMarkdownCacheForTest()
+	m := NewMarkdown("| 中 |\n|---|\n| a |")
+	buf := mustRenderMd(t, m, ctxMd(80))
+	_, rows := buf.Size()
+	if rows < 4 {
+		t.Fatalf("table rows: want >=4, got %d", rows)
+	}
+	topWidth := width.Width(rowText(buf, 0))
+	headerWidth := width.Width(rowText(buf, 1))
+	dataWidth := width.Width(rowText(buf, 3))
+	if headerWidth != topWidth || dataWidth != topWidth {
+		t.Fatalf("table visual widths mismatch: top=%d header=%d data=%d rows=%q / %q / %q", topWidth, headerWidth, dataWidth, rowText(buf, 0), rowText(buf, 1), rowText(buf, 3))
 	}
 }
 

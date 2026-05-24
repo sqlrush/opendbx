@@ -63,6 +63,7 @@ type rowSpec struct {
 	text     string
 	style    StyleKind
 	spans    []styledSpan
+	cells    []buffer.Cell // optional raw styled cells, used for spec-1.7 code delegate rows
 	wrapHint WrapHint
 }
 
@@ -207,9 +208,10 @@ func (w *mdWalker) renderBlockquote(b *ast.Blockquote) {
 	startRow := len(w.rows)
 	w.walkBlock(b)
 	// Apply the rail prefix to every row emitted by the nested walk.
+	prefix := "▎ "
 	for i := startRow; i < len(w.rows); i++ {
-		w.rows[i].text = "▎ " + w.rows[i].text
-		w.rows[i].spans = shiftSpans(w.rows[i].spans, 2)
+		w.rows[i].text = prefix + w.rows[i].text
+		w.rows[i].spans = shiftSpans(w.rows[i].spans, len(prefix))
 		w.rows[i].style = StyleDimmed
 	}
 }
@@ -237,8 +239,13 @@ func (w *mdWalker) renderCodeViaSpec17(lang, body string) {
 	cols, rows := codeBuf.Size()
 	for y := 0; y < rows; y++ {
 		var b strings.Builder
+		cells := make([]buffer.Cell, cols)
 		for x := 0; x < cols; x++ {
 			c := codeBuf.Cell(x, y)
+			cells[x] = c
+			if buffer.IsContinuation(c) {
+				continue
+			}
 			if c.Ch == 0 {
 				b.WriteRune(' ')
 				continue
@@ -247,7 +254,7 @@ func (w *mdWalker) renderCodeViaSpec17(lang, body string) {
 		}
 		w.rows = append(w.rows, rowSpec{
 			text:     strings.TrimRight(b.String(), " "),
-			style:    StyleCode,
+			cells:    cells,
 			wrapHint: WrapHintKeep,
 		})
 	}
@@ -307,7 +314,7 @@ func (w *mdWalker) renderTable(t *extast.Table) {
 			if i >= cols {
 				break
 			}
-			if l := len(c); l > widths[i] {
+			if l := width.Width(c); l > widths[i] {
 				widths[i] = l
 			}
 		}
@@ -325,7 +332,7 @@ func (w *mdWalker) renderTable(t *extast.Table) {
 			if i < len(cells) {
 				cell = cells[i]
 			}
-			pad := widths[i] - len(cell)
+			pad := widths[i] - width.Width(cell)
 			if pad < 0 {
 				pad = 0
 			}
@@ -565,6 +572,10 @@ func (w *mdWalker) buildBuffer() buffer.Buffer {
 		return measureOnlyBuf(w.ctx.Cols, rows)
 	}
 	for y, r := range expanded {
+		if len(r.cells) > 0 {
+			writeRawCells(grid, y, r.cells, w.ctx.Cols)
+			continue
+		}
 		baseStyle := w.theme.Style(r.style)
 		writeTextRow(grid, 0, y, r.text, baseStyle, w.ctx.Cols)
 		// Apply styled spans on top of base style.
@@ -574,6 +585,24 @@ func (w *mdWalker) buildBuffer() buffer.Buffer {
 		}
 	}
 	return grid
+}
+
+// writeRawCells copies a delegated Buffer row while preserving per-cell style.
+// Continuation cells are skipped because SetCell writes them from the wide main
+// cell; writing the continuation directly would clear the main cell.
+func writeRawCells(grid *buffer.Grid, y int, cells []buffer.Cell, cols int) {
+	for x, c := range cells {
+		if x >= cols {
+			break
+		}
+		if buffer.IsContinuation(c) {
+			continue
+		}
+		if c.Ch == 0 && c.St == (style.Style{}) {
+			continue
+		}
+		grid.SetCell(x, y, c)
+	}
 }
 
 // applySpanStyle overlays a span's style onto cells within [start, end)
