@@ -19,6 +19,7 @@
 package block
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -275,5 +276,71 @@ func BenchmarkCode_render_plain_noLang(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		resetBlockCacheForTest()
 		_, _ = c.Render(ctx)
+	}
+}
+
+// spec-1.13 § 4.3 perf targets:
+//   - BenchmarkDiff_render_small (1 hunk, 5 lines, plain):             < 60µs
+//   - BenchmarkDiff_render_large_multihunk (5 hunks, 50 lines, go):    < 500µs
+//   - BenchmarkDiff_render_cached (cache hit, bare-lines):             < 5µs
+// R2 NIT-1: b.ReportAllocs() enabled so allocs/op + B/op land in default
+// `go test -bench` output without -benchmem.
+
+func BenchmarkDiff_render_small(b *testing.B) {
+	b.ReportAllocs()
+	d := NewDiffFromHunks([]Hunk{{
+		OldStart: 1, OldLines: 5, NewStart: 1, NewLines: 5,
+		Lines: []LineEntry{
+			{Marker: ' ', Text: "a"},
+			{Marker: ' ', Text: "b"},
+			{Marker: '-', Text: "c"},
+			{Marker: '+', Text: "C"},
+			{Marker: ' ', Text: "d"},
+		},
+	}})
+	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft, ColorDepth: 16777216}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		resetBlockCacheForTest()
+		_, _ = d.Render(ctx)
+	}
+}
+
+func BenchmarkDiff_render_large_multihunk(b *testing.B) {
+	b.ReportAllocs()
+	var hunks []Hunk
+	for h := 0; h < 5; h++ {
+		var lines []LineEntry
+		for i := 0; i < 10; i++ {
+			marker := ' '
+			switch i % 3 {
+			case 1:
+				marker = '+'
+			case 2:
+				marker = '-'
+			}
+			lines = append(lines, LineEntry{Marker: marker, Text: fmt.Sprintf("var x%d = %d", h*10+i, i)})
+		}
+		hunks = append(hunks, Hunk{OldStart: h*20 + 1, OldLines: 10, NewStart: h*20 + 1, NewLines: 10, Lines: lines})
+	}
+	d := NewDiffFromHunks(hunks)
+	d.BodyLang = "go"
+	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft, ColorDepth: 16777216}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		resetBlockCacheForTest()
+		_, _ = d.Render(ctx)
+	}
+}
+
+func BenchmarkDiff_render_cached(b *testing.B) {
+	b.ReportAllocs()
+	d := NewDiffFromBareLines("+added\n-removed\n context")
+	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft, ColorDepth: 16777216}
+	resetBlockCacheForTest()
+	_, _ = d.Render(ctx) // prime; per spec § 4.3 LOW-1 NO reset inside loop
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = d.Render(ctx)
 	}
 }

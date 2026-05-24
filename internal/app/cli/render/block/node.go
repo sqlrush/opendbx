@@ -97,5 +97,5 @@ type RenderNode interface {
 var ErrUnsupportedNode = errcode.Register(
 	"RENDER.UNSUPPORTED_NODE",
 	"block.Render called on unimplemented block type",
-	"this block type is not yet implemented; see spec-1.7+ block-type specs (message / toolcall / toolresult / compact / markdown / code already implemented; diff / banner / progress pending)",
+	"this block type is not yet implemented; see spec-1.7+ block-type specs (message / toolcall / toolresult / compact / markdown / code / diff already implemented; banner / progress pending)",
 )

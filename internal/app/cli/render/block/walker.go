@@ -26,6 +26,7 @@ package block
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"unicode/utf8"
 
@@ -261,10 +262,53 @@ func (w *mdWalker) renderBlockquote(b *ast.Blockquote) {
 
 // renderFenceBlock delegates to spec-1.7 renderCodeBlock per D-6 R2 HIGH-1
 // fixed signature (ctx, lang, body) → (buffer.Buffer, int).
+//
+// spec-1.13 D-5 in-place dispatch (rule 21; signature 不动): lang in
+// {"diff", "patch", "udiff"} routes to Diff block semantic renderer
+// (bare-lines mode) per Q3 ★B + R3 codex re-verified — gives consistent
+// `+`/`-`/' ' coloring instead of plain monospace via renderCodeBlock.
+// Non-diff langs unchanged spec-1.11 path (regression check spec-1.13 T1-26).
 func (w *mdWalker) renderFenceBlock(f *ast.FencedCodeBlock) {
 	lang := string(f.Language(w.src))
 	body := extractCodeBlockText(f, w.src)
-	w.renderCodeViaSpec17(lang, body)
+	switch lang {
+	case "diff", "patch", "udiff":
+		// spec-1.13 D-5: route to Diff block bare-lines mode.
+		d := NewDiffFromBareLines(body)
+		buf, err := d.Render(w.ctx)
+		if err != nil {
+			// R2 LOW-2: surface Diff.Render failures rather than silent
+			// swallow (rule 7 error-three-piece spirit); fall through to
+			// inlineBufferAsRowSpec with whatever measure-only buffer
+			// Diff.Render returned so the column count stays consistent.
+			slog.Warn("walker.renderFenceBlock: Diff.Render failed", "lang", lang, "err", err)
+		}
+		w.inlineBufferAsRowSpec(buf)
+	default:
+		w.renderCodeViaSpec17(lang, body)
+	}
+}
+
+// inlineBufferAsRowSpec is the shared helper extracted from
+// renderCodeViaSpec17 per spec-1.13 D-5 CRIT-2 fix: translates any
+// Buffer returned from a sub-block (e.g., Diff.Render) into walker
+// rowSpec entries. Each Buffer row becomes one rowSpec with cells
+// populated from buf.Cell(x, y).
+func (w *mdWalker) inlineBufferAsRowSpec(buf buffer.Buffer) {
+	if buf == nil {
+		return
+	}
+	cols, rows := buf.Size()
+	for y := 0; y < rows; y++ {
+		cells := make([]buffer.Cell, cols)
+		for x := 0; x < cols; x++ {
+			cells[x] = buf.Cell(x, y)
+		}
+		w.rows = append(w.rows, rowSpec{
+			cells:    cells,
+			wrapHint: WrapHintKeep,
+		})
+	}
 }
 
 // renderIndentedCodeBlock handles 4-space indented code blocks; same
@@ -313,131 +357,9 @@ func (w *mdWalker) renderHR() {
 	})
 }
 
-// renderTable emits a basic Box-drawing 2D grid. CC MarkdownTable is a
-// separate component (B-29 MarkdownTable.tsx); opendbx Stage 1 ships
-// minimal grid (header + rows) without alignment / footer / multi-line
-// cells (❌-3).
-//
-// R6 HIGH-2: extracted tableFormatRow + tableSeparator helpers below
-// to satisfy rule 12 ≤100 line function limit.
-func (w *mdWalker) renderTable(t *extast.Table) {
-	headers, dataRows := tableCollectCells(t, w)
-	if len(headers) == 0 && len(dataRows) == 0 {
-		return
-	}
-	cols, widths := tableComputeWidths(headers, dataRows)
-
-	if len(headers) > 0 {
-		w.rows = append(w.rows,
-			rowSpec{text: tableSeparator('┌', '┬', '┐', widths, cols), style: StyleDimmed, wrapHint: WrapHintKeep},
-			rowSpec{text: tableFormatRow(headers, widths, cols), style: StyleBold, wrapHint: WrapHintKeep},
-			rowSpec{text: tableSeparator('├', '┼', '┤', widths, cols), style: StyleDimmed, wrapHint: WrapHintKeep},
-		)
-	} else {
-		w.rows = append(w.rows,
-			rowSpec{text: tableSeparator('┌', '┬', '┐', widths, cols), style: StyleDimmed, wrapHint: WrapHintKeep},
-		)
-	}
-	for _, r := range dataRows {
-		w.rows = append(w.rows, rowSpec{
-			text:     tableFormatRow(r, widths, cols),
-			style:    StyleNormal,
-			wrapHint: WrapHintKeep,
-		})
-	}
-	w.rows = append(w.rows,
-		rowSpec{text: tableSeparator('└', '┴', '┘', widths, cols), style: StyleDimmed, wrapHint: WrapHintKeep},
-	)
-}
-
-// tableCollectCells extracts headers + data rows from a goldmark table AST.
-// R6 HIGH-2 extracted from renderTable.
-func tableCollectCells(t *extast.Table, w *mdWalker) (headers []string, dataRows [][]string) {
-	for c := t.FirstChild(); c != nil; c = c.NextSibling() {
-		switch tr := c.(type) {
-		case *extast.TableHeader:
-			for cell := tr.FirstChild(); cell != nil; cell = cell.NextSibling() {
-				if tc, ok := cell.(*extast.TableCell); ok {
-					headers = append(headers, w.extractInlineText(tc))
-				}
-			}
-		case *extast.TableRow:
-			var row []string
-			for cell := tr.FirstChild(); cell != nil; cell = cell.NextSibling() {
-				if tc, ok := cell.(*extast.TableCell); ok {
-					row = append(row, w.extractInlineText(tc))
-				}
-			}
-			dataRows = append(dataRows, row)
-		}
-	}
-	return
-}
-
-// tableComputeWidths returns the column count and per-column max display
-// width across headers + data rows. R6 HIGH-2 extracted from renderTable.
-func tableComputeWidths(headers []string, dataRows [][]string) (cols int, widths []int) {
-	cols = len(headers)
-	for _, r := range dataRows {
-		if len(r) > cols {
-			cols = len(r)
-		}
-	}
-	widths = make([]int, cols)
-	updateW := func(cells []string) {
-		for i, c := range cells {
-			if i >= cols {
-				break
-			}
-			if l := width.Width(c); l > widths[i] {
-				widths[i] = l
-			}
-		}
-	}
-	updateW(headers)
-	for _, r := range dataRows {
-		updateW(r)
-	}
-	return
-}
-
-// tableFormatRow renders a single data/header row using the precomputed
-// column widths. R6 HIGH-2 extracted from renderTable closure.
-func tableFormatRow(cells []string, widths []int, cols int) string {
-	var b strings.Builder
-	b.WriteRune('│')
-	for i := 0; i < cols; i++ {
-		cell := ""
-		if i < len(cells) {
-			cell = cells[i]
-		}
-		pad := widths[i] - width.Width(cell)
-		if pad < 0 {
-			pad = 0
-		}
-		b.WriteRune(' ')
-		b.WriteString(cell)
-		b.WriteString(strings.Repeat(" ", pad))
-		b.WriteString(" │")
-	}
-	return b.String()
-}
-
-// tableSeparator renders a horizontal separator row using box-drawing
-// glyphs (┌┬┐ top, ├┼┤ mid, └┴┘ bottom). R6 HIGH-2 extracted from
-// renderTable closure.
-func tableSeparator(start, mid, end rune, widths []int, cols int) string {
-	var b strings.Builder
-	b.WriteRune(start)
-	for i := 0; i < cols; i++ {
-		b.WriteString(strings.Repeat("─", widths[i]+2))
-		if i < cols-1 {
-			b.WriteRune(mid)
-		}
-	}
-	b.WriteRune(end)
-	return b.String()
-}
+// (renderTable + tableCollectCells / tableComputeWidths / tableFormatRow /
+// tableSeparator moved to walker_table.go per spec-1.13 R2 HIGH-2 to
+// bring walker.go under the 800-line hard limit.)
 
 // collectInline walks inline children of a block node and returns the
 // concatenated text + styled spans for emphasis/strong/code/link.

@@ -57,6 +57,21 @@ const (
 	StyleOperator
 	// StylePunctuation — code punctuation (spec-1.12 D-2 Q4 ★A coarse-8).
 	StylePunctuation
+	// StyleDiffAdded — `+` line marker glyph color (spec-1.13 D-4).
+	// CC dark addDecoration approx rgb(80,200,80); 16-color palette
+	// idx 10 bright-green fallback via spec-1.12 D-6 ColorDepth downgrade.
+	StyleDiffAdded
+	// StyleDiffRemoved — `-` line marker glyph color (spec-1.13 D-4).
+	// CC dark deleteDecoration approx rgb(220,90,90); 16-color idx 9
+	// bright-red fallback.
+	StyleDiffRemoved
+	// StyleDiffHunkHeader — `@@ -O,L +N,L @@` hunk header line color
+	// (spec-1.13 D-4). Cyan; 16-color idx 14 bright-cyan fallback.
+	StyleDiffHunkHeader
+	// StyleDiffContext — explicit context-row style alias (spec-1.13
+	// D-4 NIT-1 fix: explicit case in DefaultTheme.Style 不 rely on
+	// default; semantic intent visible for future theme implementer).
+	StyleDiffContext
 )
 
 // StyleTheme provides the palette resolution from semantic StyleKind to
@@ -158,6 +173,20 @@ func (DefaultTheme) Style(kind StyleKind) style.Style {
 		return style.Style{FG: style.Palette(8), Underline: true} // dim + underline
 	case StyleHeading:
 		return style.Style{Bold: true} // permission-colored TBD post T-9 fixture
+	case StyleDiffAdded:
+		// spec-1.13 D-4: CC dark addDecoration approx rgb(80,200,80).
+		// ColorDepth downgrade to palette idx 10 bright-green via spec-1.12
+		// mapChromaColor LUT happens at Style render path (caller-driven).
+		return style.Style{FG: style.RGB(0x50, 0xC8, 0x50)}
+	case StyleDiffRemoved:
+		// spec-1.13 D-4: CC dark deleteDecoration approx rgb(220,90,90).
+		return style.Style{FG: style.RGB(0xDC, 0x5A, 0x5A)}
+	case StyleDiffHunkHeader:
+		// spec-1.13 D-4: cyan hunk header (`@@ -O,L +N,L @@`).
+		return style.Style{FG: style.RGB(0x00, 0xB7, 0xCC)}
+	case StyleDiffContext:
+		// spec-1.13 D-4 NIT-1: explicit case (no marker color; inherit).
+		return style.Style{}
 	default:
 		return style.Style{}
 	}

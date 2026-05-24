@@ -139,3 +139,44 @@ func (p *paletteLUT) build() {
 
 // palette256LUT is the xterm 256-color extended palette (entries 16..255).
 var palette256LUT = &paletteLUT{}
+
+// downgradeStyleColor takes a style.Style whose FG/BG may be truecolor
+// (0x1000000-bit set) and returns a Style whose FG/BG are downgraded
+// to the closest match for the given ColorDepth. Palette colors (1..256)
+// pass through unchanged — only truecolor entries are remapped.
+//
+// spec-1.13 R3 M2 (codex path 2/3): used by Diff render so marker /
+// hunk-header colors (theme returns truecolor RGB by default) downgrade
+// alongside chroma body tokens — preserves the per-ctx ColorDepth
+// invariant across both prefix column and body cells.
+//
+// spec-1.13 R3.2 M2-residual (codex path 3/3): ColorDepth == 0 (unset)
+// must downgrade conservatively to 16-color, NOT pass through truecolor.
+// This aligns the Diff prefix path with the chroma body path which
+// already routes depth=0 through nearest16 (color_downgrade.go file-
+// header doc + mapChromaColor switch:46). Only depth=16777216 (truecolor)
+// skips the downgrade.
+func downgradeStyleColor(s style.Style, depth int) style.Style {
+	if depth == 16777216 {
+		return s
+	}
+	s.FG = downgradeOneColor(s.FG, depth)
+	s.BG = downgradeOneColor(s.BG, depth)
+	return s
+}
+
+// downgradeOneColor remaps a single style.Color: truecolor → 16 or 256
+// palette per depth; palette + default pass through.
+func downgradeOneColor(c style.Color, depth int) style.Color {
+	const truecolorBit = 0x1000000
+	if uint32(c)&truecolorBit == 0 {
+		return c
+	}
+	// spec-1.13 R3 M2: `& 0xFF` mask guarantees the high bits are clear
+	// before the uint8 conversion — gosec G115 cannot prove this through
+	// the bitmask, so suppress with spec_ref per suppression-lint rule.
+	r := uint8((uint32(c) >> 16) & 0xFF) //nolint:gosec // spec-1.13 R3 M2: 0xFF mask narrows to 8 bits
+	g := uint8((uint32(c) >> 8) & 0xFF)  //nolint:gosec // spec-1.13 R3 M2: 0xFF mask narrows to 8 bits
+	b := uint8(uint32(c) & 0xFF)         //nolint:gosec // spec-1.13 R3 M2: 0xFF mask narrows to 8 bits
+	return mapChromaColor(chroma.NewColour(r, g, b), depth)
+}
