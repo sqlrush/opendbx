@@ -2,17 +2,19 @@
 //
 // Author: sqlrush
 
-// File cache.go — spec-1.11 D-4 LRU buffer cache for Markdown block.
+// File cache.go — spec-1.11 D-4 LRU buffer cache, generalized to shared
+// block cache by spec-1.12 D-7 (markdownCache→blockCache rename;
+// 5-field key→8-field key adding lang/codeStyleName/colorDepth).
 //
-// Design (R3 + R3.1):
+// Design (spec-1.11 R3+R3.1 + spec-1.12 D-7):
 //   - Package-level singleton (Q5 ★A): one cache shared across all
-//     Markdown instances. Maximizes hit rate when scrollback re-renders
-//     historical messages.
+//     block types (Markdown / Code / future). Maximizes hit rate when
+//     scrollback re-renders historical messages.
 //   - 256-entry cap (user-locked R2.1; ~1MB typical / 64MB pathological
 //     bound with 256KB source no-cache guard).
-//   - 5-field cacheKey: sha256(source)+cols+verbose+themeKey+wrap (R3
-//     added themeKey for theme variance; R7 HIGH-1 added wrap because
-//     WrapSoft/Hard/None produce different cell grids).
+//   - 8-field cacheKey: sha256(source)+cols+verbose+themeKey+wrap+
+//     lang+codeStyleName+colorDepth (spec-1.12 D-7 R2 codex R2 cleanup —
+//     stale "5-field Markdown-only" header text replaced).
 //   - I-8 immutability contract: cache returns Buffer by reference;
 //     caller must treat as read-only. Cache hit < 5µs (map lookup only).
 //   - sync.Mutex guards map + LRU list only (NOT parse). Single-flight
@@ -32,15 +34,15 @@ import (
 )
 
 const (
-	// markdownCacheCap is the maximum number of entries the LRU holds
+	// blockCacheCap is the maximum number of entries the LRU holds
 	// before evicting the least-recently-used entry. ~1MB typical
 	// memory at 256 entries × ~4KB average rendered buffer.
-	markdownCacheCap = 256
+	blockCacheCap = 256
 
-	// markdownCacheMaxSourceBytes is the soft cap on cacheable source
+	// blockCacheMaxSourceBytes is the soft cap on cacheable source
 	// size (Q7 ★B). Sources larger than this render normally but skip
 	// cache lookup/put to bound pathological memory usage.
-	markdownCacheMaxSourceBytes = 256 * 1024
+	blockCacheMaxSourceBytes = 256 * 1024
 )
 
 // lruEntry is a doubly-linked-list element storing a cached rendered
@@ -50,9 +52,9 @@ type lruEntry struct {
 	buf buffer.Buffer
 }
 
-// markdownLRU implements a simple LRU cache: map + doubly-linked list.
+// blockLRU implements a simple LRU cache: map + doubly-linked list.
 // Guarded by sync.Mutex for concurrent Render calls.
-type markdownLRU struct {
+type blockLRU struct {
 	mu    sync.Mutex
 	cap   int
 	items map[string]*list.Element
@@ -60,8 +62,8 @@ type markdownLRU struct {
 }
 
 // newLRU constructs an LRU with the given capacity.
-func newLRU(cap int) *markdownLRU {
-	return &markdownLRU{
+func newLRU(cap int) *blockLRU {
+	return &blockLRU{
 		cap:   cap,
 		items: make(map[string]*list.Element, cap),
 		order: list.New(),
@@ -70,7 +72,7 @@ func newLRU(cap int) *markdownLRU {
 
 // Get returns the cached buffer for the key, or nil if absent. Hits
 // promote the entry to the front of the LRU list.
-func (l *markdownLRU) Get(key string) buffer.Buffer {
+func (l *blockLRU) Get(key string) buffer.Buffer {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if el, ok := l.items[key]; ok {
@@ -83,7 +85,7 @@ func (l *markdownLRU) Get(key string) buffer.Buffer {
 // Put stores the buffer under the key. Existing entries are updated
 // in place. New entries that exceed capacity evict the back of the
 // LRU list.
-func (l *markdownLRU) Put(key string, buf buffer.Buffer) {
+func (l *blockLRU) Put(key string, buf buffer.Buffer) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if el, ok := l.items[key]; ok {
@@ -104,42 +106,46 @@ func (l *markdownLRU) Put(key string, buf buffer.Buffer) {
 }
 
 // Len returns the current number of cached entries.
-func (l *markdownLRU) Len() int {
+func (l *blockLRU) Len() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.order.Len()
 }
 
-// markdownCache is the package-level singleton (Q5 ★A; R2 MED-1
+// blockCache is the package-level singleton (Q5 ★A; R2 MED-1
 // initialized via package-level var, no init() side-effect).
-var markdownCache = newLRU(markdownCacheCap)
+var blockCache = newLRU(blockCacheCap)
 
-// resetMarkdownCacheForTest clears the singleton cache. Test-only;
+// resetBlockCacheForTest clears the singleton cache. Test-only;
 // invoked by *_test.go to avoid cross-test pollution. NOT exported
 // to non-test callers — guarded by package-private name.
-func resetMarkdownCacheForTest() {
-	markdownCache.mu.Lock()
-	defer markdownCache.mu.Unlock()
-	markdownCache.items = make(map[string]*list.Element, markdownCache.cap)
-	markdownCache.order = list.New()
+func resetBlockCacheForTest() {
+	blockCache.mu.Lock()
+	defer blockCache.mu.Unlock()
+	blockCache.items = make(map[string]*list.Element, blockCache.cap)
+	blockCache.order = list.New()
 }
 
-// makeCacheKey computes the 5-field cacheKey per spec § 3.3 (R3 + R7 HIGH-1).
-// 16-byte sha256 prefix gives 2^-64 collision risk at 256-entry cap.
+// makeBlockCacheKey computes the 8-field cacheKey per spec § 3.3 (R3 +
+// R7 HIGH-1 + spec-1.12 D-7 + R2 HIGH-3 collision math fix).
+// 16-byte sha256 prefix gives ~2^-112 collision risk at 256-entry cap
+// (128-bit hash, n²/2^bits ≈ 256²/2^128 ≈ 2^-112; previously documented
+// as 2^-64 in spec-1.11 — off by factor 2^48).
 //
 // R7 HIGH-1: wrap is included because the walker invokes wrap() with
-// ctx.Wrap policy when building physical rows; same source + cols +
-// verbose + theme but WrapSoft vs WrapNone produces different output.
-func makeCacheKey(source string, cols int, verbose bool, themeKey string, wrap WrapPolicy) string {
+// ctx.Wrap policy when building physical rows.
+// spec-1.12 D-7: lang + codeStyleName + colorDepth added because chroma
+// highlight output varies per-language, per-style, and per-color-depth.
+func makeBlockCacheKey(source string, cols int, verbose bool, themeKey string, wrap WrapPolicy, lang, codeStyleName string, colorDepth int) string {
 	sum := sha256.Sum256([]byte(source))
-	return fmt.Sprintf("%x:%d:%t:%s:%d", sum[:16], cols, verbose, themeKey, wrap)
+	return fmt.Sprintf("%x:%d:%t:%s:%d:%s:%s:%d", sum[:16], cols, verbose, themeKey, wrap, lang, codeStyleName, colorDepth)
 }
 
 // themeCacheKey returns a stable cache-key string for the given theme.
 // 3-step fallback ladder per spec § 3.3 R3.1 contract:
 //
 //  1. nil → "default" sentinel (treated as DefaultTheme).
-//  2. theme implements MarkdownCacheKey() → use its return.
+//  2. theme implements BlockCacheKey() → use its return.
 //  3. fallback → fmt.Sprintf("%T", theme) (type name only).
 //
 // Implementations must NOT use %p (unstable across instances) or
@@ -149,8 +155,8 @@ func themeCacheKey(theme StyleTheme) string {
 	if theme == nil {
 		return "default"
 	}
-	if k, ok := theme.(markdownKeyer); ok {
-		return k.MarkdownCacheKey()
+	if k, ok := theme.(blockKeyer); ok {
+		return k.BlockCacheKey()
 	}
 	return fmt.Sprintf("%T", theme)
 }

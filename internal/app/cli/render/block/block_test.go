@@ -15,19 +15,18 @@ import (
 // spec-0.13 D-3 block types still return (nil, ErrUnsupportedNode).
 // Promoted to production so far: Message (spec-1.7) / ToolUse (spec-1.9)
 // / ToolResult (spec-1.9b) / CompactSummary (spec-1.10) / Markdown
-// (spec-1.11). Remaining 4 stubs (Code/Diff/Banner/Progress) preserve
-// the spec-0.13 stub contract; future spec-1.x produces each.
+// (spec-1.11) / Code (spec-1.12). Remaining 3 stubs (Diff/Banner/Progress)
+// preserve the spec-0.13 stub contract; future spec-1.x produces each.
 //
-// **Code is intentionally included here** — code.go hosts the
-// renderCodeBlock helper used by Message but Code.Render itself remains
-// unsupported until spec-1.12 code-highlight-block.
+// spec-1.12 R2 codex L1: Code removed from stub list (promoted to
+// production). renderCodeBlock helper remains in code.go alongside
+// the production Code{Source, Lang} block type per spec-1.12 D-4.
 func TestNonProductionStubs_ReturnUnsupported(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
 		node RenderNode
 	}{
-		{"code", Code{}},
 		{"diff", Diff{}},
 		{"banner", Banner{}},
 		{"progress", Progress{}},

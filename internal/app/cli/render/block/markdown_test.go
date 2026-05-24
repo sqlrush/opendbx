@@ -52,7 +52,7 @@ func rowText(buf buffer.Buffer, y int) string {
 // ---- T1-1..T1-3: edge / paragraph ----
 
 func TestMarkdown_T1_Empty(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	_, rows := buf.Size()
@@ -62,7 +62,7 @@ func TestMarkdown_T1_Empty(t *testing.T) {
 }
 
 func TestMarkdown_T2_WhitespaceOnly(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("   \n  \n")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	_, rows := buf.Size()
@@ -72,7 +72,7 @@ func TestMarkdown_T2_WhitespaceOnly(t *testing.T) {
 }
 
 func TestMarkdown_T3_SingleParagraph(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("hello world")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	if !strings.Contains(rowText(buf, 0), "hello world") {
@@ -83,7 +83,7 @@ func TestMarkdown_T3_SingleParagraph(t *testing.T) {
 // ---- T1-4..T1-5: headings ----
 
 func TestMarkdown_T4_HeadingH1(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("# Title")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	text := rowText(buf, 0)
@@ -97,7 +97,7 @@ func TestMarkdown_T4_HeadingH1(t *testing.T) {
 }
 
 func TestMarkdown_T5_HeadingsH2toH6(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	src := "## H2\n### H3\n#### H4\n##### H5\n###### H6"
 	m := NewMarkdown(src)
 	buf := mustRenderMd(t, m, ctxMd(80))
@@ -110,7 +110,7 @@ func TestMarkdown_T5_HeadingsH2toH6(t *testing.T) {
 // ---- T1-6..T1-9: lists ----
 
 func TestMarkdown_T6_UnorderedListBullet(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("- item1\n- item2")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	// R3 baseline: "- " prefix (not "• ")
@@ -124,7 +124,7 @@ func TestMarkdown_T6_UnorderedListBullet(t *testing.T) {
 }
 
 func TestMarkdown_T7_OrderedListNumbered(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("1. one\n2. two")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	if !strings.HasPrefix(rowText(buf, 0), "1. ") {
@@ -136,7 +136,7 @@ func TestMarkdown_T7_OrderedListNumbered(t *testing.T) {
 }
 
 func TestMarkdown_T8_NestedList2Level(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("- a\n  - a1\n- b")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	_, rows := buf.Size()
@@ -150,7 +150,7 @@ func TestMarkdown_T8_NestedList2Level(t *testing.T) {
 }
 
 func TestMarkdown_T9_NestedList3Level(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("- a\n  - a1\n    - a1.1")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	_, rows := buf.Size()
@@ -162,7 +162,7 @@ func TestMarkdown_T9_NestedList3Level(t *testing.T) {
 // ---- T1-10..T1-11: blockquote ----
 
 func TestMarkdown_T10_BlockquoteSingleLine(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("> quoted")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	r0 := rowText(buf, 0)
@@ -175,7 +175,7 @@ func TestMarkdown_T10_BlockquoteSingleLine(t *testing.T) {
 }
 
 func TestMarkdown_BlockquoteInlineSpanByteShift(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	ctx := ctxMd(80)
 	ctx.Theme = DefaultTheme{}
 	m := NewMarkdown("> **bold**")
@@ -195,7 +195,7 @@ func TestMarkdown_BlockquoteInlineSpanByteShift(t *testing.T) {
 // because buildBuffer cells-path bypassed mutated rowSpec.text. Fix:
 // rowSpec.prefix is rendered separately for both text and cells paths.
 func TestMarkdown_BlockquoteFence(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("> ```go\n> code line\n> ```")
 	buf := mustRenderMd(t, m, ctxMd(40))
 	_, rows := buf.Size()
@@ -215,7 +215,7 @@ func TestMarkdown_BlockquoteFence(t *testing.T) {
 // TestMarkdown_BlockquoteNested — R6 MED-3 + CRIT-1 sibling: nested
 // blockquote should stack rails ("▎ ▎ inner").
 func TestMarkdown_BlockquoteNested(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("> outer\n>\n> > inner")
 	buf := mustRenderMd(t, m, ctxMd(40))
 	_, rows := buf.Size()
@@ -252,7 +252,7 @@ func dumpRows(buf buffer.Buffer, rows int) []string {
 // narrow cols with blockquote prefix should wrap content within
 // available body width, NOT silently clip at grid right edge.
 func TestMarkdown_R7_BlockquoteNarrowColNoTruncation(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	src := "> 12345678901234567890"
 	m := NewMarkdown(src)
 	buf := mustRenderMd(t, m, ctxMd(10))
@@ -275,7 +275,7 @@ func TestMarkdown_R7_BlockquoteNarrowColNoTruncation(t *testing.T) {
 // source + cols + verbose + theme but different ctx.Wrap must NOT
 // collide in cache.
 func TestMarkdown_R7_CacheKeyIncludesWrap(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	long := strings.Repeat("word ", 30)
 	m := NewMarkdown(long)
 	ctxSoft := ctxMd(40)
@@ -294,7 +294,7 @@ func TestMarkdown_R7_CacheKeyIncludesWrap(t *testing.T) {
 // TestMarkdown_R7_OrderedListSourceStart — R7 MED-1 regression:
 // ordered list respects source start number (e.g., `3.` starts at 3).
 func TestMarkdown_R7_OrderedListSourceStart(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("3. third\n4. fourth")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	r0 := rowText(buf, 0)
@@ -309,7 +309,7 @@ func TestMarkdown_R7_OrderedListSourceStart(t *testing.T) {
 // TestMarkdown_R7_BlockquoteBodyItalic — R7 MED-2 regression: CC
 // blockquote body is italic in addition to dim rail.
 func TestMarkdown_R7_BlockquoteBodyItalic(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	ctx := ctxMd(80)
 	ctx.Theme = DefaultTheme{}
 	m := NewMarkdown("> plain quoted text")
@@ -327,7 +327,7 @@ func TestMarkdown_R7_BlockquoteBodyItalic(t *testing.T) {
 // (from blockquote body). Pre-R8, renderBlockquote replaced rowSpec.style
 // = StyleItalic, losing heading Bold.
 func TestMarkdown_R8_BlockquoteHeadingPreservesBold(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	ctx := ctxMd(80)
 	ctx.Theme = DefaultTheme{}
 	m := NewMarkdown("> # Title")
@@ -348,7 +348,7 @@ func TestMarkdown_R8_BlockquoteHeadingPreservesBold(t *testing.T) {
 // merge: **bold** inside blockquote should be BOTH Bold and Italic
 // (mergeStyle preserves base italic when overlay only sets Bold).
 func TestMarkdown_R7_BlockquoteBoldStaysBoldAndItalic(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	ctx := ctxMd(80)
 	ctx.Theme = DefaultTheme{}
 	m := NewMarkdown("> **bold**")
@@ -366,7 +366,7 @@ func TestMarkdown_R7_BlockquoteBoldStaysBoldAndItalic(t *testing.T) {
 }
 
 func TestMarkdown_T11_BlockquoteMultiLine(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	// CommonMark: two adjacent `>` lines form a single Paragraph in
 	// blockquote. We just verify the rail appears.
 	m := NewMarkdown("> line1\n> line2")
@@ -383,7 +383,7 @@ func TestMarkdown_T11_BlockquoteMultiLine(t *testing.T) {
 // ---- T1-12..T1-14: fence ----
 
 func TestMarkdown_T12_FenceNoLang(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("```\ncode_line\n```")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	_, rows := buf.Size()
@@ -392,27 +392,44 @@ func TestMarkdown_T12_FenceNoLang(t *testing.T) {
 	}
 }
 
+// TestMarkdown_FencePreservesRenderCodeBlockStyles — spec-1.12 D-3 +
+// CRIT-1 ★B updated assertions. Pre spec-1.12 this asserted uniform
+// StyleCodeBg fill on plain monospace cells. Post spec-1.12: DefaultTheme
+// implements HighlighterTheme → lang-bearing fence ("```go") routes to
+// chroma highlight path. Per spec-1.12 I-6: lang label row 0 still uses
+// StyleLangLabel (unchanged); body cells carry per-token chroma styles
+// (FG colored via D-6 mapChromaColor downgrade). Specific colors depend
+// on monokai default + ctx.ColorDepth=0 (16-color conservative fallback
+// per R3 HIGH-2).
 func TestMarkdown_FencePreservesRenderCodeBlockStyles(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	ctx := ctxMd(24)
 	ctx.Theme = DefaultTheme{}
 	m := NewMarkdown("```go\ncode\n```")
 	buf := mustRenderMd(t, m, ctx)
+	// Row 0 still uses StyleLangLabel for the `─── go ───` label
+	// (highlighter does NOT replace this).
 	wantLabel := DefaultTheme{}.Style(StyleLangLabel)
 	if got := buf.Cell(0, 0).St; got != wantLabel {
 		t.Fatalf("fence label style: want %#v, got %#v", wantLabel, got)
 	}
-	wantCodeBg := DefaultTheme{}.Style(StyleCodeBg).BG
-	if got := buf.Cell(0, 1).St.BG; got != wantCodeBg {
-		t.Fatalf("fence body bg at padding cell: want %#v, got %#v", wantCodeBg, got)
+	// Body row 1: cell(1) carries first body char 'c' from highlighted
+	// token (Name in chroma go lexer). FG is set (non-zero) per
+	// monokai+ColorDepth=0 16-color fallback. BG may differ from plain
+	// path StyleCodeBg per chroma StyleEntry — this is intentional per
+	// spec-1.12 CRIT-1 ★B (default-on highlight = different cell
+	// rendering from plain path for lang-bearing fences).
+	c := buf.Cell(1, 1)
+	if c.Ch != 'c' {
+		t.Fatalf("fence body code cell: want 'c', got Ch=%q", c.Ch)
 	}
-	if c := buf.Cell(1, 1); c.Ch != 'c' || c.St.BG != wantCodeBg {
-		t.Fatalf("fence body code cell: want 'c' with bg %#v, got Ch=%q style=%#v", wantCodeBg, c.Ch, c.St)
+	if c.St.FG == 0 && c.St.BG == 0 && !c.St.Bold && !c.St.Italic {
+		t.Errorf("fence body code cell: want highlighted style (FG/BG/Bold/Italic), got plain st=%#v", c.St)
 	}
 }
 
 func TestMarkdown_T13_FenceWithLangGo(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("```go\nfunc main()\n```")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	_, rows := buf.Size()
@@ -422,7 +439,7 @@ func TestMarkdown_T13_FenceWithLangGo(t *testing.T) {
 }
 
 func TestMarkdown_T14_FenceEmptyBody(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("```go\n```")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	// Empty fence — spec-1.7 contract; just verify no panic.
@@ -432,7 +449,7 @@ func TestMarkdown_T14_FenceEmptyBody(t *testing.T) {
 // ---- T1-15: HR ----
 
 func TestMarkdown_T15_HR(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("---")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	r0 := rowText(buf, 0)
@@ -447,7 +464,7 @@ func TestMarkdown_T15_HR(t *testing.T) {
 // ---- T1-16..T1-17: tables ----
 
 func TestMarkdown_T16_Table2x2(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("| a | b |\n|---|---|\n| 1 | 2 |")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	_, rows := buf.Size()
@@ -457,7 +474,7 @@ func TestMarkdown_T16_Table2x2(t *testing.T) {
 }
 
 func TestMarkdown_TableCJKUsesDisplayWidth(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("| 中 |\n|---|\n| a |")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	_, rows := buf.Size()
@@ -473,7 +490,7 @@ func TestMarkdown_TableCJKUsesDisplayWidth(t *testing.T) {
 }
 
 func TestMarkdown_T17_Table3x3(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	src := "| a | b | c |\n|---|---|---|\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |\n| 7 | 8 | 9 |"
 	m := NewMarkdown(src)
 	buf := mustRenderMd(t, m, ctxMd(80))
@@ -486,7 +503,7 @@ func TestMarkdown_T17_Table3x3(t *testing.T) {
 // ---- T1-18: mixed sequence ----
 
 func TestMarkdown_T18_MixedBlockSequence(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	src := "# Title\n\nParagraph\n\n- item"
 	m := NewMarkdown(src)
 	buf := mustRenderMd(t, m, ctxMd(80))
@@ -499,7 +516,7 @@ func TestMarkdown_T18_MixedBlockSequence(t *testing.T) {
 // ---- T1-19..T1-25: inline ----
 
 func TestMarkdown_T19_BoldInline(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	ctx := ctxMd(80)
 	ctx.Theme = DefaultTheme{}
 	m := NewMarkdown("**bold**")
@@ -516,7 +533,7 @@ func TestMarkdown_T19_BoldInline(t *testing.T) {
 }
 
 func TestMarkdown_T20_ItalicInline(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	ctx := ctxMd(80)
 	ctx.Theme = DefaultTheme{}
 	m := NewMarkdown("*italic*")
@@ -533,7 +550,7 @@ func TestMarkdown_T20_ItalicInline(t *testing.T) {
 }
 
 func TestMarkdown_T21_InlineCode(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	ctx := ctxMd(80)
 	ctx.Theme = DefaultTheme{}
 	m := NewMarkdown("`code`")
@@ -549,7 +566,7 @@ func TestMarkdown_T21_InlineCode(t *testing.T) {
 }
 
 func TestMarkdown_T22_StrikethroughLiteral(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	// R3 CC baseline: strikethrough tokenizer is disabled; ~~text~~
 	// must stay literal (no strike style).
 	m := NewMarkdown("~~strike~~")
@@ -561,7 +578,7 @@ func TestMarkdown_T22_StrikethroughLiteral(t *testing.T) {
 }
 
 func TestMarkdown_T23_Link(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("[text](https://example.com)")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	r0 := rowText(buf, 0)
@@ -575,7 +592,7 @@ func TestMarkdown_T23_Link(t *testing.T) {
 }
 
 func TestMarkdown_T24_Autolink(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("<https://example.com>")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	if !strings.Contains(rowText(buf, 0), "example.com") {
@@ -584,7 +601,7 @@ func TestMarkdown_T24_Autolink(t *testing.T) {
 }
 
 func TestMarkdown_T25_MixedInlineInParagraph(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("Hello **bold** and *italic* and `code`")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	r0 := rowText(buf, 0)
@@ -598,7 +615,7 @@ func TestMarkdown_T25_MixedInlineInParagraph(t *testing.T) {
 // ---- T1-26..T1-27: wrap + CJK ----
 
 func TestMarkdown_T26_LongParagraphWrap(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	long := strings.Repeat("word ", 500) // 2500 chars
 	m := NewMarkdown(long)
 	buf := mustRenderMd(t, m, ctxMd(80))
@@ -609,7 +626,7 @@ func TestMarkdown_T26_LongParagraphWrap(t *testing.T) {
 }
 
 func TestMarkdown_T27_CJK(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("# 中文标题\n\n中文段落内容")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	r0 := rowText(buf, 0)
@@ -621,7 +638,7 @@ func TestMarkdown_T27_CJK(t *testing.T) {
 // ---- T1-28..T1-29: ctx boundaries ----
 
 func TestMarkdown_T28_ColsZero(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("# Title")
 	buf := mustRenderMd(t, m, Context{Cols: 0})
 	cols, rows := buf.Size()
@@ -631,7 +648,7 @@ func TestMarkdown_T28_ColsZero(t *testing.T) {
 }
 
 func TestMarkdown_T29_MeasureOnly(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("# Title\n\nWorld paragraph here")
 	ctx := ctxMd(80)
 	ctx.MeasureOnly = true
@@ -649,7 +666,7 @@ func TestMarkdown_T29_MeasureOnly(t *testing.T) {
 // ---- T1-30..T1-33b: cache ----
 
 func TestMarkdown_T30_CacheHit(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	src := "# Cached"
 	m := NewMarkdown(src)
 	buf1 := mustRenderMd(t, m, ctxMd(80))
@@ -661,22 +678,22 @@ func TestMarkdown_T30_CacheHit(t *testing.T) {
 }
 
 func TestMarkdown_T31_CacheEvictionAtCapPlus1(t *testing.T) {
-	resetMarkdownCacheForTest()
-	// Render markdownCacheCap+1 distinct sources.
-	for i := 0; i < markdownCacheCap+1; i++ {
+	resetBlockCacheForTest()
+	// Render blockCacheCap+1 distinct sources.
+	for i := 0; i < blockCacheCap+1; i++ {
 		m := NewMarkdown(fmt.Sprintf("# Source %d", i))
 		_, err := m.Render(ctxMd(80))
 		if err != nil {
 			t.Fatalf("eviction iter %d error: %v", i, err)
 		}
 	}
-	if markdownCache.Len() > markdownCacheCap {
-		t.Errorf("eviction: want Len ≤ cap=%d, got %d", markdownCacheCap, markdownCache.Len())
+	if blockCache.Len() > blockCacheCap {
+		t.Errorf("eviction: want Len ≤ cap=%d, got %d", blockCacheCap, blockCache.Len())
 	}
 }
 
 func TestMarkdown_T32_VerboseChangeInvalidate(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	src := "# Same"
 	m := NewMarkdown(src)
 	ctxA := ctxMd(80)
@@ -691,7 +708,7 @@ func TestMarkdown_T32_VerboseChangeInvalidate(t *testing.T) {
 }
 
 func TestMarkdown_T33_ColsChangeInvalidate(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	src := "# Same"
 	m := NewMarkdown(src)
 	buf1 := mustRenderMd(t, m, ctxMd(80))
@@ -702,17 +719,17 @@ func TestMarkdown_T33_ColsChangeInvalidate(t *testing.T) {
 }
 
 // fakeTheme2 / fakeTheme3 embed DefaultTheme but override
-// MarkdownCacheKey() to verify cache key invalidation on theme switch.
+// BlockCacheKey() to verify cache key invalidation on theme switch.
 type fakeTheme2 struct{ DefaultTheme }
 
-func (fakeTheme2) MarkdownCacheKey() string { return "fake2" }
+func (fakeTheme2) BlockCacheKey() string { return "fake2" }
 
 type fakeTheme3 struct{ DefaultTheme }
 
-func (fakeTheme3) MarkdownCacheKey() string { return "fake3" }
+func (fakeTheme3) BlockCacheKey() string { return "fake3" }
 
 func TestMarkdown_T33b_ThemeKeyChangeInvalidate(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	src := "# Themed"
 	m := NewMarkdown(src)
 	ctxA := ctxMd(80)
@@ -729,7 +746,7 @@ func TestMarkdown_T33b_ThemeKeyChangeInvalidate(t *testing.T) {
 // ---- T1-34: raw HTML drop ----
 
 func TestMarkdown_T34_RawHTMLDrop(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown("<div>x</div>")
 	buf := mustRenderMd(t, m, ctxMd(80))
 	_, rows := buf.Size()
@@ -746,7 +763,7 @@ func TestMarkdown_T34_RawHTMLDrop(t *testing.T) {
 // ---- T1-35: backslash escape ----
 
 func TestMarkdown_T35_BackslashEscape(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown(`\*not italic\*`)
 	buf := mustRenderMd(t, m, ctxMd(80))
 	r0 := rowText(buf, 0)
@@ -758,7 +775,7 @@ func TestMarkdown_T35_BackslashEscape(t *testing.T) {
 // ---- T1-36: concurrent race ----
 
 func TestMarkdown_T36_ConcurrentRenderRace(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	src := "# Concurrent\n\n- item1\n- item2"
 	var wg sync.WaitGroup
 	for g := 0; g < 4; g++ {
@@ -773,7 +790,7 @@ func TestMarkdown_T36_ConcurrentRenderRace(t *testing.T) {
 	}
 	wg.Wait()
 	// If we got here without panic / data race (go test -race), pass.
-	if markdownCache.Len() == 0 {
+	if blockCache.Len() == 0 {
 		t.Errorf("concurrent: cache should have entries after 400 renders")
 	}
 }
@@ -781,9 +798,9 @@ func TestMarkdown_T36_ConcurrentRenderRace(t *testing.T) {
 // ---- T1-37: 256KB boundary ----
 
 func TestMarkdown_T37_256KBSourceBoundary(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	// At exactly the cap: cacheable.
-	atCap := strings.Repeat("a", markdownCacheMaxSourceBytes)
+	atCap := strings.Repeat("a", blockCacheMaxSourceBytes)
 	m1 := NewMarkdown(atCap)
 	buf1a := mustRenderMd(t, m1, ctxMd(80))
 	buf1b := mustRenderMd(t, m1, ctxMd(80))
@@ -791,8 +808,8 @@ func TestMarkdown_T37_256KBSourceBoundary(t *testing.T) {
 		t.Errorf("at cap (262144 bytes): want cacheable + same Buffer ref, got different")
 	}
 	// First over-cap: NOT cacheable.
-	resetMarkdownCacheForTest()
-	overCap := strings.Repeat("a", markdownCacheMaxSourceBytes+1)
+	resetBlockCacheForTest()
+	overCap := strings.Repeat("a", blockCacheMaxSourceBytes+1)
 	m2 := NewMarkdown(overCap)
 	buf2a := mustRenderMd(t, m2, ctxMd(80))
 	buf2b := mustRenderMd(t, m2, ctxMd(80))
@@ -804,7 +821,7 @@ func TestMarkdown_T37_256KBSourceBoundary(t *testing.T) {
 // ---- T1-12b: indented code block (4-space) ----
 
 func TestMarkdown_T12b_IndentedCodeBlock(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	// CommonMark: 4-space indent = code block, no fence.
 	m := NewMarkdown("    indented\n    code line")
 	buf := mustRenderMd(t, m, ctxMd(80))
@@ -817,7 +834,7 @@ func TestMarkdown_T12b_IndentedCodeBlock(t *testing.T) {
 // ---- T1-38: invalid UTF-8 ----
 
 func TestMarkdown_T38_InvalidUTF8(t *testing.T) {
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	m := NewMarkdown(string([]byte{0xff, 0xfe, ' ', 'g', 'a', 'r', 'b', 'a', 'g', 'e'}))
 	// Just verify no panic.
 	_, err := m.Render(ctxMd(80))
@@ -836,7 +853,7 @@ func TestThemeCacheKey_NilDefault(t *testing.T) {
 
 func TestThemeCacheKey_OptInInterface(t *testing.T) {
 	if got := themeCacheKey(fakeTheme2{}); got != "fake2" {
-		t.Errorf("MarkdownCacheKey() interface: want 'fake2', got %q", got)
+		t.Errorf("BlockCacheKey() interface: want 'fake2', got %q", got)
 	}
 }
 
