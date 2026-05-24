@@ -688,6 +688,38 @@ func TestDiff_R3M1_DeletedFilePreservesPath(t *testing.T) {
 	}
 }
 
+// TestDiff_R3M2Residual_ColorDepthZeroDowngrades covers the codex
+// path 3/3 M2-residual finding: ColorDepth == 0 (unset) must NOT
+// pass truecolor marker / hunk-header styles through — it must
+// downgrade conservatively to 16-color, matching the chroma body
+// path which already routes depth=0 → nearest16 in mapChromaColor.
+func TestDiff_R3M2Residual_ColorDepthZeroDowngrades(t *testing.T) {
+	d := NewDiffFromHunks([]Hunk{{
+		OldStart: 1, OldLines: 1, NewStart: 1, NewLines: 1,
+		Lines: []LineEntry{{Marker: '+', Text: "added"}},
+	}})
+	// ColorDepth: 0 (unset; conservative 16-color fallback).
+	ctx := Context{Cols: 40, Theme: DefaultTheme{}, Wrap: WrapSoft, ColorDepth: 0}
+	buf, err := d.Render(ctx)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	// Find the '+' marker cell in row 1 (row 0 = @@ header).
+	const truecolorBit = 0x1000000
+	cols, _ := buf.Size()
+	for y := 0; y < 2; y++ {
+		for x := 0; x < cols; x++ {
+			c := buf.Cell(x, y)
+			if c.Ch == '+' || c.Ch == '@' {
+				if uint32(c.St.FG)&truecolorBit != 0 {
+					t.Errorf("row %d col %d (%q): FG still truecolor under ColorDepth=0 — must downgrade to 16-color palette",
+						y, x, c.Ch)
+				}
+			}
+		}
+	}
+}
+
 // TestDiff_R3M3_MultiLineLexerContext covers the codex M3 finding +
 // the R2 H3 batch chroma fix: a Go block comment spanning two non-'-'
 // lines must lex as Comment on BOTH lines (per-line chroma calls would

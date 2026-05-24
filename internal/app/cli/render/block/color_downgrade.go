@@ -149,10 +149,15 @@ var palette256LUT = &paletteLUT{}
 // hunk-header colors (theme returns truecolor RGB by default) downgrade
 // alongside chroma body tokens — preserves the per-ctx ColorDepth
 // invariant across both prefix column and body cells.
+//
+// spec-1.13 R3.2 M2-residual (codex path 3/3): ColorDepth == 0 (unset)
+// must downgrade conservatively to 16-color, NOT pass through truecolor.
+// This aligns the Diff prefix path with the chroma body path which
+// already routes depth=0 through nearest16 (color_downgrade.go file-
+// header doc + mapChromaColor switch:46). Only depth=16777216 (truecolor)
+// skips the downgrade.
 func downgradeStyleColor(s style.Style, depth int) style.Style {
-	if depth == 16777216 || depth == 0 {
-		// Truecolor or unset (conservative truecolor pass-through per
-		// existing test expectations in T1-29 truecolor case).
+	if depth == 16777216 {
 		return s
 	}
 	s.FG = downgradeOneColor(s.FG, depth)
