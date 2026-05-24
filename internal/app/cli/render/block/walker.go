@@ -76,6 +76,13 @@ type rowSpec struct {
 	spans       []styledSpan  // optional inline styled segments
 	cells       []buffer.Cell // optional raw styled cells for spec-1.7 code delegate rows
 	wrapHint    WrapHint
+	// R8 MED: extraAttrs is OR-merged into every text-body cell AFTER
+	// base style + spans are applied. Used by renderBlockquote to
+	// italicize the body without losing inner block styles (e.g.,
+	// `> # Title` keeps Bold from heading AND adds Italic from quote).
+	// Only Bold/Italic/Underline/Reverse attributes are merged; FG/BG
+	// stay as base/span established. cells-path rows ignore extraAttrs.
+	extraAttrs style.Style
 }
 
 // walkMarkdown is the entry point for the AST walker (called from
@@ -228,9 +235,10 @@ func (w *mdWalker) renderList(l *ast.List, depth int) {
 // rail apply uniformly to text-path AND cells-path rows; nested
 // blockquote also stacks correctly ("▎ ▎ inner").
 //
-// R7 MED-2: body base style → StyleItalic. Inline spans (bold/code/etc.)
-// merge with italic via applySpanStyle's additive Bold/Italic/Underline
-// logic, so **bold** inside a blockquote stays bold AND italic per CC.
+// R7 MED-2 + R8 MED: body italic is applied via rowSpec.extraAttrs
+// (additive overlay on top of base style + spans) so child block-level
+// styles (e.g., `# heading` Bold, `**bold**` span) are preserved AND
+// italicized — matching CC formatToken blockquote behavior.
 // Fence body inside a blockquote keeps its spec-1.7 raw cells (no
 // italic forced — code is monospace, italic would be misleading).
 func (w *mdWalker) renderBlockquote(b *ast.Blockquote) {
@@ -242,10 +250,11 @@ func (w *mdWalker) renderBlockquote(b *ast.Blockquote) {
 		// rail prepended (e.g., "▎ " + "▎ inner" → "▎ ▎ inner").
 		w.rows[i].prefix = rail + w.rows[i].prefix
 		w.rows[i].prefixStyle = StyleDimmed
-		// R7 MED-2: italicize text body (skip cells path so fence body
-		// retains spec-1.7 code styling).
+		// R8 MED: italic body via OR-merge attr (do NOT replace
+		// rowSpec.style — otherwise `> # Title` loses heading Bold).
+		// Skip cells-path rows (fence inside blockquote).
 		if len(w.rows[i].cells) == 0 {
-			w.rows[i].style = StyleItalic
+			w.rows[i].extraAttrs.Italic = true
 		}
 	}
 }
@@ -622,6 +631,7 @@ func (w *mdWalker) buildBuffer() buffer.Buffer {
 				style:       r.style,
 				spans:       spans,
 				wrapHint:    r.wrapHint,
+				extraAttrs:  r.extraAttrs, // R8 MED: propagate per-row attr overlay (applies to all wrapped lines)
 			})
 		}
 	}
@@ -659,8 +669,38 @@ func (w *mdWalker) buildBuffer() buffer.Buffer {
 			spanStyle := w.theme.Style(sp.style)
 			applySpanStyle(grid, y, r.text, sp.start, sp.end, spanStyle, prefixCols, w.ctx.Cols)
 		}
+		// R8 MED: row-level attr overlay (e.g., blockquote italicizes
+		// body) — OR-merged on every body cell AFTER base+spans, so
+		// child block styles (heading Bold, **bold** span) are preserved
+		// AND italicized per CC. Skipped for cells-path rows above.
+		if r.extraAttrs != (style.Style{}) {
+			applyExtraAttrs(grid, y, r.text, r.extraAttrs, prefixCols, w.ctx.Cols)
+		}
 	}
 	return grid
+}
+
+// applyExtraAttrs OR-merges row-wide attr overlay onto every body cell
+// after base+spans are applied. Used by R8 MED blockquote-italicizes-
+// body to preserve child block/inline styles.
+func applyExtraAttrs(grid *buffer.Grid, y int, text string, extra style.Style, xOffset, cols int) {
+	x := xOffset
+	for i := 0; i < len(text) && x < cols; {
+		r, size := utf8.DecodeRuneInString(text[i:])
+		rw := width.RuneWidth(r)
+		if rw <= 0 {
+			i += size
+			continue
+		}
+		if x+rw > cols {
+			break
+		}
+		cell := grid.Cell(x, y)
+		cell.St = mergeStyle(cell.St, extra)
+		grid.SetCell(x, y, cell)
+		x += rw
+		i += size
+	}
 }
 
 // writeRawCells copies a delegated Buffer row while preserving per-cell style.

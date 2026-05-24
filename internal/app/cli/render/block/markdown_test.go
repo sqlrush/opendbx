@@ -322,6 +322,28 @@ func TestMarkdown_R7_BlockquoteBodyItalic(t *testing.T) {
 	}
 }
 
+// TestMarkdown_R8_BlockquoteHeadingPreservesBold — R8 MED regression:
+// `> # Title` should be BOTH Bold (from heading style) AND Italic
+// (from blockquote body). Pre-R8, renderBlockquote replaced rowSpec.style
+// = StyleItalic, losing heading Bold.
+func TestMarkdown_R8_BlockquoteHeadingPreservesBold(t *testing.T) {
+	resetMarkdownCacheForTest()
+	ctx := ctxMd(80)
+	ctx.Theme = DefaultTheme{}
+	m := NewMarkdown("> # Title")
+	buf := mustRenderMd(t, m, ctx)
+	// Body starts at x=2 (after "▎ " rail).
+	for _, x := range []int{2, 3, 4, 5, 6} {
+		c := buf.Cell(x, 0)
+		if !c.St.Bold {
+			t.Errorf("blockquote-heading at x=%d: want Bold preserved from heading style (R8 MED extraAttrs overlay), got St=%#v", x, c.St)
+		}
+		if !c.St.Italic {
+			t.Errorf("blockquote-heading at x=%d: want Italic added by blockquote body, got St=%#v", x, c.St)
+		}
+	}
+}
+
 // TestMarkdown_R7_BlockquoteBoldStaysBoldAndItalic — R7 MED-2 + span
 // merge: **bold** inside blockquote should be BOTH Bold and Italic
 // (mergeStyle preserves base italic when overlay only sets Bold).

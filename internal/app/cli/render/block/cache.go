@@ -10,8 +10,9 @@
 //     historical messages.
 //   - 256-entry cap (user-locked R2.1; ~1MB typical / 64MB pathological
 //     bound with 256KB source no-cache guard).
-//   - 4-field cacheKey: sha256(source)+cols+verbose+themeKey (R3 added
-//     themeKey; rendered-buffer cache must vary by concrete theme).
+//   - 5-field cacheKey: sha256(source)+cols+verbose+themeKey+wrap (R3
+//     added themeKey for theme variance; R7 HIGH-1 added wrap because
+//     WrapSoft/Hard/None produce different cell grids).
 //   - I-8 immutability contract: cache returns Buffer by reference;
 //     caller must treat as read-only. Cache hit < 5µs (map lookup only).
 //   - sync.Mutex guards map + LRU list only (NOT parse). Single-flight

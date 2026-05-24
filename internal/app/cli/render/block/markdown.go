@@ -54,11 +54,11 @@ var markdownParser = goldmark.New(
 
 // Render produces a Buffer per spec-1.11 D-2 4-step pipeline.
 //
-// Dispatch order (R2 HIGH-4 corrected; R3 themeKey added):
+// Dispatch order (R2 HIGH-4 corrected; R3 themeKey added; R7 HIGH-1 wrap added):
 //
 //  1. ctx.Cols<=0 → measureOnlyBuf(0,0) [FAST PATH 1]
 //  2. cacheable := len(Source) <= markdownCacheMaxSourceBytes
-//     if cacheable: cache lookup via cacheKey(Source, Cols, Verbose, themeKey)
+//     if cacheable: cache lookup via cacheKey(Source, Cols, Verbose, themeKey, Wrap)
 //     hit → MeasureOnly? measureOnlyBuf(Cols, rows) : cached.buf (by reference)
 //  3. miss/no-cache → goldmark.Parse + walker.walk → buffer.Buffer
 //  4. MeasureOnly check → measureOnlyBuf(Cols, rows)
