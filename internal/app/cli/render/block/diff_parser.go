@@ -62,10 +62,25 @@ func ParseUnified(text string) (Diff, error) {
 			strings.HasPrefix(line, "new mode ") {
 			continue
 		}
-		// File header: extract FilePath (prefer +++ side; --- only if no +++).
+		// File header: extract FilePath.
+		//
+		// R3 M1 fix (codex path 2/3): for deleted-file diffs the `+++`
+		// side is `/dev/null` (stripPathPrefix → ""), and the `---` side
+		// carries the real old path — never let the `/dev/null` empty
+		// path overwrite a previously-extracted `--- a/foo.go`.
+		//
+		// Rule: take `+++` path when it is non-empty (covers both
+		// modify and add cases); fall back to `---` path for delete.
 		if m := fileHeaderRE.FindStringSubmatch(line); m != nil {
 			path := stripPathPrefix(m[1])
-			if strings.HasPrefix(line, "+++ ") || d.FilePath == "" {
+			if strings.HasPrefix(line, "+++ ") {
+				if path != "" {
+					d.FilePath = path
+				}
+				continue
+			}
+			// `---` side: only set if we don't already have a path.
+			if d.FilePath == "" {
 				d.FilePath = path
 			}
 			continue

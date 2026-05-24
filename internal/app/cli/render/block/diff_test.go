@@ -601,6 +601,135 @@ func TestDiff_NewDiff_FallbackToBareLines(t *testing.T) {
 	}
 }
 
+// ---- R3 codex path 2/3 regression tests ----
+
+// TestDiff_R3H1_NewFileHunkRenders covers the codex H1 finding: a
+// unified new-file hunk header `@@ -0,0 +1,N @@` is legal and must
+// emit the header + gutter, NOT be misclassified as bare-lines.
+func TestDiff_R3H1_NewFileHunkRenders(t *testing.T) {
+	src := "--- /dev/null\n+++ b/new.go\n@@ -0,0 +1,2 @@\n+package main\n+func main() {}\n"
+	d, err := ParseUnified(src)
+	if err != nil {
+		t.Fatalf("ParseUnified: %v", err)
+	}
+	if len(d.Hunks) != 1 {
+		t.Fatalf("want 1 hunk, got %d", len(d.Hunks))
+	}
+	if d.Hunks[0].Bare {
+		t.Errorf("new-file hunk must NOT be Bare (OldStart=0 is legal)")
+	}
+	ctx := Context{Cols: 60, Theme: DefaultTheme{}, Wrap: WrapSoft, ColorDepth: 16777216}
+	buf, err := d.Render(ctx)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	// Row 0 must contain the `@@` header.
+	if got := rowAsString(buf, 0); !strings.Contains(got, "@@ -0,0 +1,2 @@") {
+		t.Errorf("new-file header missing; row 0 = %q", got)
+	}
+}
+
+// TestDiff_R3H2_CJKWideCharInvariant covers the codex H2 finding:
+// writeDiffRow must advance x by RuneWidth so CJK / wide runes occupy
+// 2 cells without the next rune stomping the WideContinuation that
+// buffer.Grid.SetCell auto-writes.
+func TestDiff_R3H2_CJKWideCharInvariant(t *testing.T) {
+	d := NewDiffFromHunks([]Hunk{{
+		OldStart: 1, OldLines: 1, NewStart: 1, NewLines: 1,
+		Lines: []LineEntry{
+			{Marker: ' ', Text: "你好world"}, // CJK + ASCII mix
+		},
+	}})
+	ctx := Context{Cols: 40, Theme: DefaultTheme{}, Wrap: WrapSoft, ColorDepth: 16777216}
+	buf, err := d.Render(ctx)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	// Find the body row (row 1, after `@@` header) and confirm 你 occupies
+	// 2 cells (main + continuation Ch==0) and 好 likewise — i.e. world
+	// starts AFTER 4 visual columns of CJK content, not stomping over.
+	cols, _ := buf.Size()
+	row := make([]rune, cols)
+	for x := 0; x < cols; x++ {
+		row[x] = buf.Cell(x, 1).Ch
+	}
+	// Locate 你 main cell.
+	idx := -1
+	for x := 0; x < cols; x++ {
+		if row[x] == '你' {
+			idx = x
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatalf("'你' not painted in body row; row = %q", string(row))
+	}
+	// Cell idx+1 must be a WideContinuation (Ch=-1 sentinel per
+	// buffer/wide.go); idx+2 must be 好 main.
+	if row[idx+1] != buffer.WideContinuation {
+		t.Errorf("'你' continuation cell stomped: want WideContinuation, got %q (%d)", row[idx+1], row[idx+1])
+	}
+	if row[idx+2] != '好' {
+		t.Errorf("'好' must follow 你 continuation; got %q", row[idx+2])
+	}
+}
+
+// TestDiff_R3M1_DeletedFilePreservesPath covers the codex M1 finding:
+// `+++ /dev/null` must NOT overwrite a previously-extracted `--- a/foo`
+// FilePath. Deleted-file diffs surface the old path.
+func TestDiff_R3M1_DeletedFilePreservesPath(t *testing.T) {
+	src := "--- a/deleted.go\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-package main\n-func main() {}\n"
+	d, err := ParseUnified(src)
+	if err != nil {
+		t.Fatalf("ParseUnified: %v", err)
+	}
+	if d.FilePath != "deleted.go" {
+		t.Errorf("FilePath: want deleted.go, got %q (the +++ /dev/null overwrite must be skipped)", d.FilePath)
+	}
+}
+
+// TestDiff_R3M3_MultiLineLexerContext covers the codex M3 finding +
+// the R2 H3 batch chroma fix: a Go block comment spanning two non-'-'
+// lines must lex as Comment on BOTH lines (per-line chroma calls would
+// misclassify the closing `*/` line as plain code).
+func TestDiff_R3M3_MultiLineLexerContext(t *testing.T) {
+	resetBlockCacheForTest()
+	d := NewDiffFromHunks([]Hunk{{
+		OldStart: 1, OldLines: 3, NewStart: 1, NewLines: 3,
+		Lines: []LineEntry{
+			{Marker: '+', Text: "/* opening"},
+			{Marker: '+', Text: "   closing */"},
+			{Marker: ' ', Text: "var x int"},
+		},
+	}})
+	d.BodyLang = "go"
+	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft, ColorDepth: 16777216}
+	buf, err := d.Render(ctx)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	_, rows := buf.Size()
+	if rows < 4 {
+		t.Fatalf("want ≥4 rows (header + 3 lines), got %d", rows)
+	}
+	// Read row 2 (closing comment line; row 0 = @@ header, row 1 = first +).
+	// In batch chroma path the comment style must propagate to closing `*/`.
+	// Detect via: a non-default FG cell carries chroma color (truecolor bit set).
+	const truecolorBit = 0x1000000
+	closingHasStyle := false
+	cols, _ := buf.Size()
+	for x := 0; x < cols; x++ {
+		c := buf.Cell(x, 2)
+		if c.Ch == '*' && uint32(c.St.FG)&truecolorBit != 0 {
+			closingHasStyle = true
+			break
+		}
+	}
+	if !closingHasStyle {
+		t.Errorf("R2 H3 batch chroma regression: closing `*/` line lost block-comment style (multi-line lexer context not preserved)")
+	}
+}
+
 // rowAsString reconstructs a row's text content from grid cells.
 func rowAsString(buf interface {
 	Cell(x, y int) buffer.Cell

@@ -139,3 +139,36 @@ func (p *paletteLUT) build() {
 
 // palette256LUT is the xterm 256-color extended palette (entries 16..255).
 var palette256LUT = &paletteLUT{}
+
+// downgradeStyleColor takes a style.Style whose FG/BG may be truecolor
+// (0x1000000-bit set) and returns a Style whose FG/BG are downgraded
+// to the closest match for the given ColorDepth. Palette colors (1..256)
+// pass through unchanged — only truecolor entries are remapped.
+//
+// spec-1.13 R3 M2 (codex path 2/3): used by Diff render so marker /
+// hunk-header colors (theme returns truecolor RGB by default) downgrade
+// alongside chroma body tokens — preserves the per-ctx ColorDepth
+// invariant across both prefix column and body cells.
+func downgradeStyleColor(s style.Style, depth int) style.Style {
+	if depth == 16777216 || depth == 0 {
+		// Truecolor or unset (conservative truecolor pass-through per
+		// existing test expectations in T1-29 truecolor case).
+		return s
+	}
+	s.FG = downgradeOneColor(s.FG, depth)
+	s.BG = downgradeOneColor(s.BG, depth)
+	return s
+}
+
+// downgradeOneColor remaps a single style.Color: truecolor → 16 or 256
+// palette per depth; palette + default pass through.
+func downgradeOneColor(c style.Color, depth int) style.Color {
+	const truecolorBit = 0x1000000
+	if uint32(c)&truecolorBit == 0 {
+		return c
+	}
+	r := uint8((uint32(c) >> 16) & 0xFF)
+	g := uint8((uint32(c) >> 8) & 0xFF)
+	b := uint8(uint32(c) & 0xFF)
+	return mapChromaColor(chroma.NewColour(r, g, b), depth)
+}

@@ -17,6 +17,7 @@ import (
 
 	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/style"
+	"github.com/sqlrush/opendbx/internal/app/cli/render/width"
 )
 
 // Diff is the spec-1.13 7th production block type. Renders unified-diff
@@ -46,12 +47,18 @@ type Diff struct {
 // numbers with their respective change counts; Lines holds the marker-
 // prefixed body entries.
 //
-// Bare-lines mode (markdown fence): OldStart == 0 signals "no gutter"
-// and the hunk header `@@ -O,L +N,L @@` is NOT emitted in render.
+// R3 H1 fix (codex path 2/3): bare-lines mode is signalled by the
+// dedicated `Bare` flag, NOT by `OldStart == 0` — a unified new-file
+// hunk header `@@ -0,0 +1,N @@` is a legal `OldStart == 0` case and
+// MUST render with header + gutter. The previous OldStart-based
+// predicate misclassified file-create diffs.
 type Hunk struct {
 	OldStart, OldLines int
 	NewStart, NewLines int
 	Lines              []LineEntry
+	// Bare = true when the hunk came from a markdown ```diff fence
+	// (NewDiffFromBareLines): no `@@` header emitted, no gutter.
+	Bare bool
 }
 
 // LineEntry is one body line of a hunk, marker-classified.
@@ -93,7 +100,7 @@ func NewDiffFromBareLines(text string) Diff {
 		return Diff{}
 	}
 	return Diff{
-		Hunks: []Hunk{{OldStart: 0, Lines: lines}}, // OldStart=0 = no gutter
+		Hunks: []Hunk{{Bare: true, Lines: lines}}, // R3 H1: explicit bare flag
 	}
 }
 
@@ -139,7 +146,11 @@ func serializeDiff(d Diff) string {
 	b.WriteString(d.BodyLang)
 	b.WriteByte('\n')
 	for _, h := range d.Hunks {
-		fmt.Fprintf(&b, "@@%d,%d+%d,%d@@\n", h.OldStart, h.OldLines, h.NewStart, h.NewLines)
+		bareFlag := byte('S')
+		if h.Bare {
+			bareFlag = 'B'
+		}
+		fmt.Fprintf(&b, "%c@@%d,%d+%d,%d@@\n", bareFlag, h.OldStart, h.OldLines, h.NewStart, h.NewLines)
 		for _, ln := range h.Lines {
 			b.WriteRune(ln.Marker)
 			b.WriteString(ln.Text)
@@ -227,7 +238,7 @@ type diffRow struct {
 func renderDiffRows(d Diff, ctx Context, theme StyleTheme, hl HighlighterTheme) []diffRow {
 	total := 0
 	for _, h := range d.Hunks {
-		if h.OldStart > 0 {
+		if !h.Bare {
 			total++
 		}
 		total += len(h.Lines)
@@ -235,12 +246,13 @@ func renderDiffRows(d Diff, ctx Context, theme StyleTheme, hl HighlighterTheme) 
 	rows := make([]diffRow, 0, total)
 
 	for _, h := range d.Hunks {
-		// Emit hunk header (skip bare-lines mode OldStart=0).
-		if h.OldStart > 0 {
+		// R3 H1: header emission keyed on Bare flag (not OldStart) so
+		// new-file `@@ -0,0 +1,N @@` hunks render correctly.
+		if !h.Bare {
 			header := fmt.Sprintf("@@ -%d,%d +%d,%d @@", h.OldStart, h.OldLines, h.NewStart, h.NewLines)
 			rows = append(rows, diffRow{
 				prefix:      header,
-				prefixStyle: theme.Style(StyleDiffHunkHeader),
+				prefixStyle: downgradeStyleColor(theme.Style(StyleDiffHunkHeader), ctx.ColorDepth),
 			})
 		}
 		// R2 HIGH-3 batch highlight; nil result → per-line plain fallback.
@@ -248,7 +260,7 @@ func renderDiffRows(d Diff, ctx Context, theme StyleTheme, hl HighlighterTheme) 
 		oldNo, newNo := h.OldStart, h.NewStart
 		gutterDigits := computeGutterDigits(h)
 		for i, ln := range h.Lines {
-			gutter := singleColumnGutter(ln.Marker, oldNo, newNo, gutterDigits, h.OldStart > 0)
+			gutter := singleColumnGutter(ln.Marker, oldNo, newNo, gutterDigits, !h.Bare)
 			prefix := gutter + string(ln.Marker) + " "
 			cells, ok := batch[i]
 			if !ok || ln.Marker == '-' {
@@ -256,7 +268,7 @@ func renderDiffRows(d Diff, ctx Context, theme StyleTheme, hl HighlighterTheme) 
 			}
 			rows = append(rows, diffRow{
 				prefix:      prefix,
-				prefixStyle: prefixStyleForMarker(ln.Marker, theme),
+				prefixStyle: downgradeStyleColor(prefixStyleForMarker(ln.Marker, theme), ctx.ColorDepth),
 				cells:       cells,
 			})
 			// Advance line numbers per marker (R2 HIGH-4 ★A CC parity).
@@ -276,9 +288,11 @@ func renderDiffRows(d Diff, ctx Context, theme StyleTheme, hl HighlighterTheme) 
 
 // computeGutterDigits returns the column width needed to hold the
 // largest line number in this hunk (R2 HIGH-4 ★A; bare-lines = 0).
+// R3 H1: keyed on Bare flag, not OldStart (new-file `@@ -0,0` is a
+// legal unified hunk that still needs gutter).
 // R2 MED-5: digit count by base-10 loop, no fmt.Sprintf allocation.
 func computeGutterDigits(h Hunk) int {
-	if h.OldStart == 0 {
+	if h.Bare {
 		return 0
 	}
 	maxNo := h.OldStart + h.OldLines - 1
@@ -348,24 +362,36 @@ func prefixStyleForMarker(marker rune, theme StyleTheme) style.Style {
 // writeDiffRow paints a single diffRow into the grid at row y.
 // Prefix column is rendered with prefixStyle; body cells append after
 // prefix. Body cells may be pre-styled (chroma) or plain (Style{}).
+//
+// R3 H2 (codex path 2/3): advance x by RuneWidth so CJK / wide runes
+// occupy 2 cells without the next rune stomping on the WideContinuation
+// that buffer.Grid.SetCell auto-writes. Matches spec-1.7 renderCodeBlock
+// per-cell loop pattern (code.go:192-205).
 func writeDiffRow(grid *buffer.Grid, y int, row diffRow, cols int, theme StyleTheme) {
+	_ = theme
 	x := 0
 	for _, r := range row.prefix {
-		if x >= cols {
+		rw := width.RuneWidth(r)
+		if rw <= 0 {
+			continue
+		}
+		if x+rw > cols {
 			return
 		}
 		grid.SetCell(x, y, buffer.Cell{Ch: r, St: row.prefixStyle})
-		x++
+		x += rw
 	}
 	for _, c := range row.cells {
-		if x >= cols {
-			break
-		}
-		if c.Ch == 0 {
-			x++
+		rw := width.RuneWidth(c.Ch)
+		if rw <= 0 {
+			// Skip pre-existing WideContinuation cells (Ch==0) — SetCell
+			// will rewrite them when we paint the next wide main cell.
 			continue
 		}
+		if x+rw > cols {
+			break
+		}
 		grid.SetCell(x, y, c)
-		x++
+		x += rw
 	}
 }
