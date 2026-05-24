@@ -309,9 +309,10 @@ func BenchmarkDiff_render_large_multihunk(b *testing.B) {
 		var lines []LineEntry
 		for i := 0; i < 10; i++ {
 			marker := ' '
-			if i%3 == 1 {
+			switch i % 3 {
+			case 1:
 				marker = '+'
-			} else if i%3 == 2 {
+			case 2:
 				marker = '-'
 			}
 			lines = append(lines, LineEntry{Marker: marker, Text: fmt.Sprintf("var x%d = %d", h*10+i, i)})
