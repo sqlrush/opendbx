@@ -98,6 +98,7 @@ func TestDiffVisualGolden(t *testing.T) {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel() // R2 NIT-4: subtests are independent (no shared mutable state).
 			ctx := ctxDefault(tc.cols)
 			buf, err := tc.diff.Render(ctx)
 			if err != nil {

@@ -280,11 +280,14 @@ func BenchmarkCode_render_plain_noLang(b *testing.B) {
 }
 
 // spec-1.13 § 4.3 perf targets:
-//   - BenchmarkDiff_render_small (1 hunk, 5 lines):              < 60µs
-//   - BenchmarkDiff_render_large_multihunk (5 hunks, 50 lines):  < 500µs
-//   - BenchmarkDiff_render_cached (cache hit):                    < 5µs
+//   - BenchmarkDiff_render_small (1 hunk, 5 lines, plain):             < 60µs
+//   - BenchmarkDiff_render_large_multihunk (5 hunks, 50 lines, go):    < 500µs
+//   - BenchmarkDiff_render_cached (cache hit, bare-lines):             < 5µs
+// R2 NIT-1: b.ReportAllocs() enabled so allocs/op + B/op land in default
+// `go test -bench` output without -benchmem.
 
 func BenchmarkDiff_render_small(b *testing.B) {
+	b.ReportAllocs()
 	d := NewDiffFromHunks([]Hunk{{
 		OldStart: 1, OldLines: 5, NewStart: 1, NewLines: 5,
 		Lines: []LineEntry{
@@ -304,6 +307,7 @@ func BenchmarkDiff_render_small(b *testing.B) {
 }
 
 func BenchmarkDiff_render_large_multihunk(b *testing.B) {
+	b.ReportAllocs()
 	var hunks []Hunk
 	for h := 0; h < 5; h++ {
 		var lines []LineEntry
@@ -330,6 +334,7 @@ func BenchmarkDiff_render_large_multihunk(b *testing.B) {
 }
 
 func BenchmarkDiff_render_cached(b *testing.B) {
+	b.ReportAllocs()
 	d := NewDiffFromBareLines("+added\n-removed\n context")
 	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft, ColorDepth: 16777216}
 	resetBlockCacheForTest()

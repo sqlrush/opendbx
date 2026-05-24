@@ -542,9 +542,62 @@ func TestDiff_ErrDiffParseHunkHeader_Sentinel(t *testing.T) {
 	if err == nil {
 		t.Fatalf("want error")
 	}
-	// Verify error wraps the sentinel for callers that want errors.Is.
-	if !errors.Is(err, err) {
-		t.Errorf("errors.Is self check failed")
+	// R2 HIGH-1 fix: verify the error actually wraps the registered
+	// sentinel (the previous `errors.Is(err, err)` was a tautology that
+	// passed for any non-nil error and did NOT verify the contract).
+	if !errors.Is(err, ErrDiffParseHunkHeader) {
+		t.Errorf("errors.Is(err, ErrDiffParseHunkHeader): want true, got false; err=%v", err)
+	}
+}
+
+// ---- R2 MED-2: NewDiff auto-detect coverage ----
+
+func TestDiff_NewDiff_UnifiedSuccess(t *testing.T) {
+	src := "--- a/old.go\n+++ b/new.go\n@@ -1,2 +1,2 @@\n-old\n+new\n"
+	d := NewDiff(src, "explicit.go")
+	if len(d.Hunks) != 1 {
+		t.Fatalf("want 1 hunk, got %d", len(d.Hunks))
+	}
+	// Caller-supplied filePath overrides parser-extracted +++ header.
+	if d.FilePath != "explicit.go" {
+		t.Errorf("FilePath: want explicit.go, got %q", d.FilePath)
+	}
+	if d.Hunks[0].Lines[0].Marker != '-' || d.Hunks[0].Lines[1].Marker != '+' {
+		t.Errorf("marker classification dropped: %v", d.Hunks[0].Lines)
+	}
+}
+
+func TestDiff_NewDiff_FallbackToBareLines(t *testing.T) {
+	// Malformed `@@` header → ParseUnified errors → NewDiff falls back
+	// to bare-lines with filePath preserved.
+	src := "@@ totally malformed @@\n+added\n-removed\n"
+	d := NewDiff(src, "fallback.go")
+	if d.FilePath != "fallback.go" {
+		t.Errorf("FilePath preserved on fallback: got %q", d.FilePath)
+	}
+	if len(d.Hunks) != 1 {
+		t.Fatalf("want 1 bare-lines hunk, got %d", len(d.Hunks))
+	}
+	if d.Hunks[0].OldStart != 0 {
+		t.Errorf("bare-lines hunk OldStart: want 0, got %d", d.Hunks[0].OldStart)
+	}
+	// bare-lines parser swallows the @@ line (treated as non-marker '?').
+	markers := make([]rune, 0, len(d.Hunks[0].Lines))
+	for _, ln := range d.Hunks[0].Lines {
+		markers = append(markers, ln.Marker)
+	}
+	// Want at least one '+' and one '-' from the body.
+	gotPlus, gotMinus := false, false
+	for _, m := range markers {
+		if m == '+' {
+			gotPlus = true
+		}
+		if m == '-' {
+			gotMinus = true
+		}
+	}
+	if !gotPlus || !gotMinus {
+		t.Errorf("bare-lines fallback did not preserve +/- markers: %v", markers)
 	}
 }
 

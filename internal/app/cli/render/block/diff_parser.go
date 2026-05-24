@@ -170,6 +170,10 @@ func stripPathPrefix(p string) string {
 	return p
 }
 
+// atoi converts a decimal digit string to int. The input is always a
+// hunkHeaderRE capture group ((\d+) — digits only), so strconv.Atoi
+// cannot fail; the error discard is safe by regex invariant
+// (R2 NIT-2 documented).
 func atoi(s string) int {
 	n, _ := strconv.Atoi(s)
 	return n

@@ -26,10 +26,15 @@ import (
 //
 // Input modes (per Q5 ★A structured hunks primary):
 //   - NewDiffFromHunks(hunks): primary; mirrors CC StructuredPatchHunk
-//   - NewDiffFromUnified(text): D-6 parser for raw `git diff -u` output
+//   - ParseUnified(text): D-6 parser; returns (Diff, error) for raw
+//     `git diff -u` output (R2 MED-1 godoc fix)
 //   - NewDiffFromBareLines(text): markdown ```diff fence path (no `@@` header)
 //   - NewDiff(source, filePath): auto-detect; ParseUnified failure
 //     fallback to bare-lines with slog.Warn (R2 NIT-3)
+//
+// Compile-time guarantee that Diff satisfies RenderNode (R2 LOW-2):
+//
+//	var _ RenderNode = Diff{}
 type Diff struct {
 	Hunks    []Hunk
 	FilePath string // optional; extracted by ParseUnified or caller-supplied
@@ -56,6 +61,9 @@ type LineEntry struct {
 	Marker rune
 	Text   string
 }
+
+// Compile-time interface assertion (R2 LOW-2).
+var _ RenderNode = Diff{}
 
 // NewDiffFromHunks constructs a Diff from explicit structured hunks
 // (primary API per Q5 ★A; spec-1.21 tool-call caller path).
@@ -166,6 +174,11 @@ func (d Diff) Render(ctx Context) (buffer.Buffer, error) {
 	cacheable := !ctx.MeasureOnly && len(source) <= blockCacheMaxSourceBytes
 	var cacheKey string
 	if cacheable {
+		// ctx.Verbose retained in cache key for shape parity with spec-1.11
+		// Markdown / spec-1.12 Code (R2 LOW-1: Diff renders identically
+		// regardless of Verbose today; keeping the key shape stable now
+		// lets spec-1.21 verbose-header rows attach without invalidating
+		// existing entries' key layout).
 		cacheKey = makeBlockCacheKey(source, ctx.Cols, ctx.Verbose, themeCacheKey(theme), ctx.Wrap, d.BodyLang+":diff", codeStyleName, ctx.ColorDepth)
 		if cached := blockCache.Get(cacheKey); cached != nil {
 			return cached, nil
@@ -181,6 +194,11 @@ func (d Diff) Render(ctx Context) (buffer.Buffer, error) {
 	}
 	grid, err := buffer.NewGrid(ctx.Cols, len(rows))
 	if err != nil {
+		// R2 MED-3: surface the alloc failure via slog so it's diagnosable
+		// in production. Caller still sees a measure-only buffer (matches
+		// spec-1.11 / spec-1.12 inherited behaviour); errcode escalation
+		// would require a Render signature change across all 7 blocks.
+		slog.Error("diff.Render: buffer.NewGrid failed", "cols", ctx.Cols, "rows", len(rows), "err", err)
 		return measureOnlyBuf(ctx.Cols, len(rows)), nil
 	}
 	for y, row := range rows {
@@ -202,8 +220,20 @@ type diffRow struct {
 }
 
 // renderDiffRows builds []diffRow for all hunks. Pure / no side effects.
+// R2 HIGH-3: chroma highlight runs ONCE per hunk on the joined non-'-'
+// body to preserve multi-line lexer context. R2 MED-4: rows capacity is
+// pre-counted (1 header + len(Lines) per hunk that has gutter, len(Lines)
+// otherwise).
 func renderDiffRows(d Diff, ctx Context, theme StyleTheme, hl HighlighterTheme) []diffRow {
-	var rows []diffRow
+	total := 0
+	for _, h := range d.Hunks {
+		if h.OldStart > 0 {
+			total++
+		}
+		total += len(h.Lines)
+	}
+	rows := make([]diffRow, 0, total)
+
 	for _, h := range d.Hunks {
 		// Emit hunk header (skip bare-lines mode OldStart=0).
 		if h.OldStart > 0 {
@@ -213,17 +243,22 @@ func renderDiffRows(d Diff, ctx Context, theme StyleTheme, hl HighlighterTheme) 
 				prefixStyle: theme.Style(StyleDiffHunkHeader),
 			})
 		}
+		// R2 HIGH-3 batch highlight; nil result → per-line plain fallback.
+		batch := highlightHunkBatch(h, d.BodyLang, ctx.ColorDepth, hl)
 		oldNo, newNo := h.OldStart, h.NewStart
 		gutterDigits := computeGutterDigits(h)
-		for _, ln := range h.Lines {
+		for i, ln := range h.Lines {
 			gutter := singleColumnGutter(ln.Marker, oldNo, newNo, gutterDigits, h.OldStart > 0)
 			prefix := gutter + string(ln.Marker) + " "
-			row := diffRow{
+			cells, ok := batch[i]
+			if !ok || ln.Marker == '-' {
+				cells = renderDiffHunkBody(ln.Marker, ln.Text, d.BodyLang, ctx, theme, hl)
+			}
+			rows = append(rows, diffRow{
 				prefix:      prefix,
 				prefixStyle: prefixStyleForMarker(ln.Marker, theme),
-				cells:       renderDiffHunkBody(ln.Marker, ln.Text, d.BodyLang, ctx, theme, hl),
-			}
-			rows = append(rows, row)
+				cells:       cells,
+			})
 			// Advance line numbers per marker (R2 HIGH-4 ★A CC parity).
 			switch ln.Marker {
 			case '+':
@@ -241,6 +276,7 @@ func renderDiffRows(d Diff, ctx Context, theme StyleTheme, hl HighlighterTheme) 
 
 // computeGutterDigits returns the column width needed to hold the
 // largest line number in this hunk (R2 HIGH-4 ★A; bare-lines = 0).
+// R2 MED-5: digit count by base-10 loop, no fmt.Sprintf allocation.
 func computeGutterDigits(h Hunk) int {
 	if h.OldStart == 0 {
 		return 0
@@ -249,10 +285,21 @@ func computeGutterDigits(h Hunk) int {
 	if n := h.NewStart + h.NewLines - 1; n > maxNo {
 		maxNo = n
 	}
-	if maxNo <= 0 {
+	return digitCount(maxNo)
+}
+
+// digitCount returns the number of decimal digits needed to print n.
+// Allocation-free (R2 MED-5 idiom).
+func digitCount(n int) int {
+	if n <= 0 {
 		return 1
 	}
-	return len(fmt.Sprintf("%d", maxNo))
+	d := 0
+	for n > 0 {
+		d++
+		n /= 10
+	}
+	return d
 }
 
 // singleColumnGutter formats the single-number gutter per marker
