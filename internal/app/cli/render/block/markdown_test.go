@@ -223,7 +223,7 @@ func TestMarkdown_BlockquoteNested(t *testing.T) {
 		t.Fatalf("nested blockquote: want ≥2 rows, got %d", rows)
 	}
 	// Find the row containing "inner" — it should have stacked rails.
-	var innerRow int = -1
+	innerRow := -1
 	for y := 0; y < rows; y++ {
 		if strings.Contains(rowText(buf, y), "inner") {
 			innerRow = y
