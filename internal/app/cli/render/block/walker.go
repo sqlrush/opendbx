@@ -261,10 +261,46 @@ func (w *mdWalker) renderBlockquote(b *ast.Blockquote) {
 
 // renderFenceBlock delegates to spec-1.7 renderCodeBlock per D-6 R2 HIGH-1
 // fixed signature (ctx, lang, body) → (buffer.Buffer, int).
+//
+// spec-1.13 D-5 in-place dispatch (rule 21; signature 不动): lang in
+// {"diff", "patch", "udiff"} routes to Diff block semantic renderer
+// (bare-lines mode) per Q3 ★B + R3 codex re-verified — gives consistent
+// `+`/`-`/' ' coloring instead of plain monospace via renderCodeBlock.
+// Non-diff langs unchanged spec-1.11 path (regression check spec-1.13 T1-26).
 func (w *mdWalker) renderFenceBlock(f *ast.FencedCodeBlock) {
 	lang := string(f.Language(w.src))
 	body := extractCodeBlockText(f, w.src)
-	w.renderCodeViaSpec17(lang, body)
+	switch lang {
+	case "diff", "patch", "udiff":
+		// spec-1.13 D-5: route to Diff block bare-lines mode.
+		d := NewDiffFromBareLines(body)
+		buf, _ := d.Render(w.ctx)
+		w.inlineBufferAsRowSpec(buf)
+	default:
+		w.renderCodeViaSpec17(lang, body)
+	}
+}
+
+// inlineBufferAsRowSpec is the shared helper extracted from
+// renderCodeViaSpec17 per spec-1.13 D-5 CRIT-2 fix: translates any
+// Buffer returned from a sub-block (e.g., Diff.Render) into walker
+// rowSpec entries. Each Buffer row becomes one rowSpec with cells
+// populated from buf.Cell(x, y).
+func (w *mdWalker) inlineBufferAsRowSpec(buf buffer.Buffer) {
+	if buf == nil {
+		return
+	}
+	cols, rows := buf.Size()
+	for y := 0; y < rows; y++ {
+		cells := make([]buffer.Cell, cols)
+		for x := 0; x < cols; x++ {
+			cells[x] = buf.Cell(x, y)
+		}
+		w.rows = append(w.rows, rowSpec{
+			cells:    cells,
+			wrapHint: WrapHintKeep,
+		})
+	}
 }
 
 // renderIndentedCodeBlock handles 4-space indented code blocks; same
