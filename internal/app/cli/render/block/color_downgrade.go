@@ -64,7 +64,7 @@ func nearest256(c chroma.Colour) style.Color {
 		if float64(d) < bestDist {
 			bestDist = float64(d)
 			// i ∈ [0, 239]; i+16 ∈ [16, 255] — fits uint8.
-			bestIdx = uint8(i + 16) //nolint:gosec // bounded by 240-entry LUT
+			bestIdx = uint8(i + 16) //nolint:gosec // spec-1.12 D-6: bounded by 240-entry LUT (i+16 ∈ [16,255] fits uint8)
 		}
 	}
 	return style.Palette(bestIdx)
@@ -80,7 +80,7 @@ func nearest16(c chroma.Colour) style.Color {
 		if float64(d) < bestDist {
 			bestDist = float64(d)
 			// i ∈ [0, 15] — fits uint8.
-			bestIdx = uint8(i) //nolint:gosec // bounded by 16-entry LUT
+			bestIdx = uint8(i) //nolint:gosec // spec-1.12 D-6: bounded by 16-entry LUT (i ∈ [0,15] fits uint8)
 		}
 	}
 	return style.Palette(bestIdx)
