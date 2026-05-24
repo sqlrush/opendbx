@@ -123,11 +123,15 @@ func resetMarkdownCacheForTest() {
 	markdownCache.order = list.New()
 }
 
-// makeCacheKey computes the 4-field cacheKey per spec § 3.3 (R3).
+// makeCacheKey computes the 5-field cacheKey per spec § 3.3 (R3 + R7 HIGH-1).
 // 16-byte sha256 prefix gives 2^-64 collision risk at 256-entry cap.
-func makeCacheKey(source string, cols int, verbose bool, themeKey string) string {
+//
+// R7 HIGH-1: wrap is included because the walker invokes wrap() with
+// ctx.Wrap policy when building physical rows; same source + cols +
+// verbose + theme but WrapSoft vs WrapNone produces different output.
+func makeCacheKey(source string, cols int, verbose bool, themeKey string, wrap WrapPolicy) string {
 	sum := sha256.Sum256([]byte(source))
-	return fmt.Sprintf("%x:%d:%t:%s", sum[:16], cols, verbose, themeKey)
+	return fmt.Sprintf("%x:%d:%t:%s:%d", sum[:16], cols, verbose, themeKey, wrap)
 }
 
 // themeCacheKey returns a stable cache-key string for the given theme.

@@ -76,7 +76,7 @@ func (m Markdown) Render(ctx Context) (buffer.Buffer, error) {
 
 	cacheable := len(m.Source) <= markdownCacheMaxSourceBytes
 	if cacheable {
-		key := makeCacheKey(m.Source, ctx.Cols, ctx.Verbose, tKey)
+		key := makeCacheKey(m.Source, ctx.Cols, ctx.Verbose, tKey, ctx.Wrap)
 		if cached := markdownCache.Get(key); cached != nil {
 			if ctx.MeasureOnly {
 				_, rows := cached.Size()
@@ -90,7 +90,7 @@ func (m Markdown) Render(ctx Context) (buffer.Buffer, error) {
 	if len(m.Source) == 0 {
 		empty := measureOnlyBuf(ctx.Cols, 0)
 		if cacheable {
-			markdownCache.Put(makeCacheKey(m.Source, ctx.Cols, ctx.Verbose, tKey), empty)
+			markdownCache.Put(makeCacheKey(m.Source, ctx.Cols, ctx.Verbose, tKey, ctx.Wrap), empty)
 		}
 		return empty, nil
 	}
@@ -104,7 +104,7 @@ func (m Markdown) Render(ctx Context) (buffer.Buffer, error) {
 	}
 
 	if cacheable {
-		markdownCache.Put(makeCacheKey(m.Source, ctx.Cols, ctx.Verbose, tKey), buf)
+		markdownCache.Put(makeCacheKey(m.Source, ctx.Cols, ctx.Verbose, tKey, ctx.Wrap), buf)
 	}
 	return buf, nil
 }

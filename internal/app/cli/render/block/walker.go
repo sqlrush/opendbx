@@ -164,7 +164,13 @@ func (w *mdWalker) renderParagraph(p *ast.Paragraph) {
 // Ordered uses "N. " prefix, unordered uses "- " (CC standard, R3 fix).
 func (w *mdWalker) renderList(l *ast.List, depth int) {
 	pad := strings.Repeat("  ", depth)
-	idx := 1
+	// R7 MED-1: respect source start number (e.g., `3.` starts at 3).
+	// ast.List.Start is 0 for unordered; for ordered it's the integer
+	// the source declares (defaults to 1 if source uses `1.`).
+	idx := l.Start
+	if idx <= 0 {
+		idx = 1
+	}
 	for c := l.FirstChild(); c != nil; c = c.NextSibling() {
 		item, ok := c.(*ast.ListItem)
 		if !ok {
@@ -214,12 +220,19 @@ func (w *mdWalker) renderList(l *ast.List, depth int) {
 }
 
 // renderBlockquote prefixes each contained line with "▎ " (U+258E)
-// per CC figures (R3 baseline B-29).
+// per CC figures (R3 baseline B-29) and sets body style to italic
+// per CC formatToken blockquote behavior (R7 MED-2).
 //
 // R6 CRIT-1: prefix is set on rowSpec.prefix (rendered separately by
 // buildBuffer) rather than mutated into rowSpec.text. This makes the
 // rail apply uniformly to text-path AND cells-path rows; nested
 // blockquote also stacks correctly ("▎ ▎ inner").
+//
+// R7 MED-2: body base style → StyleItalic. Inline spans (bold/code/etc.)
+// merge with italic via applySpanStyle's additive Bold/Italic/Underline
+// logic, so **bold** inside a blockquote stays bold AND italic per CC.
+// Fence body inside a blockquote keeps its spec-1.7 raw cells (no
+// italic forced — code is monospace, italic would be misleading).
 func (w *mdWalker) renderBlockquote(b *ast.Blockquote) {
 	startRow := len(w.rows)
 	w.walkBlock(b)
@@ -229,8 +242,11 @@ func (w *mdWalker) renderBlockquote(b *ast.Blockquote) {
 		// rail prepended (e.g., "▎ " + "▎ inner" → "▎ ▎ inner").
 		w.rows[i].prefix = rail + w.rows[i].prefix
 		w.rows[i].prefixStyle = StyleDimmed
-		// Outer text/cells unchanged; do NOT shift spans (they index
-		// into rowSpec.text, which is unmodified).
+		// R7 MED-2: italicize text body (skip cells path so fence body
+		// retains spec-1.7 code styling).
+		if len(w.rows[i].cells) == 0 {
+			w.rows[i].style = StyleItalic
+		}
 	}
 }
 
@@ -567,6 +583,11 @@ func (w *mdWalker) buildBuffer() buffer.Buffer {
 	}
 
 	// Expand each rowSpec into one or more physical rows via wrap().
+	// R7 CRIT-1: when a row has prefix (blockquote rail), wrap width
+	// must subtract prefix visual width — otherwise text written at
+	// x = prefixCols extends past grid right edge and silently clips.
+	// R7 MED-2: blockquote continuation rows still display the rail so
+	// multi-line content stays visually inside the quote block.
 	var expanded []rowSpec
 	for _, r := range w.rows {
 		if r.wrapHint == WrapHintKeep {
@@ -574,24 +595,25 @@ func (w *mdWalker) buildBuffer() buffer.Buffer {
 			expanded = append(expanded, r)
 			continue
 		}
-		lines := wrap(r.text, w.ctx.Cols, w.ctx.Wrap)
+		prefixCols := width.Width(r.prefix)
+		wrapCols := w.ctx.Cols - prefixCols
+		if wrapCols < 1 {
+			wrapCols = 1 // pathological: ctx.Cols too small for prefix
+		}
+		lines := wrap(r.text, wrapCols, w.ctx.Wrap)
 		if len(lines) == 0 {
 			expanded = append(expanded, r)
 			continue
 		}
 		for i, line := range lines {
-			// Only the first wrapped line keeps the original spans and
-			// prefix; subsequent lines lose span styling and prefix
-			// (spec-1.11 MVP — full prefix + span tracking through wrap
-			// is spec-1.21 follow-on; blockquote bodies rarely wrap in
-			// practice given snapshot-rendering semantics).
+			// R7 MED-2: continuation rows in a blockquote keep the rail
+			// (so wrapped quote body stays visually contained); spans
+			// still only attach to the first wrapped line.
 			var spans []styledSpan
-			var prefix string
-			var prefixStyle StyleKind
+			prefix := r.prefix
+			prefixStyle := r.prefixStyle
 			if i == 0 {
 				spans = r.spans
-				prefix = r.prefix
-				prefixStyle = r.prefixStyle
 			}
 			expanded = append(expanded, rowSpec{
 				prefix:      prefix,
@@ -675,6 +697,12 @@ func writeRawCells(grid *buffer.Grid, y int, cells []buffer.Cell, xOffset, cols 
 // xOffset (R6 CRIT-1) is the visual column where text begins (e.g.,
 // `width.Width("▎ ")` after blockquote prefix). Spans index into text
 // bytes; visual cell coordinate is `xOffset + accumulated rune widths`.
+//
+// R7 MED-2: span style **merges** with existing cell style (additive
+// Bold/Italic/Underline; FG/BG inherit from span when set, else from
+// existing cell). This preserves base styles like StyleItalic body of
+// blockquote when inline **bold** spans land inside — cells become
+// Bold AND Italic. Previous "replace" semantics lost the base style.
 func applySpanStyle(grid *buffer.Grid, y int, text string, byteStart, byteEnd int, s style.Style, xOffset, cols int) {
 	x := xOffset
 	for i := 0; i < len(text) && x < cols; {
@@ -689,10 +717,37 @@ func applySpanStyle(grid *buffer.Grid, y int, text string, byteStart, byteEnd in
 		}
 		if i >= byteStart && i < byteEnd {
 			cell := grid.Cell(x, y)
-			cell.St = s
+			cell.St = mergeStyle(cell.St, s)
 			grid.SetCell(x, y, cell)
 		}
 		x += rw
 		i += size
 	}
+}
+
+// mergeStyle returns a Style that combines base + overlay. Bold/Italic/
+// Underline are OR-ed (preserve base attributes when overlay omits them).
+// FG/BG/Reverse take overlay value when set, else inherit base.
+// R7 MED-2 (CC blockquote italic body + inline **bold** span correctness).
+func mergeStyle(base, overlay style.Style) style.Style {
+	out := base
+	if overlay.Bold {
+		out.Bold = true
+	}
+	if overlay.Italic {
+		out.Italic = true
+	}
+	if overlay.Underline {
+		out.Underline = true
+	}
+	if overlay.Reverse {
+		out.Reverse = true
+	}
+	if overlay.FG != 0 {
+		out.FG = overlay.FG
+	}
+	if overlay.BG != 0 {
+		out.BG = overlay.BG
+	}
+	return out
 }

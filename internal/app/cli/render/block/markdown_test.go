@@ -248,6 +248,101 @@ func dumpRows(buf buffer.Buffer, rows int) []string {
 	return out
 }
 
+// TestMarkdown_R7_BlockquoteNarrowColNoTruncation — R7 CRIT-1 regression:
+// narrow cols with blockquote prefix should wrap content within
+// available body width, NOT silently clip at grid right edge.
+func TestMarkdown_R7_BlockquoteNarrowColNoTruncation(t *testing.T) {
+	resetMarkdownCacheForTest()
+	src := "> 12345678901234567890"
+	m := NewMarkdown(src)
+	buf := mustRenderMd(t, m, ctxMd(10))
+	_, rows := buf.Size()
+	// Concatenate all body content (after prefix) across all rows.
+	var body strings.Builder
+	for y := 0; y < rows; y++ {
+		text := rowText(buf, y)
+		// Strip leading "▎ " rail (every row has it post-R7 MED-2).
+		text = strings.TrimPrefix(text, "▎ ")
+		body.WriteString(text)
+	}
+	// All 20 digits must survive (no silent truncation).
+	if got := body.String(); !strings.Contains(got, "12345678901234567890") {
+		t.Errorf("narrow-col blockquote: source digits lost; reconstructed body=%q rows=%v", got, dumpRows(buf, rows))
+	}
+}
+
+// TestMarkdown_R7_CacheKeyIncludesWrap — R7 HIGH-1 regression: same
+// source + cols + verbose + theme but different ctx.Wrap must NOT
+// collide in cache.
+func TestMarkdown_R7_CacheKeyIncludesWrap(t *testing.T) {
+	resetMarkdownCacheForTest()
+	long := strings.Repeat("word ", 30)
+	m := NewMarkdown(long)
+	ctxSoft := ctxMd(40)
+	ctxSoft.Wrap = WrapSoft
+	bufSoft := mustRenderMd(t, m, ctxSoft)
+	ctxNone := ctxMd(40)
+	ctxNone.Wrap = WrapNone
+	bufNone := mustRenderMd(t, m, ctxNone)
+	_, rowsSoft := bufSoft.Size()
+	_, rowsNone := bufNone.Size()
+	if rowsSoft == rowsNone {
+		t.Errorf("WrapSoft vs WrapNone should produce different row counts at cols=40, got both %d (cache collision)", rowsSoft)
+	}
+}
+
+// TestMarkdown_R7_OrderedListSourceStart — R7 MED-1 regression:
+// ordered list respects source start number (e.g., `3.` starts at 3).
+func TestMarkdown_R7_OrderedListSourceStart(t *testing.T) {
+	resetMarkdownCacheForTest()
+	m := NewMarkdown("3. third\n4. fourth")
+	buf := mustRenderMd(t, m, ctxMd(80))
+	r0 := rowText(buf, 0)
+	if !strings.HasPrefix(r0, "3. ") {
+		t.Errorf("source start 3: want '3. ' prefix, got %q", r0)
+	}
+	if !strings.HasPrefix(rowText(buf, 1), "4. ") {
+		t.Errorf("source start sequence: want '4. ' on row 1, got %q", rowText(buf, 1))
+	}
+}
+
+// TestMarkdown_R7_BlockquoteBodyItalic — R7 MED-2 regression: CC
+// blockquote body is italic in addition to dim rail.
+func TestMarkdown_R7_BlockquoteBodyItalic(t *testing.T) {
+	resetMarkdownCacheForTest()
+	ctx := ctxMd(80)
+	ctx.Theme = DefaultTheme{}
+	m := NewMarkdown("> plain quoted text")
+	buf := mustRenderMd(t, m, ctx)
+	// Body starts at x=2 (after "▎ " rail of width 2).
+	for _, x := range []int{2, 3, 4, 5, 6, 7} {
+		if c := buf.Cell(x, 0); !c.St.Italic {
+			t.Errorf("blockquote body at x=%d: want Italic per CC formatToken, got Ch=%q St=%#v", x, c.Ch, c.St)
+		}
+	}
+}
+
+// TestMarkdown_R7_BlockquoteBoldStaysBoldAndItalic — R7 MED-2 + span
+// merge: **bold** inside blockquote should be BOTH Bold and Italic
+// (mergeStyle preserves base italic when overlay only sets Bold).
+func TestMarkdown_R7_BlockquoteBoldStaysBoldAndItalic(t *testing.T) {
+	resetMarkdownCacheForTest()
+	ctx := ctxMd(80)
+	ctx.Theme = DefaultTheme{}
+	m := NewMarkdown("> **bold**")
+	buf := mustRenderMd(t, m, ctx)
+	// Body bold span starts at x=2 (after "▎ " rail).
+	for _, x := range []int{2, 3, 4, 5} {
+		c := buf.Cell(x, 0)
+		if !c.St.Bold {
+			t.Errorf("blockquote bold span at x=%d: want Bold, got St=%#v", x, c.St)
+		}
+		if !c.St.Italic {
+			t.Errorf("blockquote bold span at x=%d: want Italic preserved from base (mergeStyle), got St=%#v", x, c.St)
+		}
+	}
+}
+
 func TestMarkdown_T11_BlockquoteMultiLine(t *testing.T) {
 	resetMarkdownCacheForTest()
 	// CommonMark: two adjacent `>` lines form a single Paragraph in
