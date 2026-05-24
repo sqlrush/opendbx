@@ -176,7 +176,7 @@ func BenchmarkMarkdown_render_paragraph(b *testing.B) {
 	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		resetMarkdownCacheForTest()
+		resetBlockCacheForTest()
 		_, _ = m.Render(ctx)
 	}
 }
@@ -195,7 +195,7 @@ func BenchmarkMarkdown_render_fence_block(b *testing.B) {
 	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		resetMarkdownCacheForTest()
+		resetBlockCacheForTest()
 		_, _ = m.Render(ctx)
 	}
 }
@@ -208,7 +208,7 @@ func BenchmarkMarkdown_render_complex_doc_uncached(b *testing.B) {
 	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		resetMarkdownCacheForTest()
+		resetBlockCacheForTest()
 		_, _ = m.Render(ctx)
 	}
 }
@@ -220,10 +220,60 @@ func BenchmarkMarkdown_render_complex_doc_cached(b *testing.B) {
 		"```go\nfunc x() {}\n```")
 	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft}
 	// Prime the cache (1 render outside timer).
-	resetMarkdownCacheForTest()
+	resetBlockCacheForTest()
 	_, _ = m.Render(ctx)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = m.Render(ctx) // cache hit every iter
+	}
+}
+
+// spec-1.12 § 4.3 perf targets:
+//   - BenchmarkCode_render_highlight_short (10-line Go func):    < 80µs
+//   - BenchmarkCode_render_highlight_long (100-line Python):    < 800µs
+//   - BenchmarkCode_render_cached (cache hit):                     < 5µs
+//   - BenchmarkCode_render_plain_noLang:                          < 60µs
+
+func BenchmarkCode_render_highlight_short(b *testing.B) {
+	source := strings.Repeat("func x() { return 42 }\n", 10)
+	c := NewCode(source, "go")
+	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft, ColorDepth: 16777216}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		resetBlockCacheForTest()
+		_, _ = c.Render(ctx)
+	}
+}
+
+func BenchmarkCode_render_highlight_long(b *testing.B) {
+	source := strings.Repeat("def foo(x):\n    return x + 1\n", 50)
+	c := NewCode(source, "python")
+	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft, ColorDepth: 16777216}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		resetBlockCacheForTest()
+		_, _ = c.Render(ctx)
+	}
+}
+
+func BenchmarkCode_render_cached(b *testing.B) {
+	c := NewCode("func main() { fmt.Println(\"hi\") }", "go")
+	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft, ColorDepth: 16777216}
+	resetBlockCacheForTest()
+	_, _ = c.Render(ctx) // prime
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = c.Render(ctx)
+	}
+}
+
+func BenchmarkCode_render_plain_noLang(b *testing.B) {
+	source := strings.Repeat("plain code line\n", 10)
+	c := NewCode(source, "")
+	ctx := Context{Cols: 80, Theme: DefaultTheme{}, Wrap: WrapSoft, ColorDepth: 16777216}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		resetBlockCacheForTest()
+		_, _ = c.Render(ctx)
 	}
 }

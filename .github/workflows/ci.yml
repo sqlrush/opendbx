@@ -346,6 +346,14 @@ jobs:
         env:
           MARKDOWN_VISUAL_REQUIRED: ${{ vars.MARKDOWN_VISUAL_REQUIRED || '' }}
         run: make ui-markdown-golden
+      - name: Layer 3 block Code visual golden (spec-1.12 D-8)
+        # Code fixtures parked under tests/integration/uitest/block/
+        # testdata/visual/Code*/ — captured in a future T-2.5 session.
+        # Independent env gate (CODE_VISUAL_REQUIRED). 6th independent
+        # block visual env gate per spec-1.12 decouple inheritance.
+        env:
+          CODE_VISUAL_REQUIRED: ${{ vars.CODE_VISUAL_REQUIRED || '' }}
+        run: make ui-code-golden
 
   # spec-0.11.5 D-4/D-5: Layer 5 screenshot evidence. Required context,
   # label-gated. PR body/label edits retrigger this workflow so stale

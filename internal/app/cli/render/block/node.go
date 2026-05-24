@@ -56,6 +56,22 @@ type Context struct {
 	// on this OR Verbose: when EITHER is true, expanded mode → 0 rows
 	// (caller renders 原 ToolUse/ToolResult); default false 不破 spec-1.7
 	// Message / spec-1.9 ToolUse / spec-1.9b ToolResult FROZEN 行为.
+
+	// ColorDepth is the rendering target's color capability injected by
+	// the TUI caller (spec-1.15) via tcell `Screen.Colors()` probe.
+	// **spec-1.12 D-5 / CRIT-2 ★A forward errata (spec-1.7 R4)**.
+	// Values:
+	//   0          — unset (zero value); treated as 16-color conservative
+	//                fallback until spec-1.15 injects real capability
+	//                (R3 HIGH-2 user 拍板 safer default).
+	//   16         — legacy 16-color terminal.
+	//   256        — xterm-256color.
+	//   16777216   — 24-bit truecolor.
+	// Block layer renderers (specifically spec-1.12 D-6 mapChromaColor)
+	// use this to choose RGB vs nearest-palette downgrade. Other block
+	// types ignore it (forward-compat — only render paths needing
+	// ColorDepth read this field).
+	ColorDepth int
 }
 
 // RenderNode is the contract every block type implements. Render produces

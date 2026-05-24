@@ -57,7 +57,7 @@ var markdownParser = goldmark.New(
 // Dispatch order (R2 HIGH-4 corrected; R3 themeKey added; R7 HIGH-1 wrap added):
 //
 //  1. ctx.Cols<=0 → measureOnlyBuf(0,0) [FAST PATH 1]
-//  2. cacheable := len(Source) <= markdownCacheMaxSourceBytes
+//  2. cacheable := len(Source) <= blockCacheMaxSourceBytes
 //     if cacheable: cache lookup via cacheKey(Source, Cols, Verbose, themeKey, Wrap)
 //     hit → MeasureOnly? measureOnlyBuf(Cols, rows) : cached.buf (by reference)
 //  3. miss/no-cache → goldmark.Parse + walker.walk → buffer.Buffer
@@ -74,10 +74,10 @@ func (m Markdown) Render(ctx Context) (buffer.Buffer, error) {
 	theme := themeOrDefault(ctx.Theme)
 	tKey := themeCacheKey(theme)
 
-	cacheable := len(m.Source) <= markdownCacheMaxSourceBytes
+	cacheable := len(m.Source) <= blockCacheMaxSourceBytes
 	if cacheable {
-		key := makeCacheKey(m.Source, ctx.Cols, ctx.Verbose, tKey, ctx.Wrap)
-		if cached := markdownCache.Get(key); cached != nil {
+		key := makeBlockCacheKey(m.Source, ctx.Cols, ctx.Verbose, tKey, ctx.Wrap, "", "", ctx.ColorDepth)
+		if cached := blockCache.Get(key); cached != nil {
 			if ctx.MeasureOnly {
 				_, rows := cached.Size()
 				return measureOnlyBuf(ctx.Cols, rows), nil
@@ -90,7 +90,7 @@ func (m Markdown) Render(ctx Context) (buffer.Buffer, error) {
 	if len(m.Source) == 0 {
 		empty := measureOnlyBuf(ctx.Cols, 0)
 		if cacheable {
-			markdownCache.Put(makeCacheKey(m.Source, ctx.Cols, ctx.Verbose, tKey, ctx.Wrap), empty)
+			blockCache.Put(makeBlockCacheKey(m.Source, ctx.Cols, ctx.Verbose, tKey, ctx.Wrap, "", "", ctx.ColorDepth), empty)
 		}
 		return empty, nil
 	}
@@ -104,7 +104,7 @@ func (m Markdown) Render(ctx Context) (buffer.Buffer, error) {
 	}
 
 	if cacheable {
-		markdownCache.Put(makeCacheKey(m.Source, ctx.Cols, ctx.Verbose, tKey, ctx.Wrap), buf)
+		blockCache.Put(makeBlockCacheKey(m.Source, ctx.Cols, ctx.Verbose, tKey, ctx.Wrap, "", "", ctx.ColorDepth), buf)
 	}
 	return buf, nil
 }

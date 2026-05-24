@@ -44,3 +44,16 @@ card's `spec_ref` field.
 - **go_directive**: requires `go 1.19+`; opendbx is at `go 1.24` so compatible.
 - **pkgsite**: https://pkg.go.dev/github.com/yuin/goldmark@v1.7.8
 - **spec_ref**: spec-1.11-markdown-block.md § 5 (D-5 dep contract)
+
+## `github.com/alecthomas/chroma/v2` v2.24.1
+
+- **license**: MIT (engine) + OFL-1.1 (font/style entries)
+- **maintenance**: active (last release v2.24.1 2026-04-30 per pkg.go.dev; widely adopted Go ecosystem; pygments-port complete; 250+ lexers)
+- **alternatives considered**:
+  - `alecthomas/syntax-highlight` — archived 2023 → rejected
+  - pygments-go fork — calls out to python interpreter; binary dist concern → rejected
+  - highlight.js wasm bridge — wasm runtime overhead; ABI churn → rejected (spec-1.12 ❌-3)
+- **risk**: API churn risk low (2.x line mature 4+ years); minor bumps may change StyleEntry palette nuances — see spec-1.12 R-1/R-3. Transitive: 1 new direct (`github.com/dlclark/regexp2`); 3 test-only transients (`alecthomas/assert/v2` / `alecthomas/repr` / `hexops/gotextdiff`).
+- **go_directive**: requires `go 1.20+`; opendbx is at `go 1.24` so compatible.
+- **pkgsite**: https://pkg.go.dev/github.com/alecthomas/chroma/v2@v2.24.1
+- **spec_ref**: spec-1.12-code-highlight-block.md § 5 (D-1 dep contract)
