@@ -31,3 +31,16 @@ card's `spec_ref` field.
   1.24 per spec-0.12 R2 CRIT-1)
 - **pkgsite**: https://pkg.go.dev/github.com/gdamore/tcell/v2@v2.13.9
 - **spec_ref**: spec-0.12-tcell-bootstrap.md § 2
+
+## `github.com/yuin/goldmark` v1.7.8
+
+- **license**: MIT
+- **maintenance**: active (last release v1.7.8 2024-12-15 per `go list -m -json`; CommonMark spec-compliant; widely adopted in Go ecosystem)
+- **alternatives considered**:
+  - `russross/blackfriday/v2` — archived 2024, no new features, GFM partial → rejected
+  - `gomarkdown/markdown` — fork of blackfriday; smaller community, AST less stable → rejected
+  - `markdown-it-go` — JS port; unfamiliar API, less idiomatic Go → rejected
+- **risk**: API churn risk low (1.x line mature 4+ years); AST node-type changes on major bump would require walker updates — see spec-1.11 R-1. Transitive closure: 0 new transitive deps (goldmark stdlib-only); extensions in same `github.com/yuin/goldmark/extension` module (Table + Linkify enabled per Q2 ★C).
+- **go_directive**: requires `go 1.19+`; opendbx is at `go 1.24` so compatible.
+- **pkgsite**: https://pkg.go.dev/github.com/yuin/goldmark@v1.7.8
+- **spec_ref**: spec-1.11-markdown-block.md § 5 (D-5 dep contract)

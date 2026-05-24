@@ -34,13 +34,41 @@ const (
 	StyleCodeBg
 	// StyleLangLabel — fence lang label decoration (e.g. `─── go ───`).
 	StyleLangLabel
+	// StyleBold — heading + **strong** emphasis (spec-1.11 D-3).
+	StyleBold
+	// StyleItalic — *italic* emphasis (spec-1.11 D-3).
+	StyleItalic
+	// StyleLink — link visible text + dim URL fallback (spec-1.11 D-3 ❌-8).
+	StyleLink
+	// StyleHeading — heading depth styling (CC formatToken permission-colored;
+	// spec-1.11 D-3 R3 baseline — no prefix glyph).
+	StyleHeading
 )
 
 // StyleTheme provides the palette resolution from semantic StyleKind to
 // concrete style.Style. Implementations: DefaultTheme (MVP); future
 // LightTheme / DarkTheme / UserCustomTheme (spec-1.x runtime switch).
+//
+// Implementations with instance-level state (e.g., user-customized
+// palette per session) MUST implement [markdownKeyer] (defined below)
+// to prevent stale cached buffers in the spec-1.11 Markdown LRU cache.
+// Stateless themes (e.g., DefaultTheme) rely on the type-name fallback
+// in themeCacheKey (R6 NIT-2 co-locate).
 type StyleTheme interface {
 	Style(kind StyleKind) style.Style
+}
+
+// markdownKeyer is the optional opt-in interface a StyleTheme may
+// implement to control its cache key identity in the spec-1.11
+// Markdown LRU buffer cache. spec-1.11 § 3.3 R3.1 Step 2.
+//
+// Stateless StyleTheme implementations need NOT implement this — the
+// type-name fallback (`%T`) in themeCacheKey suffices. Stateful themes
+// (e.g., palette swap on runtime theme switch in spec-3.x) MUST
+// implement it; otherwise same-type/different-state themes silently
+// share stale cached buffers.
+type markdownKeyer interface {
+	MarkdownCacheKey() string
 }
 
 // WrapPolicy controls text line-wrap behavior in block.Message.Render.
@@ -81,6 +109,14 @@ func (DefaultTheme) Style(kind StyleKind) style.Style {
 		return style.Style{BG: style.RGB(0x28, 0x2C, 0x34)} // dark grey-blue
 	case StyleLangLabel:
 		return style.Style{FG: style.Palette(8)} // palette grey
+	case StyleBold:
+		return style.Style{Bold: true}
+	case StyleItalic:
+		return style.Style{Italic: true}
+	case StyleLink:
+		return style.Style{FG: style.Palette(8), Underline: true} // dim + underline
+	case StyleHeading:
+		return style.Style{Bold: true} // permission-colored TBD post T-9 fixture
 	default:
 		return style.Style{}
 	}
