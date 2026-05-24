@@ -190,6 +190,64 @@ func TestMarkdown_BlockquoteInlineSpanByteShift(t *testing.T) {
 	}
 }
 
+// TestMarkdown_BlockquoteFence — R6 CRIT-1 regression test (claude path
+// 1/3 catch): fence-in-blockquote was silently dropping "▎ " rail
+// because buildBuffer cells-path bypassed mutated rowSpec.text. Fix:
+// rowSpec.prefix is rendered separately for both text and cells paths.
+func TestMarkdown_BlockquoteFence(t *testing.T) {
+	resetMarkdownCacheForTest()
+	m := NewMarkdown("> ```go\n> code line\n> ```")
+	buf := mustRenderMd(t, m, ctxMd(40))
+	_, rows := buf.Size()
+	if rows < 2 {
+		t.Fatalf("fence-in-blockquote: want ≥2 rows, got %d", rows)
+	}
+	// Every emitted row must carry the rail prefix on cell 0.
+	for y := 0; y < rows; y++ {
+		c0 := buf.Cell(0, y).Ch
+		if c0 != '▎' {
+			t.Errorf("row %d: want '▎' rail at cell 0 (CRIT-1 R6 fix), got %q (row text: %q)",
+				y, c0, rowText(buf, y))
+		}
+	}
+}
+
+// TestMarkdown_BlockquoteNested — R6 MED-3 + CRIT-1 sibling: nested
+// blockquote should stack rails ("▎ ▎ inner").
+func TestMarkdown_BlockquoteNested(t *testing.T) {
+	resetMarkdownCacheForTest()
+	m := NewMarkdown("> outer\n>\n> > inner")
+	buf := mustRenderMd(t, m, ctxMd(40))
+	_, rows := buf.Size()
+	if rows < 2 {
+		t.Fatalf("nested blockquote: want ≥2 rows, got %d", rows)
+	}
+	// Find the row containing "inner" — it should have stacked rails.
+	var innerRow int = -1
+	for y := 0; y < rows; y++ {
+		if strings.Contains(rowText(buf, y), "inner") {
+			innerRow = y
+			break
+		}
+	}
+	if innerRow < 0 {
+		t.Fatalf("nested blockquote: missing 'inner' row; rendered: %v", dumpRows(buf, rows))
+	}
+	text := rowText(buf, innerRow)
+	if !strings.HasPrefix(text, "▎ ▎ ") {
+		t.Errorf("nested blockquote inner: want '▎ ▎ ' stacked rail prefix, got %q", text)
+	}
+}
+
+// dumpRows is a test helper for nested-blockquote debugging.
+func dumpRows(buf buffer.Buffer, rows int) []string {
+	out := make([]string, rows)
+	for y := 0; y < rows; y++ {
+		out[y] = rowText(buf, y)
+	}
+	return out
+}
+
 func TestMarkdown_T11_BlockquoteMultiLine(t *testing.T) {
 	resetMarkdownCacheForTest()
 	// CommonMark: two adjacent `>` lines form a single Paragraph in
@@ -325,29 +383,51 @@ func TestMarkdown_T18_MixedBlockSequence(t *testing.T) {
 
 func TestMarkdown_T19_BoldInline(t *testing.T) {
 	resetMarkdownCacheForTest()
+	ctx := ctxMd(80)
+	ctx.Theme = DefaultTheme{}
 	m := NewMarkdown("**bold**")
-	buf := mustRenderMd(t, m, ctxMd(80))
-	// Just verify text is preserved (style overlay tested via theme).
+	buf := mustRenderMd(t, m, ctx)
 	if !strings.Contains(rowText(buf, 0), "bold") {
 		t.Errorf("bold: missing 'bold', got %q", rowText(buf, 0))
+	}
+	// R6 MED-1: assert cell style not just text presence.
+	for _, x := range []int{0, 1, 2, 3} {
+		if c := buf.Cell(x, 0); !c.St.Bold {
+			t.Errorf("bold cell at x=%d: want Bold style, got Ch=%q St=%#v", x, c.Ch, c.St)
+		}
 	}
 }
 
 func TestMarkdown_T20_ItalicInline(t *testing.T) {
 	resetMarkdownCacheForTest()
+	ctx := ctxMd(80)
+	ctx.Theme = DefaultTheme{}
 	m := NewMarkdown("*italic*")
-	buf := mustRenderMd(t, m, ctxMd(80))
+	buf := mustRenderMd(t, m, ctx)
 	if !strings.Contains(rowText(buf, 0), "italic") {
 		t.Errorf("italic: missing 'italic', got %q", rowText(buf, 0))
+	}
+	// R6 MED-1: assert cell style not just text presence.
+	for _, x := range []int{0, 1, 2, 3, 4, 5} {
+		if c := buf.Cell(x, 0); !c.St.Italic {
+			t.Errorf("italic cell at x=%d: want Italic style, got Ch=%q St=%#v", x, c.Ch, c.St)
+		}
 	}
 }
 
 func TestMarkdown_T21_InlineCode(t *testing.T) {
 	resetMarkdownCacheForTest()
+	ctx := ctxMd(80)
+	ctx.Theme = DefaultTheme{}
 	m := NewMarkdown("`code`")
-	buf := mustRenderMd(t, m, ctxMd(80))
-	if !strings.Contains(rowText(buf, 0), "code") {
-		t.Errorf("inline code: missing 'code', got %q", rowText(buf, 0))
+	buf := mustRenderMd(t, m, ctx)
+	r0 := rowText(buf, 0)
+	if !strings.Contains(r0, "code") {
+		t.Errorf("inline code: missing 'code', got %q", r0)
+	}
+	// R6 HIGH-1: backticks are markdown syntax, not rendered output.
+	if strings.Contains(r0, "`") {
+		t.Errorf("inline code: must NOT contain literal backtick (R6 HIGH-1 CC formatToken contract), got %q", r0)
 	}
 }
 

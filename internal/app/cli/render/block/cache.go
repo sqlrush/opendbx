@@ -130,16 +130,6 @@ func makeCacheKey(source string, cols int, verbose bool, themeKey string) string
 	return fmt.Sprintf("%x:%d:%t:%s", sum[:16], cols, verbose, themeKey)
 }
 
-// markdownKeyer is the optional opt-in interface a StyleTheme may
-// implement to control its cache key identity. spec-1.11 R3.1 Step 2.
-//
-// Future theme implementations with state (e.g., user-customized palette)
-// MUST implement this; same-type/different-state themes otherwise share
-// stale cached buffers under the %T fallback (Step 3).
-type markdownKeyer interface {
-	MarkdownCacheKey() string
-}
-
 // themeCacheKey returns a stable cache-key string for the given theme.
 // 3-step fallback ladder per spec § 3.3 R3.1 contract:
 //

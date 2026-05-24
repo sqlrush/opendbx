@@ -48,8 +48,27 @@ const (
 // StyleTheme provides the palette resolution from semantic StyleKind to
 // concrete style.Style. Implementations: DefaultTheme (MVP); future
 // LightTheme / DarkTheme / UserCustomTheme (spec-1.x runtime switch).
+//
+// Implementations with instance-level state (e.g., user-customized
+// palette per session) MUST implement [markdownKeyer] (defined below)
+// to prevent stale cached buffers in the spec-1.11 Markdown LRU cache.
+// Stateless themes (e.g., DefaultTheme) rely on the type-name fallback
+// in themeCacheKey (R6 NIT-2 co-locate).
 type StyleTheme interface {
 	Style(kind StyleKind) style.Style
+}
+
+// markdownKeyer is the optional opt-in interface a StyleTheme may
+// implement to control its cache key identity in the spec-1.11
+// Markdown LRU buffer cache. spec-1.11 § 3.3 R3.1 Step 2.
+//
+// Stateless StyleTheme implementations need NOT implement this — the
+// type-name fallback (`%T`) in themeCacheKey suffices. Stateful themes
+// (e.g., palette swap on runtime theme switch in spec-3.x) MUST
+// implement it; otherwise same-type/different-state themes silently
+// share stale cached buffers.
+type markdownKeyer interface {
+	MarkdownCacheKey() string
 }
 
 // WrapPolicy controls text line-wrap behavior in block.Message.Render.

@@ -7,8 +7,10 @@
 // Per HIGH-2 design: walker accepts goldmark *ast.Node + source bytes +
 // ctx + theme, materializes []rowSpec via per-node handlers, then
 // builds final buffer.Buffer via buildBuffer (no intermediate styledRow
-// exported type; rowSpec/styledSpan/WrapHint are walker-local per
-// § 3.2.1 R3.1 lock).
+// exported type). rowSpec/styledSpan are walker-local unexported types;
+// WrapHint and its constants are package-private exported identifiers
+// (block-internal use only; not part of opendbx's public-facing API)
+// per § 3.2.1 R3.1 lock + R6 NIT-1 wording fix.
 //
 // Visual baseline (R3 codex verified B-29 markdown.ts + figures.ts):
 //   - heading: no prefix glyph; bold/permission-colored
@@ -49,6 +51,8 @@ type WrapHint int
 
 const (
 	// WrapHintBreak — hard break (end of block element).
+	// Zero value: uninitialized rowSpec defaults to WrapHintBreak
+	// (R6 LOW-2 godoc clarification).
 	WrapHintBreak WrapHint = iota
 	// WrapHintContinue — soft continue (inside paragraph).
 	WrapHintContinue
@@ -59,12 +63,19 @@ const (
 // rowSpec accumulates a single rendered line. NOT exported; walker
 // materializes []rowSpec → buffer.Buffer at the end of walk() per
 // HIGH-2 design (R3.1 § 3.2.1).
+//
+// R6 CRIT-1 fix: prefix is rendered separately from text/cells so that
+// blockquote rail "▎ " applies uniformly to both text-path rows
+// (paragraph/list/heading/table) and cells-path rows (fence delegate).
+// Previously prefix was mutated into r.text which cells-path bypassed.
 type rowSpec struct {
-	text     string
-	style    StyleKind
-	spans    []styledSpan
-	cells    []buffer.Cell // optional raw styled cells, used for spec-1.7 code delegate rows
-	wrapHint WrapHint
+	prefix      string        // optional left rail / indent rendered with prefixStyle
+	prefixStyle StyleKind     // style applied to prefix cells (e.g., StyleDimmed for blockquote rail)
+	text        string        // logical text content (pre-wrap)
+	style       StyleKind     // dominant style for the row
+	spans       []styledSpan  // optional inline styled segments
+	cells       []buffer.Cell // optional raw styled cells for spec-1.7 code delegate rows
+	wrapHint    WrapHint
 }
 
 // walkMarkdown is the entry point for the AST walker (called from
@@ -204,15 +215,22 @@ func (w *mdWalker) renderList(l *ast.List, depth int) {
 
 // renderBlockquote prefixes each contained line with "▎ " (U+258E)
 // per CC figures (R3 baseline B-29).
+//
+// R6 CRIT-1: prefix is set on rowSpec.prefix (rendered separately by
+// buildBuffer) rather than mutated into rowSpec.text. This makes the
+// rail apply uniformly to text-path AND cells-path rows; nested
+// blockquote also stacks correctly ("▎ ▎ inner").
 func (w *mdWalker) renderBlockquote(b *ast.Blockquote) {
 	startRow := len(w.rows)
 	w.walkBlock(b)
-	// Apply the rail prefix to every row emitted by the nested walk.
-	prefix := "▎ "
+	const rail = "▎ "
 	for i := startRow; i < len(w.rows); i++ {
-		w.rows[i].text = prefix + w.rows[i].text
-		w.rows[i].spans = shiftSpans(w.rows[i].spans, len(prefix))
-		w.rows[i].style = StyleDimmed
+		// Stack nested blockquote rails: existing prefix gets the new
+		// rail prepended (e.g., "▎ " + "▎ inner" → "▎ ▎ inner").
+		w.rows[i].prefix = rail + w.rows[i].prefix
+		w.rows[i].prefixStyle = StyleDimmed
+		// Outer text/cells unchanged; do NOT shift spans (they index
+		// into rowSpec.text, which is unmodified).
 	}
 }
 
@@ -274,10 +292,42 @@ func (w *mdWalker) renderHR() {
 // separate component (B-29 MarkdownTable.tsx); opendbx Stage 1 ships
 // minimal grid (header + rows) without alignment / footer / multi-line
 // cells (❌-3).
+//
+// R6 HIGH-2: extracted tableFormatRow + tableSeparator helpers below
+// to satisfy rule 12 ≤100 line function limit.
 func (w *mdWalker) renderTable(t *extast.Table) {
-	var headers []string
-	var dataRows [][]string
+	headers, dataRows := tableCollectCells(t, w)
+	if len(headers) == 0 && len(dataRows) == 0 {
+		return
+	}
+	cols, widths := tableComputeWidths(headers, dataRows)
 
+	if len(headers) > 0 {
+		w.rows = append(w.rows,
+			rowSpec{text: tableSeparator('┌', '┬', '┐', widths, cols), style: StyleDimmed, wrapHint: WrapHintKeep},
+			rowSpec{text: tableFormatRow(headers, widths, cols), style: StyleBold, wrapHint: WrapHintKeep},
+			rowSpec{text: tableSeparator('├', '┼', '┤', widths, cols), style: StyleDimmed, wrapHint: WrapHintKeep},
+		)
+	} else {
+		w.rows = append(w.rows,
+			rowSpec{text: tableSeparator('┌', '┬', '┐', widths, cols), style: StyleDimmed, wrapHint: WrapHintKeep},
+		)
+	}
+	for _, r := range dataRows {
+		w.rows = append(w.rows, rowSpec{
+			text:     tableFormatRow(r, widths, cols),
+			style:    StyleNormal,
+			wrapHint: WrapHintKeep,
+		})
+	}
+	w.rows = append(w.rows,
+		rowSpec{text: tableSeparator('└', '┴', '┘', widths, cols), style: StyleDimmed, wrapHint: WrapHintKeep},
+	)
+}
+
+// tableCollectCells extracts headers + data rows from a goldmark table AST.
+// R6 HIGH-2 extracted from renderTable.
+func tableCollectCells(t *extast.Table, w *mdWalker) (headers []string, dataRows [][]string) {
 	for c := t.FirstChild(); c != nil; c = c.NextSibling() {
 		switch tr := c.(type) {
 		case *extast.TableHeader:
@@ -296,19 +346,19 @@ func (w *mdWalker) renderTable(t *extast.Table) {
 			dataRows = append(dataRows, row)
 		}
 	}
+	return
+}
 
-	if len(headers) == 0 && len(dataRows) == 0 {
-		return
-	}
-
-	// Compute column widths.
-	cols := len(headers)
+// tableComputeWidths returns the column count and per-column max display
+// width across headers + data rows. R6 HIGH-2 extracted from renderTable.
+func tableComputeWidths(headers []string, dataRows [][]string) (cols int, widths []int) {
+	cols = len(headers)
 	for _, r := range dataRows {
 		if len(r) > cols {
 			cols = len(r)
 		}
 	}
-	widths := make([]int, cols)
+	widths = make([]int, cols)
 	updateW := func(cells []string) {
 		for i, c := range cells {
 			if i >= cols {
@@ -323,60 +373,45 @@ func (w *mdWalker) renderTable(t *extast.Table) {
 	for _, r := range dataRows {
 		updateW(r)
 	}
+	return
+}
 
-	formatRow := func(cells []string) string {
-		var b strings.Builder
-		b.WriteRune('│')
-		for i := 0; i < cols; i++ {
-			cell := ""
-			if i < len(cells) {
-				cell = cells[i]
-			}
-			pad := widths[i] - width.Width(cell)
-			if pad < 0 {
-				pad = 0
-			}
-			b.WriteRune(' ')
-			b.WriteString(cell)
-			b.WriteString(strings.Repeat(" ", pad))
-			b.WriteString(" │")
+// tableFormatRow renders a single data/header row using the precomputed
+// column widths. R6 HIGH-2 extracted from renderTable closure.
+func tableFormatRow(cells []string, widths []int, cols int) string {
+	var b strings.Builder
+	b.WriteRune('│')
+	for i := 0; i < cols; i++ {
+		cell := ""
+		if i < len(cells) {
+			cell = cells[i]
 		}
-		return b.String()
-	}
-	separator := func(start, mid, end rune) string {
-		var b strings.Builder
-		b.WriteRune(start)
-		for i := 0; i < cols; i++ {
-			b.WriteString(strings.Repeat("─", widths[i]+2))
-			if i < cols-1 {
-				b.WriteRune(mid)
-			}
+		pad := widths[i] - width.Width(cell)
+		if pad < 0 {
+			pad = 0
 		}
-		b.WriteRune(end)
-		return b.String()
+		b.WriteRune(' ')
+		b.WriteString(cell)
+		b.WriteString(strings.Repeat(" ", pad))
+		b.WriteString(" │")
 	}
+	return b.String()
+}
 
-	if len(headers) > 0 {
-		w.rows = append(w.rows,
-			rowSpec{text: separator('┌', '┬', '┐'), style: StyleDimmed, wrapHint: WrapHintKeep},
-			rowSpec{text: formatRow(headers), style: StyleBold, wrapHint: WrapHintKeep},
-			rowSpec{text: separator('├', '┼', '┤'), style: StyleDimmed, wrapHint: WrapHintKeep},
-		)
-	} else {
-		w.rows = append(w.rows,
-			rowSpec{text: separator('┌', '┬', '┐'), style: StyleDimmed, wrapHint: WrapHintKeep},
-		)
+// tableSeparator renders a horizontal separator row using box-drawing
+// glyphs (┌┬┐ top, ├┼┤ mid, └┴┘ bottom). R6 HIGH-2 extracted from
+// renderTable closure.
+func tableSeparator(start, mid, end rune, widths []int, cols int) string {
+	var b strings.Builder
+	b.WriteRune(start)
+	for i := 0; i < cols; i++ {
+		b.WriteString(strings.Repeat("─", widths[i]+2))
+		if i < cols-1 {
+			b.WriteRune(mid)
+		}
 	}
-	for _, r := range dataRows {
-		w.rows = append(w.rows, rowSpec{
-			text:     formatRow(r),
-			style:    StyleNormal,
-			wrapHint: WrapHintKeep,
-		})
-	}
-	w.rows = append(w.rows,
-		rowSpec{text: separator('└', '┴', '┘'), style: StyleDimmed, wrapHint: WrapHintKeep},
-	)
+	b.WriteRune(end)
+	return b.String()
 }
 
 // collectInline walks inline children of a block node and returns the
@@ -412,14 +447,15 @@ func (w *mdWalker) collectInlineInto(parent ast.Node, b *strings.Builder, spans 
 			}
 			*spans = append(*spans, styledSpan{start: start, end: end, style: style})
 		case *ast.CodeSpan:
+			// R6 HIGH-1: CC formatToken `code` token (B-29) emits content
+			// only — backticks are markdown syntax, not rendered output.
+			// Style (StyleCode) carries the visual distinction.
 			start := b.Len()
-			b.WriteString("`")
 			for ic := n.FirstChild(); ic != nil; ic = ic.NextSibling() {
 				if t, ok := ic.(*ast.Text); ok {
 					b.Write(t.Segment.Value(w.src))
 				}
 			}
-			b.WriteString("`")
 			end := b.Len()
 			*spans = append(*spans, styledSpan{start: start, end: end, style: StyleCode})
 		case *ast.Link:
@@ -544,18 +580,26 @@ func (w *mdWalker) buildBuffer() buffer.Buffer {
 			continue
 		}
 		for i, line := range lines {
-			// Only the first wrapped line keeps the original spans;
-			// subsequent lines lose span styling (spec-1.11 MVP — full
-			// span tracking through wrap is spec-1.21 follow-on).
+			// Only the first wrapped line keeps the original spans and
+			// prefix; subsequent lines lose span styling and prefix
+			// (spec-1.11 MVP — full prefix + span tracking through wrap
+			// is spec-1.21 follow-on; blockquote bodies rarely wrap in
+			// practice given snapshot-rendering semantics).
 			var spans []styledSpan
+			var prefix string
+			var prefixStyle StyleKind
 			if i == 0 {
 				spans = r.spans
+				prefix = r.prefix
+				prefixStyle = r.prefixStyle
 			}
 			expanded = append(expanded, rowSpec{
-				text:     line,
-				style:    r.style,
-				spans:    spans,
-				wrapHint: r.wrapHint,
+				prefix:      prefix,
+				prefixStyle: prefixStyle,
+				text:        line,
+				style:       r.style,
+				spans:       spans,
+				wrapHint:    r.wrapHint,
 			})
 		}
 	}
@@ -572,16 +616,26 @@ func (w *mdWalker) buildBuffer() buffer.Buffer {
 		return measureOnlyBuf(w.ctx.Cols, rows)
 	}
 	for y, r := range expanded {
+		// R6 CRIT-1: prefix (e.g., blockquote "▎ ") is rendered first;
+		// remaining content (text or cells) starts at x = visual width
+		// of prefix. Works uniformly for text-path AND cells-path rows.
+		prefixCols := 0
+		if r.prefix != "" {
+			prefixStyle := w.theme.Style(r.prefixStyle)
+			writeTextRow(grid, 0, y, r.prefix, prefixStyle, w.ctx.Cols)
+			prefixCols = width.Width(r.prefix)
+		}
 		if len(r.cells) > 0 {
-			writeRawCells(grid, y, r.cells, w.ctx.Cols)
+			writeRawCells(grid, y, r.cells, prefixCols, w.ctx.Cols)
 			continue
 		}
 		baseStyle := w.theme.Style(r.style)
-		writeTextRow(grid, 0, y, r.text, baseStyle, w.ctx.Cols)
-		// Apply styled spans on top of base style.
+		writeTextRow(grid, prefixCols, y, r.text, baseStyle, w.ctx.Cols)
+		// Apply styled spans on top of base style (span byte offsets
+		// index into r.text; visual x offset is prefixCols + accumulated).
 		for _, sp := range r.spans {
 			spanStyle := w.theme.Style(sp.style)
-			applySpanStyle(grid, y, r.text, sp.start, sp.end, spanStyle, w.ctx.Cols)
+			applySpanStyle(grid, y, r.text, sp.start, sp.end, spanStyle, prefixCols, w.ctx.Cols)
 		}
 	}
 	return grid
@@ -590,8 +644,18 @@ func (w *mdWalker) buildBuffer() buffer.Buffer {
 // writeRawCells copies a delegated Buffer row while preserving per-cell style.
 // Continuation cells are skipped because SetCell writes them from the wide main
 // cell; writing the continuation directly would clear the main cell.
-func writeRawCells(grid *buffer.Grid, y int, cells []buffer.Cell, cols int) {
-	for x, c := range cells {
+//
+// xOffset (R6 CRIT-1) shifts all cells right by N columns so blockquote rail
+// "▎ " can be rendered first and the delegated content starts after it.
+//
+// R6 MED-2: blank-zero-style branch documented — when xOffset > 0 (blockquote-
+// wrapping-fence), the delegated buffer may include trailing blank padding
+// (Ch=0 + style.Style{}). Without this guard, those padding cells would
+// overwrite valid prefix cells when cells extend past valid content. Kept
+// even when xOffset == 0 to avoid extra cleared cells past content end.
+func writeRawCells(grid *buffer.Grid, y int, cells []buffer.Cell, xOffset, cols int) {
+	for i, c := range cells {
+		x := xOffset + i
 		if x >= cols {
 			break
 		}
@@ -607,8 +671,12 @@ func writeRawCells(grid *buffer.Grid, y int, cells []buffer.Cell, cols int) {
 
 // applySpanStyle overlays a span's style onto cells within [start, end)
 // byte offsets of the given text. Walks runes parallel to writeTextRow.
-func applySpanStyle(grid *buffer.Grid, y int, text string, byteStart, byteEnd int, s style.Style, cols int) {
-	x := 0
+//
+// xOffset (R6 CRIT-1) is the visual column where text begins (e.g.,
+// `width.Width("▎ ")` after blockquote prefix). Spans index into text
+// bytes; visual cell coordinate is `xOffset + accumulated rune widths`.
+func applySpanStyle(grid *buffer.Grid, y int, text string, byteStart, byteEnd int, s style.Style, xOffset, cols int) {
+	x := xOffset
 	for i := 0; i < len(text) && x < cols; {
 		r, size := utf8.DecodeRuneInString(text[i:])
 		rw := width.RuneWidth(r)
