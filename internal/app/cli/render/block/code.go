@@ -71,6 +71,10 @@ func (c Code) Render(ctx Context) (buffer.Buffer, error) {
 // shared with spec-1.11 markdown via blockCache singleton (Q6 ★B).
 func renderCodeBlock(ctx Context, lang, body string) (buffer.Buffer, int) {
 	theme := themeOrDefault(ctx.Theme)
+	// R2 codex CRIT-1 fix: type-assert against normalized theme (not
+	// ctx.Theme) so nil Theme correctly inherits DefaultTheme's
+	// HighlighterTheme implementation per § 3.2 + I-3 contract.
+	hl, hlOK := theme.(HighlighterTheme)
 
 	// spec-1.12 D-7 cache lookup: skip when source too big or MeasureOnly
 	// (MeasureOnly fast path below uses computed row count directly).
@@ -78,7 +82,7 @@ func renderCodeBlock(ctx Context, lang, body string) (buffer.Buffer, int) {
 	var cacheKey string
 	if cacheable {
 		styleName := ""
-		if hl, ok := ctx.Theme.(HighlighterTheme); ok {
+		if hlOK {
 			styleName = hl.CodeStyle()
 		}
 		cacheKey = makeBlockCacheKey(body, ctx.Cols, ctx.Verbose, themeCacheKey(theme), ctx.Wrap, lang, styleName, ctx.ColorDepth)
@@ -90,8 +94,9 @@ func renderCodeBlock(ctx Context, lang, body string) (buffer.Buffer, int) {
 
 	// spec-1.12 D-3 highlight dispatch: when lang non-empty AND theme
 	// implements HighlighterTheme, try chroma. Panic / unknown lang
-	// falls through to plain path (I-2).
-	if hl, ok := ctx.Theme.(HighlighterTheme); ok && strings.TrimSpace(lang) != "" {
+	// falls through to plain path (I-2). R2 codex CRIT-1: use hl from
+	// normalized theme so nil Theme → DefaultTheme highlight path fires.
+	if hlOK && strings.TrimSpace(lang) != "" {
 		if buf, rows := renderHighlightedCodeBlock(ctx, lang, body, hl); buf != nil {
 			if cacheable {
 				blockCache.Put(cacheKey, buf)

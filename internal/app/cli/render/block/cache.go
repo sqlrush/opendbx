@@ -2,17 +2,19 @@
 //
 // Author: sqlrush
 
-// File cache.go — spec-1.11 D-4 LRU buffer cache for Markdown block.
+// File cache.go — spec-1.11 D-4 LRU buffer cache, generalized to shared
+// block cache by spec-1.12 D-7 (markdownCache→blockCache rename;
+// 5-field key→8-field key adding lang/codeStyleName/colorDepth).
 //
-// Design (R3 + R3.1):
+// Design (spec-1.11 R3+R3.1 + spec-1.12 D-7):
 //   - Package-level singleton (Q5 ★A): one cache shared across all
-//     Markdown instances. Maximizes hit rate when scrollback re-renders
-//     historical messages.
+//     block types (Markdown / Code / future). Maximizes hit rate when
+//     scrollback re-renders historical messages.
 //   - 256-entry cap (user-locked R2.1; ~1MB typical / 64MB pathological
 //     bound with 256KB source no-cache guard).
-//   - 5-field cacheKey: sha256(source)+cols+verbose+themeKey+wrap (R3
-//     added themeKey for theme variance; R7 HIGH-1 added wrap because
-//     WrapSoft/Hard/None produce different cell grids).
+//   - 8-field cacheKey: sha256(source)+cols+verbose+themeKey+wrap+
+//     lang+codeStyleName+colorDepth (spec-1.12 D-7 R2 codex R2 cleanup —
+//     stale "5-field Markdown-only" header text replaced).
 //   - I-8 immutability contract: cache returns Buffer by reference;
 //     caller must treat as read-only. Cache hit < 5µs (map lookup only).
 //   - sync.Mutex guards map + LRU list only (NOT parse). Single-flight

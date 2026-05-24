@@ -18,9 +18,9 @@ import (
 // (spec-1.11) / Code (spec-1.12). Remaining 3 stubs (Diff/Banner/Progress)
 // preserve the spec-0.13 stub contract; future spec-1.x produces each.
 //
-// **Code is intentionally included here** — code.go hosts the
-// renderCodeBlock helper used by Message but Code.Render itself remains
-// unsupported until spec-1.12 code-highlight-block.
+// spec-1.12 R2 codex L1: Code removed from stub list (promoted to
+// production). renderCodeBlock helper remains in code.go alongside
+// the production Code{Source, Lang} block type per spec-1.12 D-4.
 func TestNonProductionStubs_ReturnUnsupported(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

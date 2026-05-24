@@ -73,10 +73,19 @@ func (m Markdown) Render(ctx Context) (buffer.Buffer, error) {
 
 	theme := themeOrDefault(ctx.Theme)
 	tKey := themeCacheKey(theme)
+	// R2 codex HIGH-1 fix: Markdown body may contain fenced code blocks
+	// that render through renderCodeBlock highlight path (cells vary by
+	// theme.CodeStyle()). Without codeStyleName in the cache key, two
+	// same-type themes with different CodeStyle() values share stale
+	// cached buffers. Resolve from normalized theme (CRIT-1 parity).
+	codeStyleName := ""
+	if hl, ok := theme.(HighlighterTheme); ok {
+		codeStyleName = hl.CodeStyle()
+	}
 
 	cacheable := len(m.Source) <= blockCacheMaxSourceBytes
 	if cacheable {
-		key := makeBlockCacheKey(m.Source, ctx.Cols, ctx.Verbose, tKey, ctx.Wrap, "", "", ctx.ColorDepth)
+		key := makeBlockCacheKey(m.Source, ctx.Cols, ctx.Verbose, tKey, ctx.Wrap, "", codeStyleName, ctx.ColorDepth)
 		if cached := blockCache.Get(key); cached != nil {
 			if ctx.MeasureOnly {
 				_, rows := cached.Size()
@@ -90,7 +99,7 @@ func (m Markdown) Render(ctx Context) (buffer.Buffer, error) {
 	if len(m.Source) == 0 {
 		empty := measureOnlyBuf(ctx.Cols, 0)
 		if cacheable {
-			blockCache.Put(makeBlockCacheKey(m.Source, ctx.Cols, ctx.Verbose, tKey, ctx.Wrap, "", "", ctx.ColorDepth), empty)
+			blockCache.Put(makeBlockCacheKey(m.Source, ctx.Cols, ctx.Verbose, tKey, ctx.Wrap, "", codeStyleName, ctx.ColorDepth), empty)
 		}
 		return empty, nil
 	}
@@ -104,7 +113,7 @@ func (m Markdown) Render(ctx Context) (buffer.Buffer, error) {
 	}
 
 	if cacheable {
-		blockCache.Put(makeBlockCacheKey(m.Source, ctx.Cols, ctx.Verbose, tKey, ctx.Wrap, "", "", ctx.ColorDepth), buf)
+		blockCache.Put(makeBlockCacheKey(m.Source, ctx.Cols, ctx.Verbose, tKey, ctx.Wrap, "", codeStyleName, ctx.ColorDepth), buf)
 	}
 	return buf, nil
 }

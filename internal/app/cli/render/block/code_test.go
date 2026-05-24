@@ -386,6 +386,67 @@ func TestCode_T31_CodeBlockWrapsRenderCodeBlock(t *testing.T) {
 
 // ---- T1-36: concurrent Render race ----
 
+// TestCode_R2_NilThemeAutoHighlight — R2 codex CRIT-1 regression:
+// nil Theme should be normalized to DefaultTheme per § 3.2 + I-3, and
+// DefaultTheme implements HighlighterTheme per CRIT-1 ★B, so lang-
+// bearing fences with nil Theme should trigger highlight (not silently
+// fall back to plain path).
+func TestCode_R2_NilThemeAutoHighlight(t *testing.T) {
+	resetBlockCacheForTest()
+	c := NewCode("func main() {}", "go")
+	buf, err := c.Render(Context{Cols: 80}) // nil Theme
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	hasHighlight := false
+	for x := 1; x < 30; x++ {
+		if buf.Cell(x, 1).St.FG != 0 {
+			hasHighlight = true
+			break
+		}
+	}
+	if !hasHighlight {
+		t.Errorf("nil Theme (default-on highlight per CRIT-1 ★B): want highlighted cells, got plain")
+	}
+}
+
+// TestMarkdown_R2_NilThemeFenceAutoHighlight — R2 codex CRIT-1 same
+// invariant via Markdown caller (which leaves Theme nil by default).
+func TestMarkdown_R2_NilThemeFenceAutoHighlight(t *testing.T) {
+	resetBlockCacheForTest()
+	m := NewMarkdown("```go\nfunc main() {}\n```")
+	buf, err := m.Render(Context{Cols: 80, Wrap: WrapSoft}) // nil Theme
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	// Row 0 is the lang label, body starts row 1.
+	hasHighlight := false
+	for x := 1; x < 30; x++ {
+		if buf.Cell(x, 1).St.FG != 0 {
+			hasHighlight = true
+			break
+		}
+	}
+	if !hasHighlight {
+		t.Errorf("Markdown nil Theme fence (default-on highlight per CRIT-1 ★B): want highlighted cells, got plain")
+	}
+}
+
+// TestMarkdown_R2_CacheMissOnDifferentCodeStyle — R2 codex HIGH-1
+// regression: Markdown body containing fenced code blocks must
+// invalidate cache when theme.CodeStyle() changes.
+func TestMarkdown_R2_CacheMissOnDifferentCodeStyle(t *testing.T) {
+	resetBlockCacheForTest()
+	src := "```go\nfunc main() {}\n```"
+	ctx1 := Context{Cols: 80, Wrap: WrapSoft, Theme: codeStyleTestTheme{styleName: "monokai"}}
+	ctx2 := Context{Cols: 80, Wrap: WrapSoft, Theme: codeStyleTestTheme{styleName: "github"}}
+	buf1, _ := NewMarkdown(src).Render(ctx1)
+	buf2, _ := NewMarkdown(src).Render(ctx2)
+	if fmt.Sprintf("%p", buf1) == fmt.Sprintf("%p", buf2) {
+		t.Errorf("Markdown fence with different CodeStyle: want different cache entry (HIGH-1), got same Buffer ref")
+	}
+}
+
 func TestCode_ConcurrentRenderRace(t *testing.T) {
 	resetBlockCacheForTest()
 	var wg sync.WaitGroup
