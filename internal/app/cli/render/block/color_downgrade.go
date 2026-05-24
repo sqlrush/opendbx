@@ -167,8 +167,11 @@ func downgradeOneColor(c style.Color, depth int) style.Color {
 	if uint32(c)&truecolorBit == 0 {
 		return c
 	}
-	r := uint8((uint32(c) >> 16) & 0xFF)
-	g := uint8((uint32(c) >> 8) & 0xFF)
-	b := uint8(uint32(c) & 0xFF)
+	// spec-1.13 R3 M2: `& 0xFF` mask guarantees the high bits are clear
+	// before the uint8 conversion — gosec G115 cannot prove this through
+	// the bitmask, so suppress with spec_ref per suppression-lint rule.
+	r := uint8((uint32(c) >> 16) & 0xFF) //nolint:gosec // spec-1.13 R3 M2: 0xFF mask narrows to 8 bits
+	g := uint8((uint32(c) >> 8) & 0xFF)  //nolint:gosec // spec-1.13 R3 M2: 0xFF mask narrows to 8 bits
+	b := uint8(uint32(c) & 0xFF)         //nolint:gosec // spec-1.13 R3 M2: 0xFF mask narrows to 8 bits
 	return mapChromaColor(chroma.NewColour(r, g, b), depth)
 }
