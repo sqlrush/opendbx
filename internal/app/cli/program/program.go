@@ -8,6 +8,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
@@ -31,7 +33,8 @@ type Program struct {
 	quitTimer   Timer
 	quitWindow  time.Duration
 	clock       SimClock
-	cancelCause func() // injected by Run to break out of the scheduler loop on QuitMsg
+	cancelCause func()    // injected by Run to break out of the scheduler loop on QuitMsg
+	runOnce     sync.Once // R2 L-4: single-use Run guard; second concurrent call panics
 }
 
 // Option configures a Program at construction.
@@ -84,6 +87,13 @@ func New(driver terminal.Driver, initial Model, opts ...Option) *Program {
 // scheduler.EmitMsg (priority queue) so worker pool saturation cannot
 // stall input.
 func (p *Program) Run(ctx context.Context) error {
+	// R2 L-4: single-use guard. Concurrent Run() would race on p.scheduler
+	// assignment and break the single-goroutine ownership contract.
+	firstCall := false
+	p.runOnce.Do(func() { firstCall = true })
+	if !firstCall {
+		panic("program.Run: already running (single-use; not safe for concurrent or repeat invocation)")
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	p.cancelCause = cancel
@@ -147,8 +157,14 @@ func (p *Program) pollEvents(ctx context.Context) {
 func (p *Program) handleMsg(msg scheduler.Msg) {
 	defer func() {
 		if r := recover(); r != nil {
+			// R2 H-1 (claude code-reviewer + go-reviewer 共识):
+			// - wrap with %w: scheduler.ErrPanicRecovered so callers can
+			//   errors.Is(em.Err, scheduler.ErrPanicRecovered) parity with
+			//   spec-1.4 R3 H-A worker pool panic path
+			// - capture debug.Stack() into ErrorMsg.Stack (H-6 contract)
 			p.scheduler.EmitError(scheduler.ErrorMsg{
-				Err:       fmt.Errorf("program.handleMsg panic: %v", r),
+				Err:       fmt.Errorf("%w: program.handleMsg: %v", scheduler.ErrPanicRecovered, r),
+				Stack:     debug.Stack(),
 				Submitted: p.clock.Now(),
 				Frame:     p.scheduler.CurrentFrame(),
 			})
@@ -182,7 +198,13 @@ func (p *Program) preDispatchSystem(msg scheduler.Msg) (handled bool) {
 			} else {
 				// First press within window — also dispatch CancelCmdMsg
 				// so the Model can cancel any in-flight context.
-				_, cmd := p.model.Update(CancelCmdMsg{})
+				// R2 H-2: must NOT discard newModel; immutable Update
+				// contract requires replacing p.model when Update returns
+				// a non-nil new model (rule 12 immutable data).
+				newModel, cmd := p.model.Update(CancelCmdMsg{})
+				if newModel != nil {
+					p.model = newModel
+				}
 				if cmd != nil {
 					p.scheduler.Schedule(cmd)
 				}
@@ -289,18 +311,31 @@ func (p *Program) paintStatusLine(grid *buffer.Grid, row int) {
 // happens AFTER scheduler.Run returns (so the worker pool is already
 // stopped) — Cleanup callbacks must therefore not depend on scheduler /
 // worker availability.
+//
+// R2 M-3 (go-reviewer): defer/recover lives in runCleanupCmd helper to
+// keep the recovery scope flat (rule 12 nesting ≤ 4 + DRY).
 func (p *Program) runCleanup() {
-	if c, ok := p.model.(Cleanup); ok {
-		cmd := c.Cleanup()
-		if cmd != nil {
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Warn("program: Cleanup Cmd panicked", "panic", r)
-				}
-			}()
-			_ = cmd()
-		}
+	c, ok := p.model.(Cleanup)
+	if !ok {
+		return
 	}
+	cmd := c.Cleanup()
+	if cmd == nil {
+		return
+	}
+	runCleanupCmd(cmd)
+}
+
+// runCleanupCmd executes a Cleanup Cmd synchronously with a panic
+// recovery scope. Logs but does not propagate panics — Run is exiting
+// and there is no scheduler available to route an ErrorMsg through.
+func runCleanupCmd(cmd scheduler.Cmd) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Warn("program: Cleanup Cmd panicked", "panic", r)
+		}
+	}()
+	_ = cmd()
 }
 
 // paintBufferAt copies cells from src into dst starting at (xOff, yOff).

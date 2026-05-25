@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
+	"github.com/sqlrush/opendbx/internal/app/cli/render/scheduler"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/terminal"
 )
 
@@ -72,7 +73,7 @@ func BenchmarkProgram_resize(b *testing.B) {
 // Update + model-replace path without dispatching the returned Cmd via
 // the scheduler. Production handleMsg routes Cmd through
 // p.scheduler.Schedule which requires a live scheduler.
-func (p *Program) handleMsgNoSchedule(msg interface{}) {
+func (p *Program) handleMsgNoSchedule(msg scheduler.Msg) {
 	if p.preDispatchSystemNoSchedule(msg) {
 		return
 	}
@@ -82,7 +83,7 @@ func (p *Program) handleMsgNoSchedule(msg interface{}) {
 	}
 }
 
-func (p *Program) preDispatchSystemNoSchedule(msg interface{}) (handled bool) {
+func (p *Program) preDispatchSystemNoSchedule(msg scheduler.Msg) (handled bool) {
 	switch msg.(type) {
 	case QuitMsg, quitDisarmMsg:
 		return true

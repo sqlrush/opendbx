@@ -191,11 +191,14 @@ func (s *FrameScheduler) Tick() <-chan Tick { return s.tickCh }
 func (s *FrameScheduler) Msgs() <-chan Msg { return s.msgCh }
 
 // CurrentFrame returns the current frame counter (spec-1.4 R3.4 public).
-// Safe to call from any goroutine.
+//
+// Concurrency: the field is mutated only on the render goroutine. The
+// intended callers are msgHook implementations (which run synchronously
+// inside the render goroutine via WithMsgHook), so reads are racy-only
+// when invoked from arbitrary external goroutines. Cross-goroutine
+// callers MUST treat the return value as a best-effort snapshot used
+// only for ErrorMsg debug context (the exact value is not load-bearing).
 func (s *FrameScheduler) CurrentFrame() int {
-	// frame is only mutated on the render goroutine. Cross-goroutine
-	// reads are best-effort snapshots — caller uses this only for
-	// ErrorMsg debug context where exact value is not load-bearing.
 	return s.frame
 }
 

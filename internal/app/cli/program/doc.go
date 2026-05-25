@@ -14,7 +14,14 @@
 //   - spec-1.15-tui-program.md (DRAFT R5)
 //   - spec-1.4 R3 errata (scheduler.Cmd / Msg / WithMsgHook / EmitMsg / EmitError)
 //
-// DAG position: program is a root caller (index = 10) — imports
-// render/buffer, render/scheduler, render/style, render/terminal,
-// render/width, render/block, tui. Reverse imports FORBIDDEN.
+// DAG position: program is a root caller (index = 10).
+// Actual imports today (R2 L-1 sweep):
+//   - render/buffer / render/scheduler / render/style /
+//     render/terminal / render/width
+//
+// Reverse imports FORBIDDEN.
+//
+// Forward (spec-1.16 / spec-1.17 / spec-1.20 / spec-1.21 will add):
+//   - render/block (Model.View output via block render pipeline)
+//   - tui (production entry replaces tui.Run with program.Run per Q13 ★A)
 package program
