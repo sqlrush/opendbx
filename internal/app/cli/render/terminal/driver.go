@@ -22,6 +22,7 @@ type Event interface{ isEvent() }
 const (
 	KeyNone          = 0
 	KeyCtrlC         = 3  // ETX
+	KeyBackspace     = 8  // BS (ASCII Backspace; spec-1.16 R2 C1 input editing)
 	KeyEnter         = 13 // CR
 	KeyCtrlBackslash = 28
 	KeyEscape        = 27

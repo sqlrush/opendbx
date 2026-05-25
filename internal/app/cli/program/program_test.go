@@ -677,3 +677,79 @@ func TestProgram_InputRow_QuitArmedOverride(t *testing.T) {
 		t.Errorf("input row when quit armed = %q", got)
 	}
 }
+
+// --- spec-1.16 mode-aware paint tests ---
+
+// R2 H-3 ★A: Natural mode keeps "> " prompt prefix.
+func TestProgram_InputRow_Natural_Prompt(t *testing.T) {
+	drv := newFakeDriver(40, 5)
+	m := &testModel{inputState: InputState{Buffer: "hello", Cursor: 5}}
+	p := New(drv, m)
+	grid, _ := buffer.NewGrid(40, 5)
+	p.renderFn(grid)
+	got := rowToString(grid, 3)
+	if !strings.HasPrefix(got, "> hello") {
+		t.Errorf("Natural input row = %q; want prefix '> hello'", got)
+	}
+}
+
+// R2 H-3 ★A: Slash mode renders Buffer literally (no "> " prompt;
+// Buffer[0]='/' is the mode glyph itself).
+func TestProgram_InputRow_Slash_NoPrompt(t *testing.T) {
+	drv := newFakeDriver(40, 5)
+	m := &testModel{inputState: InputState{Buffer: "/help", Cursor: 5}}
+	p := New(drv, m)
+	grid, _ := buffer.NewGrid(40, 5)
+	p.renderFn(grid)
+	got := rowToString(grid, 3)
+	if strings.HasPrefix(got, "> ") {
+		t.Errorf("Slash input row = %q; should NOT have '> ' prompt", got)
+	}
+	if !strings.HasPrefix(got, "/help") {
+		t.Errorf("Slash input row = %q; want prefix '/help'", got)
+	}
+}
+
+// R2 H-3 ★A: SQL mode also literal (no "> " prompt).
+func TestProgram_InputRow_SQL_NoPrompt(t *testing.T) {
+	drv := newFakeDriver(40, 5)
+	m := &testModel{inputState: InputState{Buffer: "\\d", Cursor: 2}}
+	p := New(drv, m)
+	grid, _ := buffer.NewGrid(40, 5)
+	p.renderFn(grid)
+	got := rowToString(grid, 3)
+	if strings.HasPrefix(got, "> ") {
+		t.Errorf("SQL input row = %q; should NOT have '> ' prompt", got)
+	}
+	if !strings.HasPrefix(got, "\\d") {
+		t.Errorf("SQL input row = %q; want prefix '\\d'", got)
+	}
+}
+
+// spec-1.16 D-5 + R2 M-4 (R-9): Program appends mode segment to status line.
+func TestProgram_StatusLine_AppendsModeSegment(t *testing.T) {
+	cases := []struct {
+		name string
+		buf  string
+		want string
+	}{
+		{"natural", "hello", "natural"},
+		{"slash", "/help", "slash"},
+		{"sql", "\\d", "sql"},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			drv := newFakeDriver(40, 5)
+			m := &testModel{inputState: InputState{Buffer: c.buf}}
+			p := New(drv, m)
+			grid, _ := buffer.NewGrid(40, 5)
+			p.renderFn(grid)
+			got := rowToString(grid, 4)
+			if !strings.Contains(got, c.want) {
+				t.Errorf("mode=%s status row = %q; want contains %q", c.name, got, c.want)
+			}
+		})
+	}
+}

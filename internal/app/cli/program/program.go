@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sqlrush/opendbx/internal/app/cli/input"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/scheduler"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/style"
@@ -290,6 +291,13 @@ func (p *Program) renderFn(next *buffer.Grid) {
 	}
 }
 
+// paintInputRow renders the input row at the given grid row.
+//
+// spec-1.16 R2 H-3 ★A: mode classification by input.DeriveMode(buffer)
+// at read site (mode is NEVER state). Natural mode renders "> {buf}_";
+// Slash/SQL mode renders "{buf}_" with Buffer[0] (the trigger char)
+// acting as the mode glyph itself (no "> " prefix — CC `!bash` parity).
+// quitArmed override remains (spec-1.15 D-5; R2 L-2 explicit).
 func (p *Program) paintInputRow(grid *buffer.Grid, row int) {
 	cols, _ := grid.Size()
 	if p.quitArmed {
@@ -297,15 +305,29 @@ func (p *Program) paintInputRow(grid *buffer.Grid, row int) {
 		paintTextAt(grid, s, 0, row, style.Style{Bold: true}, cols)
 		return
 	}
-	if im, ok := p.model.(InputModel); ok {
-		st := im.InputState()
-		text := "> " + st.Buffer
-		paintTextAt(grid, text, 0, row, style.Style{}, cols)
+	im, hasInput := p.model.(InputModel)
+	if !hasInput {
+		paintTextAt(grid, "> ", 0, row, style.Style{}, cols)
 		return
 	}
-	paintTextAt(grid, "> ", 0, row, style.Style{}, cols)
+	st := im.InputState()
+	mode := input.DeriveMode(st.Buffer)
+	st_in := input.StyleFor(mode)
+	if mode == input.InputModeNatural {
+		// Natural mode keeps the "> " prompt.
+		x := paintTextAt(grid, "> ", 0, row, style.Style{}, cols)
+		paintTextAt(grid, st.Buffer, x, row, st_in, cols)
+	} else {
+		// Slash/SQL: Buffer literal is itself the mode glyph + body.
+		paintTextAt(grid, st.Buffer, 0, row, st_in, cols)
+	}
 }
 
+// paintStatusLine renders the status line. Mode segment is unconditionally
+// appended at the end (spec-1.16 D-5 + R2 M-4 / R-9 dedup policy:
+// StatusSegmenter implementors MUST NOT include their own mode segment
+// to avoid duplication; this is a breaking constraint introduced by
+// spec-1.16).
 func (p *Program) paintStatusLine(grid *buffer.Grid, row int) {
 	cols, _ := grid.Size()
 	var segs []StatusSegment
@@ -314,6 +336,11 @@ func (p *Program) paintStatusLine(grid *buffer.Grid, row int) {
 	}
 	if len(segs) == 0 {
 		segs = []StatusSegment{{Text: "opendbx"}}
+	}
+	// Append mode segment from InputModel.Buffer (spec-1.16 D-5).
+	if im, ok := p.model.(InputModel); ok {
+		mode := input.DeriveMode(im.InputState().Buffer)
+		segs = append(segs, StatusSegment{Text: mode.String()})
 	}
 	x := 0
 	for _, seg := range segs {
