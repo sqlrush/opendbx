@@ -6,23 +6,32 @@ package bootstrap
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/gdamore/tcell/v2"
+
+	"github.com/sqlrush/opendbx/internal/app/cli/demoapp"
+	"github.com/sqlrush/opendbx/internal/app/cli/program"
+	tcelladapter "github.com/sqlrush/opendbx/internal/app/cli/render/terminal/tcell"
 	"github.com/sqlrush/opendbx/internal/app/cli/tui"
 )
 
-// newScreenFn is the screen factory; production uses tui.NewScreen.
-// Tests replace it with a SimulationScreen factory.
+// newScreenFn is the screen factory for the program.Run production path
+// (spec-1.17 D-6b). It returns an UN-init'd screen — the tcell adapter's
+// Driver.Init (invoked by scheduler.Run) owns screen.Init. Production
+// uses tui.NewScreenNoInit; tests replace it with a SimulationScreen
+// factory (SimulationScreen also returns un-init'd, matching the
+// contract; Driver.Init runs sim.Init()).
 //
-// T-13 go M-2: newScreenFnMu guards mutation/read in case future
-// tests run in parallel inside this package. Current tests document
-// "NOT t.Parallel" but the mutex makes the contract machine-enforced.
+// T-13 go M-2: newScreenFnMu guards mutation/read in case tests run in
+// parallel inside this package. Current tests document "NOT t.Parallel"
+// but the mutex makes the contract machine-enforced.
 //
-//nolint:gochecknoglobals // spec-0.12 D-3: test seam for SimulationScreen injection.
+//nolint:gochecknoglobals // spec-0.12 D-3 / spec-1.17 D-6b: test seam for SimulationScreen injection.
 var (
 	newScreenFnMu sync.RWMutex
-	newScreenFn   = tui.NewScreen
+	newScreenFn   = tui.NewScreenNoInit
 )
 
 // getNewScreenFn returns the current factory (read-locked).
@@ -41,34 +50,48 @@ func setNewScreenFn(fn func() (tcell.Screen, error)) {
 	newScreenFn = fn
 }
 
-// LaunchInteractiveTUI runs the empty tcell main loop. spec-0.12 D-4:
-// cmd → entrypoints → bootstrap → app/cli/tui is the IMP layer chain;
-// cmd cannot import internal/app/* directly. Layer matrix:
-//   - bootstrap → app (allowed)
-//   - entrypoints → bootstrap (allowed)
-//   - cmd → entrypoints (allowed)
+// LaunchInteractiveTUI runs the production interactive TUI via the
+// spec-1.15 Program main loop (spec-1.17 D-6b; spec-1.15 Q13 ★A
+// retroactive impl). Layer chain (spec-0.12 D-4):
 //
-// Returns nil on key-exit (Ctrl+C / Ctrl+\), ctx.Err on cancel,
-// ErrInitFailed wrap on tcell screen failure.
+//	cmd → entrypoints → bootstrap → app/cli/{program,demoapp,render/terminal/tcell}
+//
+// Lifecycle (spec-1.17 D-6a): the screen is constructed un-init'd; the
+// tcell adapter's Driver.Init (called inside scheduler.Run) owns
+// screen.Init, and Driver.Fini owns screen.Fini (sync.Once idempotent).
+// bootstrap does NOT defer screen.Fini — that would double-Fini.
+//
+// Returns nil on key-exit (Ctrl+C double-press / Ctrl+\), ctx.Err on
+// cancel, ErrInitFailed wrap on tcell screen construction failure.
+//
+// The Model is currently demoapp.New() (minimal demonstrator); spec-1.20
+// LLM client replaces it with the real production Model.
 func LaunchInteractiveTUI(ctx context.Context) error {
 	screen, err := getNewScreenFn()()
 	if err != nil {
-		// errcode-lint:exempt -- spec-0.12 D-3: err is already wrapped as TERMINAL.INIT_FAILED by tui.NewScreen; pass-through.
+		// errcode-lint:exempt -- spec-0.12 D-3: err is already wrapped as TERMINAL.INIT_FAILED by tui.NewScreenNoInit; pass-through.
 		return err
 	}
-	defer screen.Fini()
-	// errcode-lint:exempt -- spec-0.12 D-3: runTUI wraps tui.Run which returns nil / ctx.Err verbatim (stdlib sentinel pass-through).
-	return runTUI(ctx, screen)
-}
+	// NOTE: no `defer screen.Fini()` — Driver.Fini (spec-1.17 D-6a)
+	// owns screen teardown via scheduler.Run shutdown.
+	driver := tcelladapter.NewDriver(screen)
+	model := demoapp.New()
+	p := program.New(driver, model)
 
-// runTUI is the test seam between LaunchInteractiveTUI and tui.Run.
-// Wrapped so the bootstrap unit test can drive tui.Run with a
-// SimulationScreen (real tui.Run path execution under -race).
-//
-// T-13 N-3 grep aid: function exists ONLY for test injection; never
-// add logic here — keep it a one-line wrapper so production behavior
-// stays in tui.Run.
-func runTUI(ctx context.Context, screen tcell.Screen) error {
-	// errcode-lint:exempt -- spec-0.12 D-3: tui.Run returns nil / ctx.Err verbatim; stdlib sentinel pass-through, not a custom error type.
-	return tui.Run(ctx, screen)
+	// errcode-lint:exempt -- spec-1.17 D-6b: program.Run returns scheduler.Run's result verbatim (context.Canceled / DeadlineExceeded on shutdown; pre-wrapped driver.Init errors otherwise). The mapping below converts an internal user-quit cancel to nil; all returned errors are stdlib sentinels or pre-wrapped.
+	runErr := p.Run(ctx)
+
+	// spec-1.17 D-6b: program.Run cancels an internal child context on
+	// the user quit protocol (Ctrl+C double-press / Ctrl+\), so it
+	// returns context.Canceled even on a clean key-exit. Distinguish:
+	// if the PARENT ctx was cancelled the cancellation is external —
+	// pass the error through; otherwise it was a user quit — return nil
+	// to preserve the spec-0.12 "Ctrl+C exits cleanly" contract.
+	if ctx.Err() != nil {
+		return runErr
+	}
+	if errors.Is(runErr, context.Canceled) {
+		return nil
+	}
+	return runErr
 }

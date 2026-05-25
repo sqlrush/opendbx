@@ -25,32 +25,60 @@ import (
 // Callers derive via input.DeriveMode(newBuffer) at the read site
 // (R2 C2 ★A 路径 A by-construction single SoT).
 //
-// R2 H-7 ★A SCOPE LIMITED: spec-1.16 handles ONLY the cursor==end case
-// where cursor equals the rune count of buffer. Callers are responsible
-// for maintaining this invariant; mid-cursor edits + KeyDelete are
-// deferred to spec-1.17 (❌-10).
+// spec-1.17 R2 D-2: cursor ANY position is supported (spec-1.16 H-7
+// scope-limit cursor==end is RETIRED; old callers still work because
+// cursor==rune_count is a special case of "any"). KeyDelete (271)
+// forward-delete added. cursor clamped to [0, rune_count(buffer)] on
+// input (defensive — caller bug → no panic, MED-9).
 //
-//   - code == terminal.KeyRune (256): append r to buffer; cursor++ in rune
-//     units (1 position regardless of UTF-8 byte width).
-//   - code == terminal.KeyBackspace (8): delete the last rune; cursor--;
-//     no-op when cursor == 0 (defensive even though caller should not
-//     send Backspace on empty buffer).
+//   - code == terminal.KeyRune: insert r at rune position cursor;
+//     cursor advances by 1 rune position.
+//   - code == terminal.KeyBackspace (8): delete rune at cursor-1;
+//     cursor--; no-op when cursor == 0.
+//   - code == terminal.KeyDelete (271, spec-1.17 R2 NEW): delete rune
+//     at cursor (forward); cursor unchanged; no-op when cursor ==
+//     rune_count(buffer).
 //   - other code values: returns (buffer, cursor) unchanged.
 //
 // Cursor unit (R2 M-1): rune position (NOT byte). All inserts advance
 // cursor by exactly 1, regardless of UTF-8 byte width of the rune.
 func ResolveMode(buffer string, cursor int, code int, r rune) (newBuffer string, newCursor int) {
+	runes := []rune(buffer)
+	// MED-9 clamp invariant: defensive clamp for caller bugs.
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(runes) {
+		cursor = len(runes)
+	}
+
 	switch code {
 	case terminal.KeyRune:
-		// Append rune; cursor advances by 1 rune position.
-		return buffer + string(r), cursor + 1
+		// Insert rune at rune position cursor; cursor advances by 1.
+		// (cursor==len(runes) → trivial append; spec-1.16 H-7 forward-compat.)
+		next := make([]rune, 0, len(runes)+1)
+		next = append(next, runes[:cursor]...)
+		next = append(next, r)
+		next = append(next, runes[cursor:]...)
+		return string(next), cursor + 1
 	case terminal.KeyBackspace:
-		if cursor == 0 || buffer == "" {
+		if cursor == 0 || len(runes) == 0 {
 			return buffer, cursor
 		}
-		// Strip the last rune (UTF-8 safe via DecodeLastRuneInString).
-		_, size := utf8.DecodeLastRuneInString(buffer)
-		return buffer[:len(buffer)-size], cursor - 1
+		// Delete rune at cursor-1.
+		next := make([]rune, 0, len(runes)-1)
+		next = append(next, runes[:cursor-1]...)
+		next = append(next, runes[cursor:]...)
+		return string(next), cursor - 1
+	case terminal.KeyDelete:
+		// spec-1.17 R2 D-2 NEW: forward delete at cursor.
+		if cursor >= len(runes) || len(runes) == 0 {
+			return buffer, cursor
+		}
+		next := make([]rune, 0, len(runes)-1)
+		next = append(next, runes[:cursor]...)
+		next = append(next, runes[cursor+1:]...)
+		return string(next), cursor
 	}
 	return buffer, cursor
 }

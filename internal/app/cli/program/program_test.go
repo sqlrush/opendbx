@@ -302,8 +302,10 @@ func TestProgram_KeyMsg_RoutedToUpdate(t *testing.T) {
 	if got := atomic.LoadInt32(&m.updates); got == 0 {
 		t.Errorf("Update was not called after KeyMsg")
 	}
-	if msg, ok := m.lastMsg.Load().(KeyMsg); !ok || msg.Rune != 'a' {
-		t.Errorf("lastMsg = %v, want KeyMsg{Rune:'a'}", m.lastMsg.Load())
+	// spec-1.17 R2 D-5: KeyMsg is wrapped into KeyActionMsg by handleMsg
+	// before reaching Model.Update. The raw KeyMsg is preserved on .Key.
+	if msg, ok := m.lastMsg.Load().(KeyActionMsg); !ok || msg.Key.Rune != 'a' {
+		t.Errorf("lastMsg = %v, want KeyActionMsg{Key:{Rune:'a'}}", m.lastMsg.Load())
 	}
 }
 

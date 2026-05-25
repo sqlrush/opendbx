@@ -54,17 +54,18 @@ const RenderRoot = ModulePrefix + "internal/app/cli/render/"
 // block/adapter may import lower indices (style/width). Treated as a
 // distinct first-segment-style entry by renderClassify.
 var RenderOrder = []string{
-	"width",         // 0 — leaf: pure utility, no internal deps
-	"style",         // 1 — leaf: pure data + ANSI generation
-	"terminal",      // 2 — depends on style
-	"buffer",        // 3 — depends on style + width
-	"layout",        // 4 — depends on width
-	"optimizer",     // 5 — depends on buffer + terminal
-	"scheduler",     // 6 — depends on optimizer + terminal
-	"block/adapter", // 7 — block sub-DAG leaf (spec-1.9 § 5): style/width only
-	"block",         // 8 — intermediate root: depends on layout + buffer + width + style + block/adapter
-	"scrollback",    // 9 — depends on buffer + layout + block
-	"streaming",     // 10 — true root: depends on scrollback + block
+	"width",          // 0 — leaf: pure utility, no internal deps
+	"style",          // 1 — leaf: pure data + ANSI generation
+	"terminal",       // 2 — depends on style
+	"terminal/tcell", // 2.5 — terminal sub-DAG (spec-1.17 D-6a): tcell-backed Driver; may import terminal(2) + style(1)
+	"buffer",         // 3 — depends on style + width
+	"layout",         // 4 — depends on width
+	"optimizer",      // 5 — depends on buffer + terminal
+	"scheduler",      // 6 — depends on optimizer + terminal
+	"block/adapter",  // 7 — block sub-DAG leaf (spec-1.9 § 5): style/width only
+	"block",          // 8 — intermediate root: depends on layout + buffer + width + style + block/adapter
+	"scrollback",     // 9 — depends on buffer + layout + block
+	"streaming",      // 10 — true root: depends on scrollback + block
 }
 
 // renderClassify inspects an import path. Returns:
@@ -84,13 +85,24 @@ func renderClassify(importPath string) (idx int, ok bool, unknown string) {
 	if first == "" {
 		return 0, false, ""
 	}
-	// Two-segment sub-DAG check first (spec-1.9 § 5 block/adapter):
-	// match "block/adapter" before falling back to single-segment "block".
+	// Two-segment sub-DAG check first (spec-1.9 § 5 block/adapter;
+	// spec-1.17 D-6a terminal/tcell): match the two-segment sub-package
+	// before falling back to the single-segment parent.
 	if first == "block" {
 		second := secondSegment(rel)
 		if second == "adapter" {
 			for i, name := range RenderOrder {
 				if name == "block/adapter" {
+					return i, true, ""
+				}
+			}
+		}
+	}
+	if first == "terminal" {
+		second := secondSegment(rel)
+		if second == "tcell" {
+			for i, name := range RenderOrder {
+				if name == "terminal/tcell" {
 					return i, true, ""
 				}
 			}

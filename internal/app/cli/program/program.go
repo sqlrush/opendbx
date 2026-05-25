@@ -37,6 +37,11 @@ type Program struct {
 	clock       SimClock
 	cancelCause func()    // injected by Run to break out of the scheduler loop on QuitMsg
 	runOnce     sync.Once // R2 L-4: single-use Run guard; second concurrent call panics
+
+	// schedSet is closed by Run immediately after p.scheduler is
+	// assigned, so test seams (WaitStartedForTest) can read p.scheduler
+	// race-free (spec-1.17 D-7 integration harness). Created in New.
+	schedSet chan struct{}
 }
 
 // Option configures a Program at construction.
@@ -71,6 +76,7 @@ func New(driver terminal.Driver, initial Model, opts ...Option) *Program {
 		model:      initial,
 		quitWindow: DefaultQuitWindow,
 		clock:      realClock{},
+		schedSet:   make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(p)
@@ -105,6 +111,9 @@ func (p *Program) Run(ctx context.Context) error {
 	p.scheduler = scheduler.NewFrameScheduler(p.driver, 60, p.renderFn,
 		scheduler.WithMsgHook(p.handleMsg),
 	)
+	// spec-1.17 D-7: signal p.scheduler is assigned so test seams can
+	// read it race-free. Production has no observer; close is cheap.
+	close(p.schedSet)
 
 	defer p.runCleanup()
 
@@ -186,6 +195,14 @@ func (p *Program) handleMsg(msg scheduler.Msg) {
 
 	if p.preDispatchSystem(msg) {
 		return
+	}
+
+	// spec-1.17 R2 D-5: decode KeyMsg → keybindings.Action once at the
+	// program layer and forward as KeyActionMsg. Models switch on
+	// Action; raw KeyMsg.Code remains available via msg.Key for
+	// fallback / log. Non-KeyMsg messages pass through unchanged.
+	if k, ok := msg.(KeyMsg); ok {
+		msg = KeyActionMsg{Key: k, Action: decodeKeyMsg(k)}
 	}
 
 	newModel, cmd := p.model.Update(msg)

@@ -212,6 +212,70 @@ func TestNewScreen_TerminfoFactoryFailure(t *testing.T) {
 	}
 }
 
+// --- spec-1.17 D-6b NewScreenNoInit -----------------------------------
+
+func TestNewScreenNoInit_TCellInitFailure(t *testing.T) {
+	// Non-TTY unit-test process: NewScreenNoInit should fail cleanly on
+	// the stdin/stdout TTY construction with ErrInitFailed wrapping.
+	t.Setenv("TERM", "definitely-not-a-real-terminal-name-xyz")
+	_, err := NewScreenNoInit()
+	if err == nil {
+		t.Fatal("expected NewScreenNoInit to fail with bogus TERM; got nil err")
+	}
+	if !errors.Is(err, ErrInitFailed) {
+		t.Errorf("expected ErrInitFailed wrap; got %v", err)
+	}
+}
+
+func TestNewScreenNoInit_TerminfoFactoryFailure(t *testing.T) {
+	// NOT t.Parallel — temporarily swaps package-level constructor seams.
+	origTTY := newStdIoTtyFn
+	origScreen := newTerminfoScreenFromTtyFn
+	newStdIoTtyFn = func() (tcell.Tty, error) {
+		return fakeTty{}, nil
+	}
+	newTerminfoScreenFromTtyFn = func(tcell.Tty) (tcell.Screen, error) {
+		return nil, errors.New("terminfo boom")
+	}
+	t.Cleanup(func() {
+		newStdIoTtyFn = origTTY
+		newTerminfoScreenFromTtyFn = origScreen
+	})
+
+	_, err := NewScreenNoInit()
+	if !errors.Is(err, ErrInitFailed) {
+		t.Errorf("expected ErrInitFailed wrap; got %v", err)
+	}
+}
+
+func TestNewScreenNoInit_Success_ReturnsUninitScreen(t *testing.T) {
+	// NOT t.Parallel — swaps constructor seams. Verify the happy path
+	// returns the screen WITHOUT calling Init (spec-1.17 D-6a: Driver.Init
+	// owns screen.Init). We assert success by returning a SimulationScreen
+	// through the seam and confirming no error + non-nil screen.
+	origTTY := newStdIoTtyFn
+	origScreen := newTerminfoScreenFromTtyFn
+	sim := tcell.NewSimulationScreen("UTF-8")
+	newStdIoTtyFn = func() (tcell.Tty, error) {
+		return fakeTty{}, nil
+	}
+	newTerminfoScreenFromTtyFn = func(tcell.Tty) (tcell.Screen, error) {
+		return sim, nil
+	}
+	t.Cleanup(func() {
+		newStdIoTtyFn = origTTY
+		newTerminfoScreenFromTtyFn = origScreen
+	})
+
+	screen, err := NewScreenNoInit()
+	if err != nil {
+		t.Fatalf("NewScreenNoInit success path returned err: %v", err)
+	}
+	if screen == nil {
+		t.Fatal("NewScreenNoInit returned nil screen on success path")
+	}
+}
+
 // --- errcode ---------------------------------------------------------
 
 func TestErrInitFailed_Errcode(t *testing.T) {
