@@ -13,15 +13,17 @@ import (
 
 // workerResult is what each worker writes to the results channel after
 // running one Cmd. It carries the jobItem context for ErrorMsg
-// correlation (spec-1.4 R2 H-6) plus the recovered panic (if any) and
-// the wall-clock duration of the Cmd body.
+// correlation (spec-1.4 R2 H-6) plus the recovered panic (if any), the
+// wall-clock duration of the Cmd body, and (R3.2) the success Msg
+// returned by the Cmd when it ran to completion.
 type workerResult struct {
-	cmdID     uint64
-	submitted time.Time
-	priority  Priority
-	duration  time.Duration
-	panicErr  any    // non-nil → Cmd panicked; recover()'d value
-	stack     []byte // non-nil iff panicErr != nil
+	cmdID      uint64
+	submitted  time.Time
+	priority   Priority
+	duration   time.Duration
+	panicErr   any    // non-nil → Cmd panicked; recover()'d value
+	stack      []byte // non-nil iff panicErr != nil
+	successMsg Msg    // R3.2: non-nil → Cmd returned a success Msg; main loop dispatches via msgHook
 }
 
 // workerPool is a fixed-size goroutine pool draining a buffered jobs
@@ -112,7 +114,8 @@ func runCmd(j jobItem) (res workerResult) {
 	}()
 
 	if j.Cmd != nil {
-		j.Cmd()
+		// R3.2: Cmd returns Msg; non-nil Msg is forwarded as success result.
+		res.successMsg = j.Cmd()
 	}
 	return res
 }

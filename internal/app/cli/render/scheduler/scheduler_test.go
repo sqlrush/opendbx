@@ -27,7 +27,7 @@ func TestScheduler_InterfaceContract(t *testing.T) {
 	ch := make(chan Tick, 1)
 	var s Scheduler = &fakeScheduler{ch: ch}
 	called := false
-	s.Schedule(func() { called = true })
+	s.Schedule(func() Msg { called = true; return nil })
 	if !called {
 		t.Errorf("Schedule did not invoke cmd")
 	}

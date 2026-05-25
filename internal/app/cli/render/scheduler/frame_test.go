@@ -383,7 +383,7 @@ func TestFrame_CmdPanicEmitsErrorMsg(t *testing.T) {
 	done := make(chan struct{})
 	go func() { _ = s.Run(ctx); close(done) }()
 
-	id := s.ScheduleAt(func() { panic("cmd boom") }, PriorityHigh)
+	id := s.ScheduleAt(func() Msg { panic("cmd boom") }, PriorityHigh)
 
 	deadline := time.After(time.Second)
 WAIT:
@@ -445,7 +445,7 @@ func TestFrame_ConcurrentScheduleFromCallers(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < iters; i++ {
-				s.Schedule(func() { executed.Add(1) })
+				s.Schedule(func() Msg { executed.Add(1); return nil })
 			}
 		}()
 	}
@@ -532,7 +532,7 @@ func TestFrame_MsgChDropOldestUnderPanicStorm(t *testing.T) {
 	go func() { _ = s.Run(ctx); close(done) }()
 
 	for i := 0; i < 64; i++ {
-		s.Schedule(func() { panic("storm") })
+		s.Schedule(func() Msg { panic("storm") })
 	}
 
 	// Let the storm play out.
@@ -559,11 +559,11 @@ func TestFrame_TrySubmitFullLeavesCmdQueued(t *testing.T) {
 	go func() { _ = s.Run(ctx); close(done) }()
 
 	block := make(chan struct{})
-	s.ScheduleAt(func() { <-block }, PriorityHigh)
+	s.ScheduleAt(func() Msg { <-block; return nil }, PriorityHigh)
 
 	// Pile up enough cmds to overflow workers (cap 32 + 4 workers active).
 	for i := 0; i < 200; i++ {
-		s.Schedule(func() {})
+		s.Schedule(func() Msg { return nil })
 	}
 
 	// Frame loop must keep ticking even though queue can't drain fully.
@@ -620,8 +620,8 @@ func TestFrame_LastFrameReleasedOnExit(t *testing.T) {
 func TestQueue_PopIfRetainsOnSubmitFailure(t *testing.T) {
 	t.Parallel()
 	q := newQueue()
-	q.push(jobItem{CmdID: 1, Cmd: func() {}, Priority: PriorityNormal})
-	q.push(jobItem{CmdID: 2, Cmd: func() {}, Priority: PriorityNormal})
+	q.push(jobItem{CmdID: 1, Cmd: func() Msg { return nil }, Priority: PriorityNormal})
+	q.push(jobItem{CmdID: 2, Cmd: func() Msg { return nil }, Priority: PriorityNormal})
 
 	if q.popIf(func(j jobItem) bool {
 		if j.CmdID != 1 {
@@ -649,8 +649,8 @@ func TestQueue_PopIfRetainsOnSubmitFailure(t *testing.T) {
 func TestQueue_PopIfRemovesOnlySubmittedHead(t *testing.T) {
 	t.Parallel()
 	q := newQueue()
-	q.push(jobItem{CmdID: 1, Cmd: func() {}, Priority: PriorityNormal})
-	q.push(jobItem{CmdID: 2, Cmd: func() {}, Priority: PriorityNormal})
+	q.push(jobItem{CmdID: 1, Cmd: func() Msg { return nil }, Priority: PriorityNormal})
+	q.push(jobItem{CmdID: 2, Cmd: func() Msg { return nil }, Priority: PriorityNormal})
 
 	var submitted uint64
 	if !q.popIf(func(j jobItem) bool {
@@ -662,7 +662,7 @@ func TestQueue_PopIfRemovesOnlySubmittedHead(t *testing.T) {
 	if submitted != 1 {
 		t.Fatalf("submitted CmdID = %d; want 1", submitted)
 	}
-	q.push(jobItem{CmdID: 99, Cmd: func() {}, Priority: PriorityHigh})
+	q.push(jobItem{CmdID: 99, Cmd: func() Msg { return nil }, Priority: PriorityHigh})
 	j, ok := q.pop()
 	if !ok || j.CmdID != 99 {
 		t.Fatalf("high-priority insert after popIf got %+v ok=%v, want CmdID=99", j, ok)

@@ -15,11 +15,11 @@ import (
 func TestQueue_StrictPriority(t *testing.T) {
 	t.Parallel()
 	q := newQueue()
-	q.push(jobItem{Cmd: func() {}, CmdID: 1, Priority: PriorityIdle})
-	q.push(jobItem{Cmd: func() {}, CmdID: 2, Priority: PriorityNormal})
-	q.push(jobItem{Cmd: func() {}, CmdID: 3, Priority: PriorityHigh})
-	q.push(jobItem{Cmd: func() {}, CmdID: 4, Priority: PriorityNormal})
-	q.push(jobItem{Cmd: func() {}, CmdID: 5, Priority: PriorityHigh})
+	q.push(jobItem{Cmd: func() Msg { return nil }, CmdID: 1, Priority: PriorityIdle})
+	q.push(jobItem{Cmd: func() Msg { return nil }, CmdID: 2, Priority: PriorityNormal})
+	q.push(jobItem{Cmd: func() Msg { return nil }, CmdID: 3, Priority: PriorityHigh})
+	q.push(jobItem{Cmd: func() Msg { return nil }, CmdID: 4, Priority: PriorityNormal})
+	q.push(jobItem{Cmd: func() Msg { return nil }, CmdID: 5, Priority: PriorityHigh})
 
 	want := []uint64{3, 5, 2, 4, 1} // high(3,5) → normal(2,4) → idle(1)
 	for i, w := range want {
@@ -61,7 +61,7 @@ func TestQueue_ConcurrentPush(t *testing.T) {
 			for i := 0; i < iters; i++ {
 				p := Priority((seed + i) % 3)
 				q.push(jobItem{
-					Cmd:      func() {},
+					Cmd:      func() Msg { return nil },
 					CmdID:    counter.Add(1),
 					Priority: p,
 				})
@@ -79,7 +79,7 @@ func TestQueue_ConcurrentPush(t *testing.T) {
 func TestQueue_UnknownPriorityCollapsesToNormal(t *testing.T) {
 	t.Parallel()
 	q := newQueue()
-	q.push(jobItem{Cmd: func() {}, CmdID: 1, Priority: Priority(99)})
+	q.push(jobItem{Cmd: func() Msg { return nil }, CmdID: 1, Priority: Priority(99)})
 	j, ok := q.pop()
 	if !ok || j.CmdID != 1 {
 		t.Errorf("pop unknown priority: %+v ok=%v", j, ok)
@@ -91,7 +91,7 @@ func TestQueue_FIFOWithinLane(t *testing.T) {
 	t.Parallel()
 	q := newQueue()
 	for i := uint64(1); i <= 5; i++ {
-		q.push(jobItem{Cmd: func() {}, CmdID: i, Priority: PriorityNormal})
+		q.push(jobItem{Cmd: func() Msg { return nil }, CmdID: i, Priority: PriorityNormal})
 	}
 	for i := uint64(1); i <= 5; i++ {
 		j, _ := q.pop()
@@ -115,7 +115,7 @@ func TestQueue_PushDuringPopRace(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < perPusher; i++ {
-				q.push(jobItem{Cmd: func() {}, Priority: PriorityNormal})
+				q.push(jobItem{Cmd: func() Msg { return nil }, Priority: PriorityNormal})
 				time.Sleep(time.Microsecond)
 			}
 		}()

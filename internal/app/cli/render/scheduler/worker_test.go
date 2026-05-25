@@ -20,7 +20,7 @@ func TestWorker_BasicExecute(t *testing.T) {
 
 	var ran atomic.Bool
 	j := jobItem{
-		Cmd:       func() { ran.Store(true) },
+		Cmd:       func() Msg { ran.Store(true); return nil },
 		CmdID:     1,
 		Submitted: time.Now(),
 		Priority:  PriorityNormal,
@@ -53,7 +53,7 @@ func TestWorker_PanicRecovered(t *testing.T) {
 	defer p.Stop()
 
 	if !p.TrySubmit(jobItem{
-		Cmd:       func() { panic("boom") },
+		Cmd:       func() Msg { panic("boom") },
 		CmdID:     10,
 		Submitted: time.Now(),
 		Priority:  PriorityHigh,
@@ -71,7 +71,7 @@ func TestWorker_PanicRecovered(t *testing.T) {
 	// Second Cmd must still run — proves worker not dead.
 	var ran atomic.Bool
 	if !p.TrySubmit(jobItem{
-		Cmd:       func() { ran.Store(true) },
+		Cmd:       func() Msg { ran.Store(true); return nil },
 		CmdID:     11,
 		Submitted: time.Now(),
 		Priority:  PriorityNormal,
@@ -96,7 +96,7 @@ func TestWorker_StopCloseOrder(t *testing.T) {
 	var executed atomic.Int64
 	for i := uint64(0); i < 10; i++ {
 		if !p.TrySubmit(jobItem{
-			Cmd:       func() { executed.Add(1) },
+			Cmd:       func() Msg { executed.Add(1); return nil },
 			CmdID:     i,
 			Submitted: time.Now(),
 			Priority:  PriorityNormal,
@@ -139,7 +139,7 @@ func TestWorker_TrySubmitFullReturnsFalse(t *testing.T) {
 	unblock := func() { unblockOnce.Do(func() { close(block) }) }
 	defer unblock()
 	if !p.TrySubmit(jobItem{
-		Cmd:      func() { <-block },
+		Cmd:      func() Msg { <-block; return nil },
 		CmdID:    1,
 		Priority: PriorityHigh,
 	}) {
@@ -153,14 +153,14 @@ func TestWorker_TrySubmitFullReturnsFalse(t *testing.T) {
 
 	// Fill the buffered jobs channel (cap = 1*8 = 8) with quick cmds.
 	for i := uint64(2); i <= 9; i++ {
-		if !p.TrySubmit(jobItem{Cmd: func() {}, CmdID: i}) {
+		if !p.TrySubmit(jobItem{Cmd: func() Msg { return nil }, CmdID: i}) {
 			t.Fatalf("filler TrySubmit %d failed early — cap < 8?", i)
 		}
 	}
 
 	// Channel full. Next TrySubmit must return false fast.
 	start := time.Now()
-	if got := p.TrySubmit(jobItem{Cmd: func() {}, CmdID: 99}); got {
+	if got := p.TrySubmit(jobItem{Cmd: func() Msg { return nil }, CmdID: 99}); got {
 		t.Errorf("TrySubmit on full channel returned true; want false")
 	}
 	if elapsed := time.Since(start); elapsed > 10*time.Millisecond {
@@ -176,7 +176,7 @@ func TestWorker_TrySubmitAfterStop(t *testing.T) {
 	t.Parallel()
 	p := newWorkerPool(2)
 	p.Stop()
-	if got := p.TrySubmit(jobItem{Cmd: func() {}, CmdID: 1}); got {
+	if got := p.TrySubmit(jobItem{Cmd: func() Msg { return nil }, CmdID: 1}); got {
 		t.Errorf("TrySubmit after Stop = true; want false")
 	}
 }
@@ -202,7 +202,7 @@ func TestWorker_TrySubmitConcurrentStopNoPanic(t *testing.T) {
 			}()
 			<-start
 			for i := uint64(0); i < 1000; i++ {
-				_ = p.TrySubmit(jobItem{Cmd: func() {}, CmdID: seed*1000 + i})
+				_ = p.TrySubmit(jobItem{Cmd: func() Msg { return nil }, CmdID: seed*1000 + i})
 			}
 		}(uint64(g))
 	}
@@ -224,7 +224,7 @@ func TestWorker_DurationRecorded(t *testing.T) {
 	p := newWorkerPool(1)
 	defer p.Stop()
 	if !p.TrySubmit(jobItem{
-		Cmd:       func() { time.Sleep(2 * time.Millisecond) },
+		Cmd:       func() Msg { time.Sleep(2 * time.Millisecond); return nil },
 		CmdID:     1,
 		Submitted: time.Now(),
 	}) {
@@ -247,7 +247,7 @@ func TestWorker_StopDrainsResults(t *testing.T) {
 	// Submit enough cmds to overfill results channel (cap = 2*8 = 16).
 	// Don't read results — simulate main loop exit.
 	for i := uint64(0); i < 64; i++ {
-		_ = p.TrySubmit(jobItem{Cmd: func() {}, CmdID: i, Submitted: time.Now()})
+		_ = p.TrySubmit(jobItem{Cmd: func() Msg { return nil }, CmdID: i, Submitted: time.Now()})
 	}
 
 	// Give workers a moment to start dropping results to default branch.
