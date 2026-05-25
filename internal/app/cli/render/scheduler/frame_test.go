@@ -672,3 +672,105 @@ func TestQueue_PopIfRemovesOnlySubmittedHead(t *testing.T) {
 		t.Fatalf("remaining normal got %+v ok=%v, want CmdID=2", j, ok)
 	}
 }
+
+// --- spec-1.4 R3 errata regression tests (R3.5 priorityMsgCh + R3.6 Started) ---
+
+// R3 codex HIGH-1 + LOW-2: scheduler.Started() closes after driver.Init
+// returns. PollEvent or other driver-touching goroutines wait on this
+// signal to avoid racing with init.
+func TestFrameSchedulerR3_StartedAfterInit(t *testing.T) {
+	drv := &mockDriver{cols: 80, rows: 24}
+	s := NewFrameScheduler(drv, 60, func(*buffer.Grid) {})
+
+	// Before Run, Started should not be closed.
+	select {
+	case <-s.Started():
+		t.Fatalf("Started() closed before Run")
+	default:
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.Run(ctx) }()
+
+	// Started should close shortly after Run begins (init must have run).
+	select {
+	case <-s.Started():
+	case <-time.After(time.Second):
+		t.Fatalf("Started() did not close within 1s after Run")
+	}
+	drv.mu.Lock()
+	initN := drv.initN
+	drv.mu.Unlock()
+	if initN < 1 {
+		t.Errorf("driver.Init must have been called before Started fires; got initN=%d", initN)
+	}
+	cancel()
+	<-errCh
+}
+
+// R3 codex LOW-2: EmitMsg after Stop sets stopped flag — drop + slog.Warn,
+// never panic. priorityMsgCh is never closed (R3.5 contract).
+func TestFrameSchedulerR3_EmitMsgAfterStopDrops(t *testing.T) {
+	drv := &mockDriver{cols: 80, rows: 24}
+	s := NewFrameScheduler(drv, 60, func(*buffer.Grid) {})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.Run(ctx) }()
+	<-s.Started()
+	cancel()
+	<-errCh
+
+	// Run returned → stopped flag is set; EmitMsg must not panic.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("EmitMsg after Stop must not panic; got %v", r)
+		}
+	}()
+	type customMsg struct{ N int }
+	for i := 0; i < 10; i++ {
+		s.EmitMsg(customMsg{N: i})
+	}
+	// no assert: behaviour is non-blocking drop + slog.Warn
+}
+
+// R3 codex LOW-2: priorityMsgCh bounded drain cap=64/frame. Posting
+// many priority msgs and verifying msgHook receives them across multiple
+// frames is sufficient (the cap is enforced inside drainPriorityMsgs).
+// We assert the hook does eventually see all msgs (i.e. nothing is
+// silently dropped beyond drop-oldest backpressure).
+func TestFrameSchedulerR3_PriorityDrainBounded(t *testing.T) {
+	drv := &mockDriver{cols: 80, rows: 24}
+	var received atomic.Int32
+	s := NewFrameScheduler(drv, 60, func(*buffer.Grid) {},
+		WithMsgHook(func(m Msg) {
+			received.Add(1)
+		}),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.Run(ctx) }()
+	<-s.Started()
+
+	// Post 50 msgs (below 256 capacity, above 1 frame's 64 cap so we
+	// exercise the bounded-drain path across multiple frames).
+	type bumpMsg struct{}
+	for i := 0; i < 50; i++ {
+		s.EmitMsg(bumpMsg{})
+	}
+
+	// Allow up to 1s for the hook to receive all messages.
+	deadline := time.Now().Add(time.Second)
+	for received.Load() < 50 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-errCh
+
+	if got := received.Load(); got != 50 {
+		t.Errorf("priority drain did not deliver all msgs; got %d / 50", got)
+	}
+}

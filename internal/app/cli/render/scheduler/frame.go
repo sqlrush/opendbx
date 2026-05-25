@@ -89,9 +89,10 @@ type FrameScheduler struct {
 	frameDeadline time.Duration
 	tickCh        chan Tick
 	msgCh         chan Msg
-	priorityMsgCh chan Msg    // R3.5: UI/system Msg direct path (bypasses worker pool)
-	msgHook       func(Msg)   // R3.3: optional main-loop dispatch hook
-	stopped       atomic.Bool // R3.5: Stop / Run-exit guard; EmitMsg drops + warns when set
+	priorityMsgCh chan Msg      // R3.5: UI/system Msg direct path (bypasses worker pool)
+	msgHook       func(Msg)     // R3.3: optional main-loop dispatch hook
+	stopped       atomic.Bool   // R3.5: Stop / Run-exit guard; EmitMsg drops + warns when set
+	started       chan struct{} // R3.6: closed after driver.Init succeeds (Started() signal)
 	lastFrame     *buffer.Grid
 	frame         int
 	nextCmdID     atomic.Uint64
@@ -148,6 +149,10 @@ func NewFrameScheduler(driver terminal.Driver, fps int, render RenderFn, opts ..
 		// and is NEVER closed — Stop sets the stopped flag and EmitMsg
 		// drops new sends to avoid send-on-closed panic.
 		priorityMsgCh: make(chan Msg, 256),
+		// R3.6 (spec-1.15 R3 codex HIGH-1 driven): closed after driver.Init
+		// succeeds so external goroutines (e.g. PollEvent) can wait until
+		// the terminal is initialised before issuing driver calls.
+		started: make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -189,6 +194,15 @@ func (s *FrameScheduler) Tick() <-chan Tick { return s.tickCh }
 // nothing. Without a hook, the scheduler falls back to non-blocking
 // emit on msgCh for backwards compatibility.
 func (s *FrameScheduler) Msgs() <-chan Msg { return s.msgCh }
+
+// Started returns a channel that is closed after driver.Init succeeds
+// and the frame loop is ready to receive Msgs. External goroutines that
+// call into the driver (e.g. a PollEvent loop) MUST wait on this channel
+// to avoid racing with the scheduler's initialisation step.
+//
+// spec-1.4 R3.6 errata (spec-1.15 R3 codex HIGH-1 driven; pollEvents-
+// before-Init race fix).
+func (s *FrameScheduler) Started() <-chan struct{} { return s.started }
 
 // CurrentFrame returns the current frame counter (spec-1.4 R3.4 public).
 //
@@ -282,6 +296,9 @@ func (s *FrameScheduler) Run(ctx context.Context) error {
 	if err := s.driver.Init(); err != nil {
 		return err
 	}
+	// R3.6: signal driver is ready — external goroutines waiting on
+	// Started() can now safely call driver methods (e.g. PollEvent).
+	close(s.started)
 	defer s.driver.Fini()
 	defer s.workers.Stop()
 	defer close(s.msgCh)
@@ -318,12 +335,13 @@ func (s *FrameScheduler) Run(ctx context.Context) error {
 				continue
 			}
 			s.dispatchResult(res)
-		case m := <-s.priorityMsgCh:
-			// R3.5: priority Msg ticked outside frame boundary — dispatch
-			// immediately for low-latency UI response (still single-
-			// goroutine; no race with renderFn since this select arm is
-			// mutually exclusive with the ticker arm).
-			s.dispatchMsg(m)
+			// R3 codex MED-1 fix: priorityMsgCh is NOT a select arm.
+			// Direct-read would bypass the maxPriorityMsgsPerFrame cap
+			// (UI/system Msgs would interleave between ticker frames
+			// without bound, drowning render/results). priorityMsgCh
+			// is drained only at frame start in drainPriorityMsgs.
+			// Worst-case priority Msg latency = 1 ticker interval =
+			// 16.67ms @ 60fps; the 800ms quit window has 47x margin.
 		}
 	}
 }
@@ -421,7 +439,13 @@ func (s *FrameScheduler) runFrame(_ context.Context) {
 				"frame", s.frame,
 				"adopted", adopted,
 				"stack", string(stack))
-			s.emit(ErrorMsg{
+			// R3 codex HIGH-2 fix: route frame-level ErrorMsg through
+			// dispatchMsg so WithMsgHook installations receive it.
+			// Previously s.emit went straight to msgCh which the program
+			// package never reads (it installed a hook to consume Msgs).
+			// dispatchMsg picks hook when set; otherwise falls back to
+			// non-blocking emit on msgCh (legacy callers).
+			s.dispatchMsg(ErrorMsg{
 				CmdID:    0, // frame-level panic has no Cmd identity
 				Err:      fmt.Errorf("%w: frame body: %v", ErrPanicRecovered, r),
 				Stack:    stack,

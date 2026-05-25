@@ -591,6 +591,47 @@ func TestProgram_CtrlC_OutsideWindowReArms(t *testing.T) {
 	<-errCh
 }
 
+// R3 codex MED-2: quit decision is time-based, not flag-only. If
+// quitDisarmMsg is delayed/dropped (paste flood, worker pool saturated),
+// a second Ctrl+C arriving > quitWindow after the first must NOT quit.
+// We exercise this by stopping the timer after the first press (so the
+// disarm Msg never fires) and advancing the clock past the window —
+// the second Ctrl+C should see now-quitArmedAt > quitWindow and re-arm
+// rather than quit.
+func TestProgram_CtrlC_TimeBasedDecision_DisarmMsgLost(t *testing.T) {
+	drv := newFakeDriver(80, 24)
+	clk := newFakeClock()
+	m := &testModel{}
+	p := New(drv, m, WithClock(clk), WithQuitWindow(800*time.Millisecond))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Run(ctx) }()
+
+	time.Sleep(20 * time.Millisecond)
+	_ = drv.PostEvent(terminal.EventKey{Code: terminal.KeyCtrlC})
+	time.Sleep(50 * time.Millisecond)
+	// advance clock past window; do NOT call clk.Advance with timer fire
+	// (we directly mutate the fake clock state to simulate the case
+	// where quitDisarmMsg never gets delivered — paste flood drop-oldest
+	// scenario).
+	clk.mu.Lock()
+	clk.now = clk.now.Add(900 * time.Millisecond)
+	clk.mu.Unlock()
+
+	// second Ctrl+C arrives but > 800ms after first; program should re-
+	// arm (still running) not quit. Time-based decision catches this even
+	// if disarmMsg path lost.
+	_ = drv.PostEvent(terminal.EventKey{Code: terminal.KeyCtrlC})
+	select {
+	case <-errCh:
+		t.Errorf("program quit on stale 2nd Ctrl+C (> quitWindow); time-based decision should re-arm")
+	case <-time.After(80 * time.Millisecond):
+	}
+	cancel()
+	<-errCh
+}
+
 // R2 L-4: Program.Run second call panics (single-use guard)
 func TestProgram_Run_SecondCallPanics(t *testing.T) {
 	drv := newFakeDriver(80, 24)

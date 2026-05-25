@@ -28,8 +28,9 @@ const DefaultQuitWindow = 800 * time.Millisecond
 type Program struct {
 	driver      terminal.Driver
 	scheduler   *scheduler.FrameScheduler
-	model       Model // single-goroutine: only handleMsg writes, only renderFn reads (same goroutine)
-	quitArmed   bool  // see above
+	model       Model     // single-goroutine: only handleMsg writes, only renderFn reads (same goroutine)
+	quitArmed   bool      // see above
+	quitArmedAt time.Time // R3 MED-2: clock.Now() of arm; quit decision verifies window via time, not just flag
 	quitTimer   Timer
 	quitWindow  time.Duration
 	clock       SimClock
@@ -124,7 +125,17 @@ func (p *Program) Run(ctx context.Context) error {
 // scheduler's priority message queue. Runs in its own goroutine; does
 // NOT access p.model (model touch only happens in handleMsg / renderFn
 // on the scheduler goroutine).
+//
+// R3 codex HIGH-1 fix: wait for scheduler.Started() before issuing the
+// first PollEvent — driver.Init runs on the scheduler goroutine inside
+// scheduler.Run, and pollEvents must not call driver methods before
+// that completes.
 func (p *Program) pollEvents(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-p.scheduler.Started():
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -166,6 +177,7 @@ func (p *Program) handleMsg(msg scheduler.Msg) {
 				Err:       fmt.Errorf("%w: program.handleMsg: %v", scheduler.ErrPanicRecovered, r),
 				Stack:     debug.Stack(),
 				Submitted: p.clock.Now(),
+				Priority:  scheduler.PriorityNormal, // R3 codex LOW-1: explicit; zero value PriorityHigh would mislabel recover
 				Frame:     p.scheduler.CurrentFrame(),
 			})
 		}
@@ -224,11 +236,21 @@ func (p *Program) preDispatchSystem(msg scheduler.Msg) (handled bool) {
 
 // handleCtrlC implements the spec-1.15 D-5 double-press protocol.
 // Returns true when this press completes the double-press (quit).
+//
+// R3 codex MED-2 fix: decision is time-based (clock.Now() - quitArmedAt
+// <= quitWindow), not flag-only. quitDisarmMsg delivery delays (worker
+// pool saturation / priorityMsgCh drop-oldest) would otherwise let a
+// second Ctrl+C arriving > 800ms after the first still quit because
+// the disarmMsg hadn't been processed yet. The timer-driven disarm
+// still runs (clears the "Press Ctrl+C again to quit" footer) but is
+// no longer load-bearing for correctness.
 func (p *Program) handleCtrlC() (quit bool) {
-	if p.quitArmed {
+	now := p.clock.Now()
+	if p.quitArmed && now.Sub(p.quitArmedAt) <= p.quitWindow {
 		return true
 	}
 	p.quitArmed = true
+	p.quitArmedAt = now
 	if p.quitTimer != nil {
 		p.quitTimer.Stop()
 	}
