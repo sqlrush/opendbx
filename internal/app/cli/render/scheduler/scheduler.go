@@ -29,7 +29,17 @@ package scheduler
 import "time"
 
 // Cmd is the unit of work submitted to the scheduler.
-type Cmd func()
+//
+// spec-1.4 R3.2 errata (spec-1.15 R2 CRIT-1 ★C driven): signature upgraded
+// from `func()` to `func() Msg`. Return nil for fire-and-forget Cmds
+// (runtime-compatible with the pre-errata behaviour). Non-nil Msg returns
+// flow through the worker pool results channel into the main-loop dispatch
+// (alongside ErrorMsg from recovered panics).
+//
+// This is a Go source-breaking signature change; callers must rewrite
+// `func() {}` to `func() Msg { return nil }` mechanically. Runtime
+// behaviour is unchanged for callers that return nil.
+type Cmd func() Msg
 
 // Tick is a frame budget signal.
 type Tick struct {

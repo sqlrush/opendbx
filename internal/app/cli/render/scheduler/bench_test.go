@@ -107,7 +107,7 @@ func BenchmarkWorkerPool_Throughput(b *testing.B) {
 		// keeps the bench self-throttling without measuring an
 		// unbounded-retain pattern.
 		for !p.TrySubmit(jobItem{
-			Cmd:       func() {},
+			Cmd:       func() Msg { return nil },
 			CmdID:     uint64(i),
 			Submitted: now,
 			Priority:  PriorityNormal,

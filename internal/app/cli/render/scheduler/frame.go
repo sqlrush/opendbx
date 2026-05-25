@@ -32,8 +32,21 @@ import (
 // RenderFn then reads that snapshot when it runs on the main loop.
 type RenderFn func(next *buffer.Grid)
 
-// Msg is the marker interface for messages flowing on FrameScheduler.msgCh.
-type Msg interface{ msg() }
+// Msg is the type alias for any message flowing through the scheduler
+// dispatch path (priorityMsgCh, results, hook).
+//
+// spec-1.4 R3.1 errata (spec-1.15 R3 codex CRIT-3 driven): originally a
+// marker `interface{ msg() }` with an UNEXPORTED method, which made it
+// impossible for cross-package callers (e.g. the program package) to
+// implement the marker. `type Msg = any` is a Go type alias to the empty
+// interface; any type satisfies it without ceremony, and program-side
+// KeyMsg / ResizeMsg / QuitMsg can flow through without needing a
+// marker method.
+//
+// ErrorMsg (below) is a concrete struct in the scheduler package and is
+// trivially a Msg via this alias; the H-6 debug-context fields (CmdID,
+// Submitted, Priority, Frame) are preserved.
+type Msg = any
 
 // CmdID is the opaque correlation token returned by Schedule /
 // ScheduleAt. Caller uses it to correlate a later ErrorMsg to the
@@ -54,7 +67,9 @@ type ErrorMsg struct {
 	Frame     int
 }
 
-func (ErrorMsg) msg() {}
+// (R3.1: Msg is `any`, so ErrorMsg satisfies Msg without a marker method.
+// The original ErrorMsg.msg() method is removed; existing `errors.Is`
+// + ErrorMsg field access remains the canonical API.)
 
 // FrameScheduler is the production Scheduler impl driving the render
 // frame loop at a configurable FPS (default 60). spec-1.4 D-1.
@@ -74,9 +89,30 @@ type FrameScheduler struct {
 	frameDeadline time.Duration
 	tickCh        chan Tick
 	msgCh         chan Msg
+	priorityMsgCh chan Msg      // R3.5: UI/system Msg direct path (bypasses worker pool)
+	msgHook       func(Msg)     // R3.3: optional main-loop dispatch hook
+	stopped       atomic.Bool   // R3.5: Stop / Run-exit guard; EmitMsg drops + warns when set
+	started       chan struct{} // R3.6: closed after driver.Init succeeds (Started() signal)
 	lastFrame     *buffer.Grid
 	frame         int
 	nextCmdID     atomic.Uint64
+}
+
+// Option configures a FrameScheduler at construction.
+//
+// R3.3 / R3.5: WithMsgHook installs a main-loop dispatch hook (program
+// package uses this to take ownership of Msg routing on the scheduler
+// goroutine; old callers without a hook fall back to msgCh).
+type Option func(*FrameScheduler)
+
+// WithMsgHook installs a main-loop msg dispatch hook. When set, the
+// scheduler invokes hook(msg) synchronously on the main render goroutine
+// for every Msg drained from priorityMsgCh / results — Msgs do not go
+// through the msgCh fallback. Caller MUST NOT block in hook (it runs
+// inside the frame loop). nil hook (default) preserves the original
+// msgCh-only behaviour.
+func WithMsgHook(hook func(Msg)) Option {
+	return func(s *FrameScheduler) { s.msgHook = hook }
 }
 
 // Compile-time assertion that *FrameScheduler satisfies Scheduler.
@@ -88,7 +124,7 @@ var _ Scheduler = (*FrameScheduler)(nil)
 // — silently rendering blank frames hides a caller wiring bug; we
 // panic at construction time with a clear message instead). fps <= 0
 // is clamped to 60.
-func NewFrameScheduler(driver terminal.Driver, fps int, render RenderFn) *FrameScheduler {
+func NewFrameScheduler(driver terminal.Driver, fps int, render RenderFn, opts ...Option) *FrameScheduler {
 	if driver == nil {
 		panic("scheduler.NewFrameScheduler: driver must be non-nil (caller lifecycle bug)")
 	}
@@ -98,7 +134,7 @@ func NewFrameScheduler(driver terminal.Driver, fps int, render RenderFn) *FrameS
 	if fps <= 0 {
 		fps = 60
 	}
-	return &FrameScheduler{
+	s := &FrameScheduler{
 		driver:        driver,
 		pool:          buffer.NewBufferPool(),
 		diff:          optimizer.NewDiffEngine(),
@@ -109,7 +145,19 @@ func NewFrameScheduler(driver terminal.Driver, fps int, render RenderFn) *FrameS
 		frameDeadline: time.Second / time.Duration(fps),
 		tickCh:        make(chan Tick, 1),
 		msgCh:         make(chan Msg, 16),
+		// R3.5: priorityMsgCh is buffered to 256 (matches the spec budget)
+		// and is NEVER closed — Stop sets the stopped flag and EmitMsg
+		// drops new sends to avoid send-on-closed panic.
+		priorityMsgCh: make(chan Msg, 256),
+		// R3.6 (spec-1.15 R3 codex HIGH-1 driven): closed after driver.Init
+		// succeeds so external goroutines (e.g. PollEvent) can wait until
+		// the terminal is initialised before issuing driver calls.
+		started: make(chan struct{}),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Schedule enqueues cmd at PriorityNormal as fire-and-forget. The
@@ -140,7 +188,77 @@ func (s *FrameScheduler) Tick() <-chan Tick { return s.tickCh }
 // Msgs returns the read-only message channel. The channel is closed
 // when Run returns, so a for-range consumer exits cleanly (spec-1.4 R2
 // MED-2 goroutine leak fix).
+//
+// R3.3/R3.5 behaviour: when WithMsgHook is installed, the hook receives
+// every Msg synchronously on the main goroutine and msgCh receives
+// nothing. Without a hook, the scheduler falls back to non-blocking
+// emit on msgCh for backwards compatibility.
 func (s *FrameScheduler) Msgs() <-chan Msg { return s.msgCh }
+
+// Started returns a channel that is closed after driver.Init succeeds
+// and the frame loop is ready to receive Msgs. External goroutines that
+// call into the driver (e.g. a PollEvent loop) MUST wait on this channel
+// to avoid racing with the scheduler's initialisation step.
+//
+// spec-1.4 R3.6 errata (spec-1.15 R3 codex HIGH-1 driven; pollEvents-
+// before-Init race fix).
+func (s *FrameScheduler) Started() <-chan struct{} { return s.started }
+
+// CurrentFrame returns the current frame counter (spec-1.4 R3.4 public).
+//
+// Concurrency: the field is mutated only on the render goroutine. The
+// intended callers are msgHook implementations (which run synchronously
+// inside the render goroutine via WithMsgHook), so reads are racy-only
+// when invoked from arbitrary external goroutines. Cross-goroutine
+// callers MUST treat the return value as a best-effort snapshot used
+// only for ErrorMsg debug context (the exact value is not load-bearing).
+func (s *FrameScheduler) CurrentFrame() int {
+	return s.frame
+}
+
+// EmitMsg posts msg directly onto the priority message queue, bypassing
+// the worker pool. spec-1.4 R3.5 public API for UI/system messages
+// (KeyMsg / ResizeMsg / Ctrl+C / quit-disarm) that MUST NOT be delayed
+// by long-running Cmds in the worker pool.
+//
+// Non-blocking by design: if priorityMsgCh is full, EmitMsg drops one
+// oldest message and retries; if even that fails it logs and drops the
+// new message (same policy as emit()). Safe to call after Stop —
+// stopped flag short-circuits and logs a warning to avoid send-on-
+// closed panic (priorityMsgCh is NEVER closed).
+func (s *FrameScheduler) EmitMsg(msg Msg) {
+	if s.stopped.Load() {
+		slog.Warn("scheduler.EmitMsg called after Stop; dropping message", "msg_type", fmt.Sprintf("%T", msg))
+		return
+	}
+	select {
+	case s.priorityMsgCh <- msg:
+		return
+	default:
+	}
+	// drop one oldest, retry
+	select {
+	case <-s.priorityMsgCh:
+	default:
+	}
+	select {
+	case s.priorityMsgCh <- msg:
+	default:
+		slog.Warn("scheduler.priorityMsgCh saturated; dropping message", "msg_type", fmt.Sprintf("%T", msg))
+	}
+}
+
+// EmitError is a typed wrapper over EmitMsg for ErrorMsg values.
+// spec-1.4 R3.4 + R3.5: caller constructs the full ErrorMsg (CmdID /
+// Submitted / Priority / Frame H-6 context) and submits via this entry
+// to keep the wrapper-as-typed-API contract clear.
+//
+// Bare `error` is intentionally NOT accepted — callers MUST build the
+// ErrorMsg with full context so debug telemetry doesn't lose CmdID /
+// Submitted / Priority / Frame fields.
+func (s *FrameScheduler) EmitError(msg ErrorMsg) {
+	s.EmitMsg(msg)
+}
 
 // emit sends m to msgCh with the spec-1.4 R2 H-3 "non-blocking drop-
 // oldest" policy: if the channel is full we discard one queued message
@@ -164,6 +282,12 @@ func (s *FrameScheduler) emit(m Msg) {
 	}
 }
 
+// maxPriorityMsgsPerFrame caps how many priorityMsgCh entries are
+// drained per frame. Bounded so a paste/key flood cannot starve render
+// and worker-results dispatch forever (spec-1.4 R3.5 + spec-1.15 R5
+// drain policy).
+const maxPriorityMsgsPerFrame = 64
+
 // Run drives the frame loop until ctx is cancelled. Single goroutine;
 // callers MUST launch in their own goroutine. Returns driver.Init's
 // error or ctx.Err() on clean shutdown. msgCh is closed before return.
@@ -172,9 +296,17 @@ func (s *FrameScheduler) Run(ctx context.Context) error {
 	if err := s.driver.Init(); err != nil {
 		return err
 	}
+	// R3.6: signal driver is ready — external goroutines waiting on
+	// Started() can now safely call driver methods (e.g. PollEvent).
+	close(s.started)
 	defer s.driver.Fini()
 	defer s.workers.Stop()
 	defer close(s.msgCh)
+	// R3.5: set stopped flag BEFORE close(msgCh) so any racing EmitMsg
+	// caller observes stopped=true and bails out via the drop+warn path.
+	// priorityMsgCh itself is intentionally NEVER closed to avoid
+	// send-on-closed panics for in-flight goroutines (timer callbacks).
+	defer s.stopped.Store(true)
 	// spec-1.4 R3 M-A: release the final adopted lastFrame back to the
 	// pool on Run exit, otherwise the pool slowly leaks one Grid per
 	// scheduler lifecycle.
@@ -195,29 +327,88 @@ func (s *FrameScheduler) Run(ctx context.Context) error {
 			return ctx.Err()
 
 		case <-ticker.C:
+			s.drainPriorityMsgs()
+			s.drainResults()
 			s.runFrame(ctx)
 		case res, ok := <-s.workers.Results():
 			if !ok {
-				// results closed during shutdown; continue, ctx will fire.
 				continue
 			}
-			if res.panicErr != nil {
-				// spec-1.4 R3 H-A: wrap with %w so callers can use
-				// errors.Is(em.Err, ErrPanicRecovered) to programmatically
-				// detect scheduler panic-recovered errors (rule 7 errcode
-				// chain). %v alone produced a string-only error and made
-				// the registered sentinel effectively dead code.
-				s.emit(ErrorMsg{
-					CmdID:     CmdID(res.cmdID),
-					Err:       fmt.Errorf("%w: %v", ErrPanicRecovered, res.panicErr),
-					Stack:     res.stack,
-					Submitted: res.submitted,
-					Priority:  res.priority,
-					Frame:     s.frame,
-				})
-			}
+			s.dispatchResult(res)
+			// R3 codex MED-1 fix: priorityMsgCh is NOT a select arm.
+			// Direct-read would bypass the maxPriorityMsgsPerFrame cap
+			// (UI/system Msgs would interleave between ticker frames
+			// without bound, drowning render/results). priorityMsgCh
+			// is drained only at frame start in drainPriorityMsgs.
+			// Worst-case priority Msg latency = 1 ticker interval =
+			// 16.67ms @ 60fps; the 800ms quit window has 47x margin.
 		}
 	}
+}
+
+// drainPriorityMsgs drains up to maxPriorityMsgsPerFrame entries off
+// priorityMsgCh and dispatches them synchronously. Called at the top of
+// each ticker frame (R3.5 + spec-1.15 R5: priority first, bounded).
+func (s *FrameScheduler) drainPriorityMsgs() {
+	for i := 0; i < maxPriorityMsgsPerFrame; i++ {
+		select {
+		case m := <-s.priorityMsgCh:
+			s.dispatchMsg(m)
+		default:
+			return
+		}
+	}
+}
+
+// drainResults drains pending worker results (success Msg or panic
+// ErrorMsg) and dispatches them. Called after drainPriorityMsgs so
+// system Msgs always have priority.
+func (s *FrameScheduler) drainResults() {
+	for {
+		select {
+		case res, ok := <-s.workers.Results():
+			if !ok {
+				return
+			}
+			s.dispatchResult(res)
+		default:
+			return
+		}
+	}
+}
+
+// dispatchResult converts a workerResult into the appropriate Msg
+// (success Msg via R3.2, or ErrorMsg via H-6) and dispatches.
+func (s *FrameScheduler) dispatchResult(res workerResult) {
+	if res.panicErr != nil {
+		// spec-1.4 R3 H-A: wrap with %w so callers can use
+		// errors.Is(em.Err, ErrPanicRecovered) to programmatically detect
+		// scheduler panic-recovered errors (rule 7 errcode chain).
+		s.dispatchMsg(ErrorMsg{
+			CmdID:     CmdID(res.cmdID),
+			Err:       fmt.Errorf("%w: %v", ErrPanicRecovered, res.panicErr),
+			Stack:     res.stack,
+			Submitted: res.submitted,
+			Priority:  res.priority,
+			Frame:     s.frame,
+		})
+		return
+	}
+	// R3.2: success Msg dispatch
+	if res.successMsg != nil {
+		s.dispatchMsg(res.successMsg)
+	}
+}
+
+// dispatchMsg sends m to the installed msgHook (R3.3) or, when no hook
+// is configured, to the legacy msgCh via non-blocking emit (R3.5: never
+// raw blocking send).
+func (s *FrameScheduler) dispatchMsg(m Msg) {
+	if s.msgHook != nil {
+		s.msgHook(m)
+		return
+	}
+	s.emit(m)
 }
 
 // runFrame executes one render frame. See spec-1.4 § 3.4 frame
@@ -248,7 +439,13 @@ func (s *FrameScheduler) runFrame(_ context.Context) {
 				"frame", s.frame,
 				"adopted", adopted,
 				"stack", string(stack))
-			s.emit(ErrorMsg{
+			// R3 codex HIGH-2 fix: route frame-level ErrorMsg through
+			// dispatchMsg so WithMsgHook installations receive it.
+			// Previously s.emit went straight to msgCh which the program
+			// package never reads (it installed a hook to consume Msgs).
+			// dispatchMsg picks hook when set; otherwise falls back to
+			// non-blocking emit on msgCh (legacy callers).
+			s.dispatchMsg(ErrorMsg{
 				CmdID:    0, // frame-level panic has no Cmd identity
 				Err:      fmt.Errorf("%w: frame body: %v", ErrPanicRecovered, r),
 				Stack:    stack,

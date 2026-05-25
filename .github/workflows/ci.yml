@@ -362,6 +362,14 @@ jobs:
         env:
           DIFF_VISUAL_REQUIRED: ${{ vars.DIFF_VISUAL_REQUIRED || '' }}
         run: make ui-diff-golden
+      - name: Layer 3 program visual golden (spec-1.15 D-8)
+        # Program fixtures parked under tests/integration/uitest/program/
+        # testdata/visual/Program*/ — captured in a future T-2.5 session.
+        # Independent env gate (PROGRAM_VISUAL_REQUIRED). 8th independent
+        # block-style visual env gate per spec-1.15 D-8.
+        env:
+          PROGRAM_VISUAL_REQUIRED: ${{ vars.PROGRAM_VISUAL_REQUIRED || '' }}
+        run: make ui-program-golden
 
   # spec-0.11.5 D-4/D-5: Layer 5 screenshot evidence. Required context,
   # label-gated. PR body/label edits retrigger this workflow so stale
