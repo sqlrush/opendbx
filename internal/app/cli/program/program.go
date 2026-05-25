@@ -312,14 +312,14 @@ func (p *Program) paintInputRow(grid *buffer.Grid, row int) {
 	}
 	st := im.InputState()
 	mode := input.DeriveMode(st.Buffer)
-	st_in := input.StyleFor(mode)
-	if mode == input.InputModeNatural {
+	stIn := input.StyleFor(mode)
+	if mode == input.ModeNatural {
 		// Natural mode keeps the "> " prompt.
 		x := paintTextAt(grid, "> ", 0, row, style.Style{}, cols)
-		paintTextAt(grid, st.Buffer, x, row, st_in, cols)
+		paintTextAt(grid, st.Buffer, x, row, stIn, cols)
 	} else {
 		// Slash/SQL: Buffer literal is itself the mode glyph + body.
-		paintTextAt(grid, st.Buffer, 0, row, st_in, cols)
+		paintTextAt(grid, st.Buffer, 0, row, stIn, cols)
 	}
 }
 

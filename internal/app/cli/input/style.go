@@ -44,11 +44,11 @@ func (k StyleKind) String() string {
 //
 // R2 D-6 (spec-1.16): input-local theme map; not a render/block.StyleTheme
 // implementation (DAG isolation).
-func StyleFor(mode InputMode) style.Style {
+func StyleFor(mode Mode) style.Style {
 	switch mode {
-	case InputModeSlash:
+	case ModeSlash:
 		return style.Style{FG: style.RGB(0x00, 0xC0, 0xC0)} // cyan
-	case InputModeSQL:
+	case ModeSQL:
 		return style.Style{FG: style.RGB(0x50, 0xC8, 0x50)} // dim green (psql parity)
 	default:
 		return style.Style{} // terminal default

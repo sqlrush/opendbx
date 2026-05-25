@@ -6,22 +6,22 @@ package input
 
 import "testing"
 
-// --- T1-1..T1-5 InputMode enum ---
+// --- T1-1..T1-5 Mode enum ---
 
 func TestInputMode_String(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		mode InputMode
+		mode Mode
 		want string
 	}{
-		{InputModeNatural, "natural"},
-		{InputModeSlash, "slash"},
-		{InputModeSQL, "sql"},
-		{InputMode(99), "natural"}, // unknown defaults to natural
+		{ModeNatural, "natural"},
+		{ModeSlash, "slash"},
+		{ModeSQL, "sql"},
+		{Mode(99), "natural"}, // unknown defaults to natural
 	}
 	for _, c := range cases {
 		if got := c.mode.String(); got != c.want {
-			t.Errorf("InputMode(%d).String() = %q, want %q", c.mode, got, c.want)
+			t.Errorf("Mode(%d).String() = %q, want %q", c.mode, got, c.want)
 		}
 	}
 }
@@ -29,12 +29,12 @@ func TestInputMode_String(t *testing.T) {
 func TestInputMode_TriggerRune(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		mode InputMode
+		mode Mode
 		want rune
 	}{
-		{InputModeNatural, 0},
-		{InputModeSlash, '/'},
-		{InputModeSQL, '\\'},
+		{ModeNatural, 0},
+		{ModeSlash, '/'},
+		{ModeSQL, '\\'},
 	}
 	for _, c := range cases {
 		if got := c.mode.TriggerRune(); got != c.want {
@@ -45,9 +45,9 @@ func TestInputMode_TriggerRune(t *testing.T) {
 
 func TestInputMode_ZeroValue(t *testing.T) {
 	t.Parallel()
-	var m InputMode
-	if m != InputModeNatural {
-		t.Errorf("zero value InputMode = %v, want InputModeNatural", m)
+	var m Mode
+	if m != ModeNatural {
+		t.Errorf("zero value Mode = %v, want ModeNatural", m)
 	}
 }
 
@@ -58,20 +58,20 @@ func TestDeriveMode(t *testing.T) {
 	cases := []struct {
 		name   string
 		buffer string
-		want   InputMode
+		want   Mode
 	}{
-		{"empty buffer", "", InputModeNatural},
-		{"slash prefix", "/help", InputModeSlash},
-		{"slash alone", "/", InputModeSlash},
-		{"backslash prefix", "\\select * from t", InputModeSQL},
-		{"backslash alone", "\\", InputModeSQL},
-		{"natural ASCII", "hello", InputModeNatural},
-		{"natural digit", "1234", InputModeNatural},
-		{"natural CJK first", "你好", InputModeNatural},
-		{"natural space first", " /help", InputModeNatural},
+		{"empty buffer", "", ModeNatural},
+		{"slash prefix", "/help", ModeSlash},
+		{"slash alone", "/", ModeSlash},
+		{"backslash prefix", "\\select * from t", ModeSQL},
+		{"backslash alone", "\\", ModeSQL},
+		{"natural ASCII", "hello", ModeNatural},
+		{"natural digit", "1234", ModeNatural},
+		{"natural CJK first", "你好", ModeNatural},
+		{"natural space first", " /help", ModeNatural},
 		// Middle '/' does NOT switch mode — DeriveMode looks only at byte 0.
-		{"middle slash natural", "hello /world", InputModeNatural},
-		{"middle backslash natural", "hello \\n", InputModeNatural},
+		{"middle slash natural", "hello /world", ModeNatural},
+		{"middle backslash natural", "hello \\n", ModeNatural},
 	}
 	for _, c := range cases {
 		c := c

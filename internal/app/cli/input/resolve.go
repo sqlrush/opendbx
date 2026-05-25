@@ -68,7 +68,7 @@ func ResolveMode(buffer string, cursor int, code int, r rune) (newBuffer string,
 // A buffer consisting only of the trigger rune returns "".
 func ValueWithoutPrefix(buffer string) string {
 	mode := DeriveMode(buffer)
-	if mode == InputModeNatural || buffer == "" {
+	if mode == ModeNatural || buffer == "" {
 		return buffer
 	}
 	n := utf8.RuneLen(mode.TriggerRune())

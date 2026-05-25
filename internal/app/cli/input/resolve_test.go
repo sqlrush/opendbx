@@ -19,7 +19,7 @@ func TestResolveMode_KeyRune_FirstSlash(t *testing.T) {
 	if buf != "/" || cursor != 1 {
 		t.Errorf("got (%q, %d), want (\"/\", 1)", buf, cursor)
 	}
-	if got := DeriveMode(buf); got != InputModeSlash {
+	if got := DeriveMode(buf); got != ModeSlash {
 		t.Errorf("DeriveMode after `/` = %v, want Slash", got)
 	}
 }
@@ -30,7 +30,7 @@ func TestResolveMode_KeyRune_FirstBackslash(t *testing.T) {
 	if buf != "\\" || cursor != 1 {
 		t.Errorf("got (%q, %d), want (`\\`, 1)", buf, cursor)
 	}
-	if got := DeriveMode(buf); got != InputModeSQL {
+	if got := DeriveMode(buf); got != ModeSQL {
 		t.Errorf("DeriveMode after `\\` = %v, want SQL", got)
 	}
 }
@@ -41,7 +41,7 @@ func TestResolveMode_KeyRune_FirstNatural(t *testing.T) {
 	if buf != "h" || cursor != 1 {
 		t.Errorf("got (%q, %d), want (\"h\", 1)", buf, cursor)
 	}
-	if got := DeriveMode(buf); got != InputModeNatural {
+	if got := DeriveMode(buf); got != ModeNatural {
 		t.Errorf("DeriveMode after `h` = %v, want Natural", got)
 	}
 }
@@ -58,7 +58,7 @@ func TestResolveMode_KeyBackspace_ToEmpty(t *testing.T) {
 	if buf != "" || cursor != 0 {
 		t.Errorf("backspace / got (%q, %d), want (\"\", 0)", buf, cursor)
 	}
-	if got := DeriveMode(buf); got != InputModeNatural {
+	if got := DeriveMode(buf); got != ModeNatural {
 		t.Errorf("DeriveMode after backspace to empty = %v, want Natural", got)
 	}
 }
@@ -80,7 +80,7 @@ func TestResolveMode_KeyRune_MultiSequence(t *testing.T) {
 	if buf != "/help" || cursor != 5 {
 		t.Errorf("got (%q, %d), want (\"/help\", 5)", buf, cursor)
 	}
-	if got := DeriveMode(buf); got != InputModeSlash {
+	if got := DeriveMode(buf); got != ModeSlash {
 		t.Errorf("DeriveMode = %v, want Slash", got)
 	}
 }
@@ -109,7 +109,7 @@ func TestResolveMode_KeyRune_PasteLikeFlood(t *testing.T) {
 	if buf != src || cursor != 600 {
 		t.Errorf("paste-like flood mismatched; len(buf)=%d cursor=%d", len(buf), cursor)
 	}
-	if got := DeriveMode(buf); got != InputModeNatural {
+	if got := DeriveMode(buf); got != ModeNatural {
 		t.Errorf("DeriveMode after non-trigger flood = %v, want Natural", got)
 	}
 }
@@ -158,7 +158,7 @@ func TestResolveMode_DeriveConsistency(t *testing.T) {
 	if buf != "\\d" {
 		t.Errorf("final buf = %q, want \"\\d\"", buf)
 	}
-	if got := DeriveMode(buf); got != InputModeSQL {
+	if got := DeriveMode(buf); got != ModeSQL {
 		t.Errorf("final DeriveMode = %v, want SQL", got)
 	}
 }

@@ -3,7 +3,7 @@
 // Author: sqlrush
 
 // Package input is the spec-1.16 three-mode input primitives:
-//   - InputMode enum (Natural / Slash / SQL)
+//   - Mode enum (Natural / Slash / SQL)
 //   - DeriveMode(buffer) — SOLE source of truth via Buffer[0]; mode is
 //     NEVER stored as state (spec-1.16 R2 C2 ★A 路径 A by-construction
 //     single SoT)

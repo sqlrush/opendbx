@@ -23,13 +23,13 @@ import (
 )
 
 // TestInputModeVisualGolden consumes 5 input-mode CC fixtures parked
-// under tests/integration/uitest/input/testdata/visual/InputMode*/.
+// under tests/integration/uitest/input/testdata/visual/Mode*/.
 //
 // Fixture coverage (spec-1.16 D-8):
 //
-//	InputModeNatural       — "> hello world_" Natural mode
-//	InputModeSlash         — "/help_" Slash mode (no "> " prompt)
-//	InputModeSQL           — "\select * from t_" SQL mode
+//	ModeNatural       — "> hello world_" Natural mode
+//	ModeSlash         — "/help_" Slash mode (no "> " prompt)
+//	ModeSQL           — "\select * from t_" SQL mode
 //	InputModeStatusSegment — status line "opendbx slash" (mode segment appended)
 //	InputModeSwitchTrace   — natural → slash → SQL → natural sequence
 //
