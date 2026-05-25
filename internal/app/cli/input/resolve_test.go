@@ -149,8 +149,24 @@ func TestResolveMode_DeriveConsistency(t *testing.T) {
 	buf, cursor := "", 0
 	for _, s := range seq {
 		buf, cursor = ResolveMode(buf, cursor, s.code, s.r)
-		// Invariant: DeriveMode(buf) only looks at buf[0]; always consistent.
-		_ = DeriveMode(buf)
+		// R4 N-3: assert invariant per-step, not just terminal state.
+		// DeriveMode looks only at buf[0] so it must match the leading-
+		// byte derived expectation at every step.
+		got := DeriveMode(buf)
+		var want Mode
+		switch {
+		case buf == "":
+			want = ModeNatural
+		case buf[0] == '/':
+			want = ModeSlash
+		case buf[0] == '\\':
+			want = ModeSQL
+		default:
+			want = ModeNatural
+		}
+		if got != want {
+			t.Fatalf("step %v: DeriveMode(%q) = %v, want %v", s, buf, got, want)
+		}
 		if cursor < 0 {
 			t.Fatalf("cursor went negative at step %v: buf=%q cursor=%d", s, buf, cursor)
 		}

@@ -122,6 +122,9 @@ func gridASCII(buf buffer.Buffer) []byte {
 	for y := 0; y < rows; y++ {
 		for x := 0; x < cols; x++ {
 			c := buf.Cell(x, y)
+			// R4 N-4: Ch == 0 is empty cell; Ch < 0 is the
+			// buffer.WideContinuation sentinel (-1) for wide-rune cells.
+			// Both render as space in the ASCII transcript.
 			if c.Ch == 0 || c.Ch < 0 {
 				b.WriteByte(' ')
 				continue

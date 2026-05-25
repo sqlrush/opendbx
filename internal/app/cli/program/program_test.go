@@ -726,6 +726,61 @@ func TestProgram_InputRow_SQL_NoPrompt(t *testing.T) {
 	}
 }
 
+// R4 M-1: cols overflow truncation across 3 mode paths.
+func TestProgram_InputRow_ColsOverflowTruncate(t *testing.T) {
+	cases := []struct {
+		name string
+		buf  string
+	}{
+		{"natural", strings.Repeat("a", 80)},
+		{"slash", "/" + strings.Repeat("a", 80)},
+		{"sql", "\\" + strings.Repeat("a", 80)},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			drv := newFakeDriver(10, 5)
+			m := &testModel{inputState: InputState{Buffer: c.buf, Cursor: len([]rune(c.buf))}}
+			p := New(drv, m)
+			grid, _ := buffer.NewGrid(10, 5)
+			p.renderFn(grid)
+			// 验证 row 不写出 col 10 以外 (paint 用 paintTextAt 自带 cols boundary)
+			row := rowToString(grid, 3)
+			if len(row) > 10 {
+				t.Errorf("row exceeded cols: len=%d, row=%q", len(row), row)
+			}
+		})
+	}
+}
+
+// R4 M-2: custom StatusSegmenter + mode segment dedup policy
+// (R-9: StatusSegmenter implementors MUST NOT include their own mode
+// segment; Program unconditionally appends).
+func TestProgram_StatusLine_CustomSegmenter_WithModeSegment(t *testing.T) {
+	drv := newFakeDriver(60, 5)
+	m := &testModel{
+		statusSegs: []StatusSegment{{Text: "mydb"}},
+		inputState: InputState{Buffer: "/cmd", Cursor: 4},
+	}
+	p := New(drv, m)
+	grid, _ := buffer.NewGrid(60, 5)
+	p.renderFn(grid)
+	row := rowToString(grid, 4)
+	if !strings.Contains(row, "mydb") {
+		t.Errorf("custom segment missing; row = %q", row)
+	}
+	if !strings.Contains(row, "slash") {
+		t.Errorf("mode segment missing; row = %q", row)
+	}
+	// 顺序: mydb 在 slash 前
+	idxCustom := strings.Index(row, "mydb")
+	idxMode := strings.Index(row, "slash")
+	if idxCustom < 0 || idxMode < 0 || idxCustom > idxMode {
+		t.Errorf("order mismatch; row = %q (custom %d, mode %d)", row, idxCustom, idxMode)
+	}
+}
+
 // spec-1.16 D-5 + R2 M-4 (R-9): Program appends mode segment to status line.
 func TestProgram_StatusLine_AppendsModeSegment(t *testing.T) {
 	cases := []struct {

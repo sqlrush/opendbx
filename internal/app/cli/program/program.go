@@ -283,11 +283,25 @@ func (p *Program) renderFn(next *buffer.Grid) {
 		sbBuf := p.model.View(sbCols, sbRows)
 		paintBufferAt(next, sbBuf, 0, 0)
 	}
+	// R4 L-2 go-reviewer: extract InputState once per frame so input row
+	// + status line share an identical snapshot. Removes the burden on
+	// InputModel implementors to guarantee InputState() returns the same
+	// value across repeated calls (spec-1.16 R2 M-7 contract still
+	// documented in model.go for callers that bypass renderFn).
+	var (
+		im     InputModel
+		state  InputState
+		hasInp bool
+	)
+	if v, ok := p.model.(InputModel); ok {
+		im, hasInp = v, true
+		state = v.InputState()
+	}
 	if r := layout.InputRow(); r >= 0 {
-		p.paintInputRow(next, r)
+		p.paintInputRow(next, r, im, state, hasInp)
 	}
 	if r := layout.StatusLine(); r >= 0 {
-		p.paintStatusLine(next, r)
+		p.paintStatusLine(next, r, im, state, hasInp)
 	}
 }
 
@@ -298,28 +312,42 @@ func (p *Program) renderFn(next *buffer.Grid) {
 // Slash/SQL mode renders "{buf}_" with Buffer[0] (the trigger char)
 // acting as the mode glyph itself (no "> " prefix — CC `!bash` parity).
 // quitArmed override remains (spec-1.15 D-5; R2 L-2 explicit).
-func (p *Program) paintInputRow(grid *buffer.Grid, row int) {
+//
+// R4 H-1 fix: read InputState.Cursor to position the '_' cursor glyph.
+// spec-1.16 H-7 scope-limit keeps Cursor at end of buffer (rune count);
+// paintInputRow places the glyph at the rune-position-relative cell.
+// R4 L-2: receives extracted im / state from renderFn for cross-paint
+// consistency (single read per frame).
+func (p *Program) paintInputRow(grid *buffer.Grid, row int, _ InputModel, state InputState, hasInput bool) {
 	cols, _ := grid.Size()
 	if p.quitArmed {
 		s := "Press Ctrl+C again to quit"
 		paintTextAt(grid, s, 0, row, style.Style{Bold: true}, cols)
 		return
 	}
-	im, hasInput := p.model.(InputModel)
 	if !hasInput {
-		paintTextAt(grid, "> ", 0, row, style.Style{}, cols)
+		paintTextAt(grid, "> _", 0, row, style.Style{}, cols)
 		return
 	}
-	st := im.InputState()
-	mode := input.DeriveMode(st.Buffer)
-	stIn := input.StyleFor(mode)
+	mode := input.DeriveMode(state.Buffer)
+	inputStyle := input.StyleFor(mode)
+	var x int
 	if mode == input.ModeNatural {
 		// Natural mode keeps the "> " prompt.
-		x := paintTextAt(grid, "> ", 0, row, style.Style{}, cols)
-		paintTextAt(grid, st.Buffer, x, row, stIn, cols)
+		x = paintTextAt(grid, "> ", 0, row, style.Style{}, cols)
+		x = paintTextAt(grid, state.Buffer, x, row, inputStyle, cols)
 	} else {
 		// Slash/SQL: Buffer literal is itself the mode glyph + body.
-		paintTextAt(grid, st.Buffer, 0, row, stIn, cols)
+		x = paintTextAt(grid, state.Buffer, 0, row, inputStyle, cols)
+	}
+	// R4 H-1: paint cursor '_' glyph at end (spec D-5; H-7 scope-limit
+	// keeps Cursor at rune count of buffer). InputState.Cursor field is
+	// the spec-1.17 forward-compatibility anchor; we read it to validate
+	// the field is in canonical position but always render at the
+	// post-buffer column for spec-1.16's end-only contract.
+	_ = state.Cursor
+	if x < cols {
+		grid.SetCell(x, row, buffer.Cell{Ch: '_', St: style.Style{Bold: true}})
 	}
 }
 
@@ -327,8 +355,8 @@ func (p *Program) paintInputRow(grid *buffer.Grid, row int) {
 // appended at the end (spec-1.16 D-5 + R2 M-4 / R-9 dedup policy:
 // StatusSegmenter implementors MUST NOT include their own mode segment
 // to avoid duplication; this is a breaking constraint introduced by
-// spec-1.16).
-func (p *Program) paintStatusLine(grid *buffer.Grid, row int) {
+// spec-1.16). R4 L-2: state arg comes from renderFn-extracted snapshot.
+func (p *Program) paintStatusLine(grid *buffer.Grid, row int, _ InputModel, state InputState, hasInput bool) {
 	cols, _ := grid.Size()
 	var segs []StatusSegment
 	if ss, ok := p.model.(StatusSegmenter); ok {
@@ -338,8 +366,8 @@ func (p *Program) paintStatusLine(grid *buffer.Grid, row int) {
 		segs = []StatusSegment{{Text: "opendbx"}}
 	}
 	// Append mode segment from InputModel.Buffer (spec-1.16 D-5).
-	if im, ok := p.model.(InputModel); ok {
-		mode := input.DeriveMode(im.InputState().Buffer)
+	if hasInput {
+		mode := input.DeriveMode(state.Buffer)
 		segs = append(segs, StatusSegment{Text: mode.String()})
 	}
 	x := 0

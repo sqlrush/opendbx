@@ -90,3 +90,23 @@ func (p *Program) preDispatchSystemNoSchedule(msg scheduler.Msg) (handled bool) 
 	}
 	return false
 }
+
+// BenchmarkPaintInputRow_withMode measures the mode-aware paintInputRow
+// hot path (spec-1.16 § 4.3 R4 H-2 perf gate). Target < 5µs/op (relative
+// to spec-1.15 baseline 13µs/frame paintInputRow subset; ≤ 3% regression
+// per R-10).
+func BenchmarkPaintInputRow_withMode(b *testing.B) {
+	b.ReportAllocs()
+	drv := newFakeDriver(80, 24)
+	cases := []string{"hello world", "/help", "\\select * from t"}
+	models := make([]*testModel, len(cases))
+	for i, c := range cases {
+		models[i] = &testModel{inputState: InputState{Buffer: c, Cursor: len([]rune(c))}}
+	}
+	grid, _ := buffer.NewGrid(80, 24)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		p := New(drv, models[i%len(models)])
+		p.paintInputRow(grid, 22, models[i%len(models)], models[i%len(models)].InputState(), true)
+	}
+}
