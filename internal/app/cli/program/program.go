@@ -331,31 +331,43 @@ func (p *Program) paintInputRow(grid *buffer.Grid, row int, _ InputModel, state 
 	}
 	mode := input.DeriveMode(state.Buffer)
 	inputStyle := input.StyleFor(mode)
+	// R3 codex MED-1 fix: split buffer at Cursor rune position so the
+	// '_' glyph reflects InputState.Cursor (no longer dead field).
+	// Buffer is sliced as runes (Cursor is rune-position per spec D-1),
+	// and the pre/post halves are painted separately with the cursor
+	// glyph between them. spec-1.16 H-7 scope-limit keeps Cursor at
+	// len(runes(Buffer)); this rendering is forward-compatible with
+	// spec-1.17 mid-cursor edits.
+	runes := []rune(state.Buffer)
+	cursor := state.Cursor
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(runes) {
+		cursor = len(runes)
+	}
+	pre := string(runes[:cursor])
+	post := string(runes[cursor:])
 	var x int
 	if mode == input.ModeNatural {
 		// Natural mode keeps the "> " prompt.
 		x = paintTextAt(grid, "> ", 0, row, style.Style{}, cols)
-		x = paintTextAt(grid, state.Buffer, x, row, inputStyle, cols)
-	} else {
-		// Slash/SQL: Buffer literal is itself the mode glyph + body.
-		x = paintTextAt(grid, state.Buffer, 0, row, inputStyle, cols)
 	}
-	// R4 H-1: paint cursor '_' glyph at end (spec D-5; H-7 scope-limit
-	// keeps Cursor at rune count of buffer). InputState.Cursor field is
-	// the spec-1.17 forward-compatibility anchor; we read it to validate
-	// the field is in canonical position but always render at the
-	// post-buffer column for spec-1.16's end-only contract.
-	_ = state.Cursor
+	x = paintTextAt(grid, pre, x, row, inputStyle, cols)
 	if x < cols {
 		grid.SetCell(x, row, buffer.Cell{Ch: '_', St: style.Style{Bold: true}})
+		x++
 	}
+	paintTextAt(grid, post, x, row, inputStyle, cols)
 }
 
-// paintStatusLine renders the status line. Mode segment is unconditionally
-// appended at the end (spec-1.16 D-5 + R2 M-4 / R-9 dedup policy:
-// StatusSegmenter implementors MUST NOT include their own mode segment
-// to avoid duplication; this is a breaking constraint introduced by
-// spec-1.16). R4 L-2: state arg comes from renderFn-extracted snapshot.
+// paintStatusLine renders the status line. The mode segment is
+// **unconditionally appended** at the end (append-only contract, not a
+// dedup implementation per codex R3 LOW): the InputModel-derived mode
+// segment is added even if StatusSegmenter already returned a segment
+// with the same text. StatusSegmenter implementors are advised not to
+// emit their own mode segment to avoid visual duplication (spec-1.16
+// D-5 + R-9). R4 L-2: state arg comes from renderFn-extracted snapshot.
 func (p *Program) paintStatusLine(grid *buffer.Grid, row int, _ InputModel, state InputState, hasInput bool) {
 	cols, _ := grid.Size()
 	var segs []StatusSegment

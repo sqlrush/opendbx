@@ -3,7 +3,7 @@
 // Author: sqlrush
 
 // Package input is the spec-1.16 three-mode input primitives:
-//   - Mode enum (Natural / Slash / SQL)
+//   - Mode enum (ModeNatural / ModeSlash / ModeSQL)
 //   - DeriveMode(buffer) — SOLE source of truth via Buffer[0]; mode is
 //     NEVER stored as state (spec-1.16 R2 C2 ★A 路径 A by-construction
 //     single SoT)
@@ -12,8 +12,9 @@
 //     mid-cursor + KeyDelete deferred to spec-1.17 (❌-10)
 //   - ValueWithoutPrefix(buffer) — strip mode trigger rune for downstream
 //     slash registry / SQL parser consumption (spec-2.1 / spec-2.4)
-//   - StyleKind input-local enum (Natural / Slash / SQL) — DAG-isolated
-//     from render/block.StyleKind
+//   - StyleFor(mode) — input-local mode→style.Style resolver (DAG-isolated
+//     from render/block.StyleKind; spec-1.16 R3 codex MED-4 fix: prior
+//     exported StyleKind enum removed, no external consumer)
 //
 // DAG position: 9.5 (between render/streaming index 9 and
 // app/cli/program index 10). input imports only render/terminal (index

@@ -42,10 +42,15 @@ type StatusSegment struct {
 // a static "> " prompt placeholder.
 //
 // spec-1.16 R2 M-7 contract: InputState() MUST be a pure accessor —
-// repeated calls within one frame MUST return identical values. Program
-// invokes it independently from paintInputRow and paintStatusLine each
-// frame; inconsistent return values would produce a row showing one
-// mode while the status line shows another.
+// repeated calls within one frame MUST return identical values.
+//
+// R4 L-2 update: as of spec-1.16, Program's renderFn extracts InputState
+// once per frame and passes the snapshot to paintInputRow + paintStatusLine,
+// so callers within a single Program.Run iteration cannot observe a
+// mid-frame change. The pure-accessor contract is RETAINED nonetheless
+// because external callers (test harnesses, future caller code that
+// invokes InputState() outside the renderFn extraction) may still rely
+// on the property.
 type InputModel interface {
 	InputState() InputState
 }

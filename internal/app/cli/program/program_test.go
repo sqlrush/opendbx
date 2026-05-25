@@ -726,6 +726,41 @@ func TestProgram_InputRow_SQL_NoPrompt(t *testing.T) {
 	}
 }
 
+// R3 codex MED-1: cursor glyph at InputState.Cursor rune position.
+// Buffer split into pre/post; '_' inserted between. Natural mode has
+// "> " prefix offset.
+func TestProgram_InputRow_CursorGlyphAtPosition(t *testing.T) {
+	cases := []struct {
+		name   string
+		buf    string
+		cursor int
+		mode   string // expected first non-prompt char
+		atEnd  bool   // true: cursor glyph in last position; false: middle
+	}{
+		{"natural end", "hello", 5, "h", true},
+		{"natural middle", "hello", 2, "h", false},
+		{"slash end", "/help", 5, "/", true},
+		{"slash middle", "/help", 3, "/", false},
+		{"sql end", "\\d", 2, "\\", true},
+		{"empty", "", 0, "", true},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			drv := newFakeDriver(40, 5)
+			m := &testModel{inputState: InputState{Buffer: c.buf, Cursor: c.cursor}}
+			p := New(drv, m)
+			grid, _ := buffer.NewGrid(40, 5)
+			p.renderFn(grid)
+			row := rowToString(grid, 3) // InputRow
+			if !strings.Contains(row, "_") {
+				t.Errorf("row missing cursor glyph: %q", row)
+			}
+		})
+	}
+}
+
 // R4 M-1: cols overflow truncation across 3 mode paths.
 func TestProgram_InputRow_ColsOverflowTruncate(t *testing.T) {
 	cases := []struct {

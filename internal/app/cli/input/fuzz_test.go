@@ -44,6 +44,13 @@ func FuzzResolveMode(f *testing.F) {
 		if utf8.ValidString(buffer) && !utf8.ValidString(newBuf) {
 			t.Fatalf("ResolveMode produced invalid UTF-8: buf=%q → newBuf=%q", buffer, newBuf)
 		}
+		// R3 codex LOW: cursor drift — newCursor MUST equal rune count
+		// of newBuf for spec-1.16's cursor==end scope (R2 H-7). Other
+		// codes (besides KeyRune/KeyBackspace) are no-ops which preserve
+		// the entry invariant since the entry cursor was already at end.
+		if utf8.ValidString(newBuf) && newCursor != utf8.RuneCountInString(newBuf) {
+			t.Fatalf("cursor drift: newBuf=%q (%d runes) newCursor=%d", newBuf, utf8.RuneCountInString(newBuf), newCursor)
+		}
 	})
 }
 
