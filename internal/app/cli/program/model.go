@@ -40,6 +40,17 @@ type StatusSegment struct {
 // InputModel is an optional interface a Model may implement to drive
 // the input row (above the status line). Without this, Program paints
 // a static "> " prompt placeholder.
+//
+// spec-1.16 R2 M-7 contract: InputState() MUST be a pure accessor —
+// repeated calls within one frame MUST return identical values.
+//
+// R4 L-2 update: as of spec-1.16, Program's renderFn extracts InputState
+// once per frame and passes the snapshot to paintInputRow + paintStatusLine,
+// so callers within a single Program.Run iteration cannot observe a
+// mid-frame change. The pure-accessor contract is RETAINED nonetheless
+// because external callers (test harnesses, future caller code that
+// invokes InputState() outside the renderFn extraction) may still rely
+// on the property.
 type InputModel interface {
 	InputState() InputState
 }

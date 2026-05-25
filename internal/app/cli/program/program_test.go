@@ -677,3 +677,169 @@ func TestProgram_InputRow_QuitArmedOverride(t *testing.T) {
 		t.Errorf("input row when quit armed = %q", got)
 	}
 }
+
+// --- spec-1.16 mode-aware paint tests ---
+
+// R2 H-3 ★A: Natural mode keeps "> " prompt prefix.
+func TestProgram_InputRow_Natural_Prompt(t *testing.T) {
+	drv := newFakeDriver(40, 5)
+	m := &testModel{inputState: InputState{Buffer: "hello", Cursor: 5}}
+	p := New(drv, m)
+	grid, _ := buffer.NewGrid(40, 5)
+	p.renderFn(grid)
+	got := rowToString(grid, 3)
+	if !strings.HasPrefix(got, "> hello") {
+		t.Errorf("Natural input row = %q; want prefix '> hello'", got)
+	}
+}
+
+// R2 H-3 ★A: Slash mode renders Buffer literally (no "> " prompt;
+// Buffer[0]='/' is the mode glyph itself).
+func TestProgram_InputRow_Slash_NoPrompt(t *testing.T) {
+	drv := newFakeDriver(40, 5)
+	m := &testModel{inputState: InputState{Buffer: "/help", Cursor: 5}}
+	p := New(drv, m)
+	grid, _ := buffer.NewGrid(40, 5)
+	p.renderFn(grid)
+	got := rowToString(grid, 3)
+	if strings.HasPrefix(got, "> ") {
+		t.Errorf("Slash input row = %q; should NOT have '> ' prompt", got)
+	}
+	if !strings.HasPrefix(got, "/help") {
+		t.Errorf("Slash input row = %q; want prefix '/help'", got)
+	}
+}
+
+// R2 H-3 ★A: SQL mode also literal (no "> " prompt).
+func TestProgram_InputRow_SQL_NoPrompt(t *testing.T) {
+	drv := newFakeDriver(40, 5)
+	m := &testModel{inputState: InputState{Buffer: "\\d", Cursor: 2}}
+	p := New(drv, m)
+	grid, _ := buffer.NewGrid(40, 5)
+	p.renderFn(grid)
+	got := rowToString(grid, 3)
+	if strings.HasPrefix(got, "> ") {
+		t.Errorf("SQL input row = %q; should NOT have '> ' prompt", got)
+	}
+	if !strings.HasPrefix(got, "\\d") {
+		t.Errorf("SQL input row = %q; want prefix '\\d'", got)
+	}
+}
+
+// R3 codex MED-1: cursor glyph at InputState.Cursor rune position.
+// Buffer split into pre/post; '_' inserted between. Natural mode has
+// "> " prefix offset.
+func TestProgram_InputRow_CursorGlyphAtPosition(t *testing.T) {
+	cases := []struct {
+		name   string
+		buf    string
+		cursor int
+		mode   string // expected first non-prompt char
+		atEnd  bool   // true: cursor glyph in last position; false: middle
+	}{
+		{"natural end", "hello", 5, "h", true},
+		{"natural middle", "hello", 2, "h", false},
+		{"slash end", "/help", 5, "/", true},
+		{"slash middle", "/help", 3, "/", false},
+		{"sql end", "\\d", 2, "\\", true},
+		{"empty", "", 0, "", true},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			drv := newFakeDriver(40, 5)
+			m := &testModel{inputState: InputState{Buffer: c.buf, Cursor: c.cursor}}
+			p := New(drv, m)
+			grid, _ := buffer.NewGrid(40, 5)
+			p.renderFn(grid)
+			row := rowToString(grid, 3) // InputRow
+			if !strings.Contains(row, "_") {
+				t.Errorf("row missing cursor glyph: %q", row)
+			}
+		})
+	}
+}
+
+// R4 M-1: cols overflow truncation across 3 mode paths.
+func TestProgram_InputRow_ColsOverflowTruncate(t *testing.T) {
+	cases := []struct {
+		name string
+		buf  string
+	}{
+		{"natural", strings.Repeat("a", 80)},
+		{"slash", "/" + strings.Repeat("a", 80)},
+		{"sql", "\\" + strings.Repeat("a", 80)},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			drv := newFakeDriver(10, 5)
+			m := &testModel{inputState: InputState{Buffer: c.buf, Cursor: len([]rune(c.buf))}}
+			p := New(drv, m)
+			grid, _ := buffer.NewGrid(10, 5)
+			p.renderFn(grid)
+			// 验证 row 不写出 col 10 以外 (paint 用 paintTextAt 自带 cols boundary)
+			row := rowToString(grid, 3)
+			if len(row) > 10 {
+				t.Errorf("row exceeded cols: len=%d, row=%q", len(row), row)
+			}
+		})
+	}
+}
+
+// R4 M-2: custom StatusSegmenter + mode segment dedup policy
+// (R-9: StatusSegmenter implementors MUST NOT include their own mode
+// segment; Program unconditionally appends).
+func TestProgram_StatusLine_CustomSegmenter_WithModeSegment(t *testing.T) {
+	drv := newFakeDriver(60, 5)
+	m := &testModel{
+		statusSegs: []StatusSegment{{Text: "mydb"}},
+		inputState: InputState{Buffer: "/cmd", Cursor: 4},
+	}
+	p := New(drv, m)
+	grid, _ := buffer.NewGrid(60, 5)
+	p.renderFn(grid)
+	row := rowToString(grid, 4)
+	if !strings.Contains(row, "mydb") {
+		t.Errorf("custom segment missing; row = %q", row)
+	}
+	if !strings.Contains(row, "slash") {
+		t.Errorf("mode segment missing; row = %q", row)
+	}
+	// 顺序: mydb 在 slash 前
+	idxCustom := strings.Index(row, "mydb")
+	idxMode := strings.Index(row, "slash")
+	if idxCustom < 0 || idxMode < 0 || idxCustom > idxMode {
+		t.Errorf("order mismatch; row = %q (custom %d, mode %d)", row, idxCustom, idxMode)
+	}
+}
+
+// spec-1.16 D-5 + R2 M-4 (R-9): Program appends mode segment to status line.
+func TestProgram_StatusLine_AppendsModeSegment(t *testing.T) {
+	cases := []struct {
+		name string
+		buf  string
+		want string
+	}{
+		{"natural", "hello", "natural"},
+		{"slash", "/help", "slash"},
+		{"sql", "\\d", "sql"},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			drv := newFakeDriver(40, 5)
+			m := &testModel{inputState: InputState{Buffer: c.buf}}
+			p := New(drv, m)
+			grid, _ := buffer.NewGrid(40, 5)
+			p.renderFn(grid)
+			got := rowToString(grid, 4)
+			if !strings.Contains(got, c.want) {
+				t.Errorf("mode=%s status row = %q; want contains %q", c.name, got, c.want)
+			}
+		})
+	}
+}

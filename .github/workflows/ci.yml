@@ -370,6 +370,14 @@ jobs:
         env:
           PROGRAM_VISUAL_REQUIRED: ${{ vars.PROGRAM_VISUAL_REQUIRED || '' }}
         run: make ui-program-golden
+      - name: Layer 3 input mode visual golden (spec-1.16 D-8)
+        # Input fixtures parked under tests/integration/uitest/input/
+        # testdata/visual/InputMode*/ — captured in a future T-2.5 session.
+        # Independent env gate (INPUT_VISUAL_REQUIRED). 9th independent
+        # block-style visual env gate per spec-1.16 D-8.
+        env:
+          INPUT_VISUAL_REQUIRED: ${{ vars.INPUT_VISUAL_REQUIRED || '' }}
+        run: make ui-input-golden
 
   # spec-0.11.5 D-4/D-5: Layer 5 screenshot evidence. Required context,
   # label-gated. PR body/label edits retrigger this workflow so stale

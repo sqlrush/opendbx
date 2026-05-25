@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sqlrush/opendbx/internal/app/cli/input"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/scheduler"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/style"
@@ -282,31 +283,92 @@ func (p *Program) renderFn(next *buffer.Grid) {
 		sbBuf := p.model.View(sbCols, sbRows)
 		paintBufferAt(next, sbBuf, 0, 0)
 	}
+	// R4 L-2 go-reviewer: extract InputState once per frame so input row
+	// + status line share an identical snapshot. Removes the burden on
+	// InputModel implementors to guarantee InputState() returns the same
+	// value across repeated calls (spec-1.16 R2 M-7 contract still
+	// documented in model.go for callers that bypass renderFn).
+	var (
+		im     InputModel
+		state  InputState
+		hasInp bool
+	)
+	if v, ok := p.model.(InputModel); ok {
+		im, hasInp = v, true
+		state = v.InputState()
+	}
 	if r := layout.InputRow(); r >= 0 {
-		p.paintInputRow(next, r)
+		p.paintInputRow(next, r, im, state, hasInp)
 	}
 	if r := layout.StatusLine(); r >= 0 {
-		p.paintStatusLine(next, r)
+		p.paintStatusLine(next, r, im, state, hasInp)
 	}
 }
 
-func (p *Program) paintInputRow(grid *buffer.Grid, row int) {
+// paintInputRow renders the input row at the given grid row.
+//
+// spec-1.16 R2 H-3 ★A: mode classification by input.DeriveMode(buffer)
+// at read site (mode is NEVER state). Natural mode renders "> {buf}_";
+// Slash/SQL mode renders "{buf}_" with Buffer[0] (the trigger char)
+// acting as the mode glyph itself (no "> " prefix — CC `!bash` parity).
+// quitArmed override remains (spec-1.15 D-5; R2 L-2 explicit).
+//
+// R4 H-1 fix: read InputState.Cursor to position the '_' cursor glyph.
+// spec-1.16 H-7 scope-limit keeps Cursor at end of buffer (rune count);
+// paintInputRow places the glyph at the rune-position-relative cell.
+// R4 L-2: receives extracted im / state from renderFn for cross-paint
+// consistency (single read per frame).
+func (p *Program) paintInputRow(grid *buffer.Grid, row int, _ InputModel, state InputState, hasInput bool) {
 	cols, _ := grid.Size()
 	if p.quitArmed {
 		s := "Press Ctrl+C again to quit"
 		paintTextAt(grid, s, 0, row, style.Style{Bold: true}, cols)
 		return
 	}
-	if im, ok := p.model.(InputModel); ok {
-		st := im.InputState()
-		text := "> " + st.Buffer
-		paintTextAt(grid, text, 0, row, style.Style{}, cols)
+	if !hasInput {
+		paintTextAt(grid, "> _", 0, row, style.Style{}, cols)
 		return
 	}
-	paintTextAt(grid, "> ", 0, row, style.Style{}, cols)
+	mode := input.DeriveMode(state.Buffer)
+	inputStyle := input.StyleFor(mode)
+	// R3 codex MED-1 fix: split buffer at Cursor rune position so the
+	// '_' glyph reflects InputState.Cursor (no longer dead field).
+	// Buffer is sliced as runes (Cursor is rune-position per spec D-1),
+	// and the pre/post halves are painted separately with the cursor
+	// glyph between them. spec-1.16 H-7 scope-limit keeps Cursor at
+	// len(runes(Buffer)); this rendering is forward-compatible with
+	// spec-1.17 mid-cursor edits.
+	runes := []rune(state.Buffer)
+	cursor := state.Cursor
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(runes) {
+		cursor = len(runes)
+	}
+	pre := string(runes[:cursor])
+	post := string(runes[cursor:])
+	var x int
+	if mode == input.ModeNatural {
+		// Natural mode keeps the "> " prompt.
+		x = paintTextAt(grid, "> ", 0, row, style.Style{}, cols)
+	}
+	x = paintTextAt(grid, pre, x, row, inputStyle, cols)
+	if x < cols {
+		grid.SetCell(x, row, buffer.Cell{Ch: '_', St: style.Style{Bold: true}})
+		x++
+	}
+	paintTextAt(grid, post, x, row, inputStyle, cols)
 }
 
-func (p *Program) paintStatusLine(grid *buffer.Grid, row int) {
+// paintStatusLine renders the status line. The mode segment is
+// **unconditionally appended** at the end (append-only contract, not a
+// dedup implementation per codex R3 LOW): the InputModel-derived mode
+// segment is added even if StatusSegmenter already returned a segment
+// with the same text. StatusSegmenter implementors are advised not to
+// emit their own mode segment to avoid visual duplication (spec-1.16
+// D-5 + R-9). R4 L-2: state arg comes from renderFn-extracted snapshot.
+func (p *Program) paintStatusLine(grid *buffer.Grid, row int, _ InputModel, state InputState, hasInput bool) {
 	cols, _ := grid.Size()
 	var segs []StatusSegment
 	if ss, ok := p.model.(StatusSegmenter); ok {
@@ -314,6 +376,11 @@ func (p *Program) paintStatusLine(grid *buffer.Grid, row int) {
 	}
 	if len(segs) == 0 {
 		segs = []StatusSegment{{Text: "opendbx"}}
+	}
+	// Append mode segment from InputModel.Buffer (spec-1.16 D-5).
+	if hasInput {
+		mode := input.DeriveMode(state.Buffer)
+		segs = append(segs, StatusSegment{Text: mode.String()})
 	}
 	x := 0
 	for _, seg := range segs {
