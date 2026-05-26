@@ -302,8 +302,10 @@ func TestProgram_KeyMsg_RoutedToUpdate(t *testing.T) {
 	if got := atomic.LoadInt32(&m.updates); got == 0 {
 		t.Errorf("Update was not called after KeyMsg")
 	}
-	if msg, ok := m.lastMsg.Load().(KeyMsg); !ok || msg.Rune != 'a' {
-		t.Errorf("lastMsg = %v, want KeyMsg{Rune:'a'}", m.lastMsg.Load())
+	// spec-1.17 R2 D-5: KeyMsg is wrapped into KeyActionMsg by handleMsg
+	// before reaching Model.Update. The raw KeyMsg is preserved on .Key.
+	if msg, ok := m.lastMsg.Load().(KeyActionMsg); !ok || msg.Key.Rune != 'a' {
+		t.Errorf("lastMsg = %v, want KeyActionMsg{Key:{Rune:'a'}}", m.lastMsg.Load())
 	}
 }
 
@@ -353,6 +355,38 @@ func TestProgram_CtrlC_SingleArmsDoesNotQuit(t *testing.T) {
 	}
 	cancel()
 	<-errCh
+}
+
+// TestProgram_CtrlBackslash_SinglePressQuits locks the spec-1.17 R-fix
+// HIGH-1 contract: Ctrl+\ is an immediate hard-exit — a SINGLE press
+// quits (no double-press window), intercepted at preDispatchSystem so it
+// never reaches the Model. Regression guard for the spec-0.12 exit
+// contract that regressed when production moved from tui.Run to
+// program.Run.
+func TestProgram_CtrlBackslash_SinglePressQuits(t *testing.T) {
+	drv := newFakeDriver(80, 24)
+	m := &testModel{}
+	p := New(drv, m)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Run(ctx) }()
+
+	time.Sleep(20 * time.Millisecond)
+	_ = drv.PostEvent(terminal.EventKey{Code: terminal.KeyCtrlBackslash})
+
+	select {
+	case <-errCh:
+		// quit as expected
+	case <-time.After(2 * time.Second):
+		t.Fatalf("program did not quit on single Ctrl+\\")
+	}
+
+	// The Model must NOT have observed the Ctrl+\ key (system-intercepted).
+	if msg, ok := m.lastMsg.Load().(KeyActionMsg); ok && msg.Key.Code == terminal.KeyCtrlBackslash {
+		t.Errorf("Ctrl+\\ reached Model.Update; expected preDispatchSystem intercept")
+	}
 }
 
 // --- T1-26 panic recover via EmitError ---

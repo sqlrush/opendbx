@@ -14,9 +14,10 @@ func renderPath(name string) string {
 	return RenderRoot + name
 }
 
-// TestRenderDAG_FullMatrix verifies every pair (from, to) in the 10-package
+// TestRenderDAG_FullMatrix verifies every pair (from, to) in the
 // RenderOrder against the post-spec-0.13 rule (idx_from > idx_to allowed,
-// idx_from <= idx_to forbidden). 10×10 = 100 cases.
+// idx_from <= idx_to forbidden). N×N cases (N = len(RenderOrder); 12 as
+// of spec-1.17 terminal/tcell sub-DAG addition).
 func TestRenderDAG_FullMatrix(t *testing.T) {
 	t.Parallel()
 	for fi, from := range RenderOrder {
@@ -63,6 +64,15 @@ func TestRenderDAG_BREAKING_RegressionCases(t *testing.T) {
 		{"streaming_imports_scrollback_OK", "streaming", "scrollback", true},
 		// scrollback(8) → streaming(9): scrollback cannot reach streaming → FAIL
 		{"scrollback_imports_streaming_FAIL", "scrollback", "streaming", false},
+		// spec-1.17 D-6a terminal/tcell sub-DAG: terminal/tcell(2.5) →
+		// terminal(2): sub-package reaches parent abstraction → OK.
+		{"terminaltcell_imports_terminal_OK", "terminal/tcell", "terminal", true},
+		// terminal/tcell(2.5) → style(1): reaches lower leaf → OK.
+		{"terminaltcell_imports_style_OK", "terminal/tcell", "style", true},
+		// terminal(2) → terminal/tcell(2.5): parent cannot reach sub-package → FAIL.
+		{"terminal_imports_terminaltcell_FAIL", "terminal", "terminal/tcell", false},
+		// terminal/tcell(2.5) → buffer(3): sub-package cannot reach higher → FAIL.
+		{"terminaltcell_imports_buffer_FAIL", "terminal/tcell", "buffer", false},
 	}
 	for _, c := range cases {
 		c := c
@@ -125,7 +135,7 @@ func TestRenderDAG_NonRenderImports(t *testing.T) {
 func TestRenderOrder_Sequence(t *testing.T) {
 	t.Parallel()
 	want := []string{
-		"width", "style", "terminal", "buffer", "layout",
+		"width", "style", "terminal", "terminal/tcell", "buffer", "layout",
 		"optimizer", "scheduler", "block/adapter", "block",
 		"scrollback", "streaming",
 	}

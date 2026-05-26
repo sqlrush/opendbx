@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sqlrush/opendbx/internal/app/cli/input"
@@ -37,6 +38,18 @@ type Program struct {
 	clock       SimClock
 	cancelCause func()    // injected by Run to break out of the scheduler loop on QuitMsg
 	runOnce     sync.Once // R2 L-4: single-use Run guard; second concurrent call panics
+
+	// schedSet is closed by Run immediately after p.scheduler is
+	// assigned, so test seams (WaitStartedForTest) can read p.scheduler
+	// race-free (spec-1.17 D-7 integration harness). Created in New.
+	schedSet chan struct{}
+
+	// msgCount counts Msgs processed by handleMsg. Atomic so the spec-1.17
+	// R-fix MED-7 integration harness can deterministically wait for an
+	// injected key to be drained (instead of time.Sleep) without racing on
+	// p.model. Incremented on the scheduler goroutine, read from the test
+	// goroutine.
+	msgCount atomic.Int64
 }
 
 // Option configures a Program at construction.
@@ -71,6 +84,7 @@ func New(driver terminal.Driver, initial Model, opts ...Option) *Program {
 		model:      initial,
 		quitWindow: DefaultQuitWindow,
 		clock:      realClock{},
+		schedSet:   make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(p)
@@ -105,6 +119,9 @@ func (p *Program) Run(ctx context.Context) error {
 	p.scheduler = scheduler.NewFrameScheduler(p.driver, 60, p.renderFn,
 		scheduler.WithMsgHook(p.handleMsg),
 	)
+	// spec-1.17 D-7: signal p.scheduler is assigned so test seams can
+	// read it race-free. Production has no observer; close is cheap.
+	close(p.schedSet)
 
 	defer p.runCleanup()
 
@@ -167,6 +184,12 @@ func (p *Program) pollEvents(ctx context.Context) {
 // worker results. Single-goroutine ownership of p.model — no atomic
 // or mutex needed.
 func (p *Program) handleMsg(msg scheduler.Msg) {
+	// spec-1.17 R-fix MED-7: count every drained Msg so the integration
+	// harness can deterministically wait for an injected key to be
+	// processed (atomic; read from the test goroutine via
+	// ProcessedMsgCountForTest). Counted before dispatch so even
+	// system-intercepted Msgs (Ctrl+C / Ctrl+\) increment.
+	p.msgCount.Add(1)
 	defer func() {
 		if r := recover(); r != nil {
 			// R2 H-1 (claude code-reviewer + go-reviewer 共识):
@@ -188,6 +211,14 @@ func (p *Program) handleMsg(msg scheduler.Msg) {
 		return
 	}
 
+	// spec-1.17 R2 D-5: decode KeyMsg → keybindings.Action once at the
+	// program layer and forward as KeyActionMsg. Models switch on
+	// Action; raw KeyMsg.Code remains available via msg.Key for
+	// fallback / log. Non-KeyMsg messages pass through unchanged.
+	if k, ok := msg.(KeyMsg); ok {
+		msg = KeyActionMsg{Key: k, Action: decodeKeyMsg(k)}
+	}
+
 	newModel, cmd := p.model.Update(msg)
 	if newModel != nil {
 		p.model = newModel
@@ -203,7 +234,16 @@ func (p *Program) handleMsg(msg scheduler.Msg) {
 func (p *Program) preDispatchSystem(msg scheduler.Msg) (handled bool) {
 	switch m := msg.(type) {
 	case KeyMsg:
-		// Ctrl+C is the only system-level key in spec-1.15 baseline.
+		// Ctrl+\ (KeyCtrlBackslash) is an immediate hard-exit (spec-0.12
+		// contract; spec-1.17 R-fix HIGH-1). It bypasses the double-press
+		// window — a single press quits. Intercepted here at the system
+		// level so it never reaches the Model (parity with the retired
+		// tui.Run path which exited on Ctrl+C OR Ctrl+\).
+		if m.Code == terminal.KeyCtrlBackslash {
+			p.requestQuit()
+			return true
+		}
+		// Ctrl+C is the double-press quit key (spec-1.15 D-5).
 		// Other keys (Esc / printable / Enter) are forwarded to Model.
 		if m.Code == terminal.KeyCtrlC {
 			if p.handleCtrlC() {

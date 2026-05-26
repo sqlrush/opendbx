@@ -58,6 +58,34 @@ func NewScreen() (tcell.Screen, error) {
 	return screen, nil
 }
 
+// NewScreenNoInit constructs a real tcell screen bound to stdin/stdout
+// but does NOT call screen.Init() — the caller (spec-1.17 D-6a
+// render/terminal/tcell adapter) owns Init via Driver.Init, invoked by
+// scheduler.Run. This is the production-entry counterpart to NewScreen
+// for the program.Run path (spec-1.17 D-6b); NewScreen retains the
+// init-on-construct behavior for the legacy tui.Run path.
+//
+// Wraps construction failures as ErrInitFailed so callers (bootstrap)
+// don't import tcell.
+func NewScreenNoInit() (tcell.Screen, error) {
+	tty, err := newStdIoTtyFn()
+	if err != nil {
+		return nil, errcode.Wrap("TERMINAL.INIT_FAILED", err,
+			"tcell.NewStdIoTty failed",
+			"verify $TERM is set and the terminal supports ANSI escape sequences (e.g. xterm-256color)")
+	}
+	screen, err := newTerminfoScreenFromTtyFn(tty)
+	if err != nil {
+		if tty != nil {
+			_ = tty.Close()
+		}
+		return nil, errcode.Wrap("TERMINAL.INIT_FAILED", err,
+			"tcell.NewTerminfoScreenFromTty failed",
+			"verify $TERM is set and the terminal supports ANSI escape sequences (e.g. xterm-256color)")
+	}
+	return screen, nil
+}
+
 // NewSimulationScreen creates a tcell SimulationScreen for tests.
 // Same factory pattern as NewScreen so test callers also avoid
 // importing tcell from non-whitelisted packages.

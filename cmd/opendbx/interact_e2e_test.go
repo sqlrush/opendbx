@@ -255,8 +255,24 @@ func waitForExit(t *testing.T, cmd *exec.Cmd, ptyFile *os.File, timeout time.Dur
 	}
 }
 
-// TestE2E_PTY_CtrlCExitsZero: PTY happy path → wait 200ms for tcell
-// init → send Ctrl+C → exit 0.
+// sendQuit writes the spec-1.15 D-5 double Ctrl+C (ETX = 0x03) within
+// the 800ms double-press window. spec-1.17 D-6b switched the production
+// `interact` entry from tui.Run (single Ctrl+C exit) to program.Run
+// (double-press quit protocol), so PTY E2E exit tests press twice.
+func sendQuit(t *testing.T, ptyFile interface{ Write([]byte) (int, error) }) {
+	t.Helper()
+	if _, err := ptyFile.Write([]byte{0x03}); err != nil {
+		t.Fatalf("write first Ctrl+C: %v", err)
+	}
+	time.Sleep(60 * time.Millisecond)
+	if _, err := ptyFile.Write([]byte{0x03}); err != nil {
+		t.Fatalf("write second Ctrl+C: %v", err)
+	}
+}
+
+// TestE2E_PTY_CtrlCExitsZero: PTY happy path → wait for tcell init →
+// send the spec-1.15 double Ctrl+C → exit 0 (spec-1.17 D-6b program.Run
+// double-press quit protocol).
 func TestE2E_PTY_CtrlCExitsZero(t *testing.T) {
 	t.Parallel()
 	bin := buildOpendbx(t)
@@ -267,12 +283,10 @@ func TestE2E_PTY_CtrlCExitsZero(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	initial := readForBytes(ctx, ptyFile, 1)
+	_ = initial
 	time.Sleep(300 * time.Millisecond)
 
-	// Send Ctrl+C (ETX = 0x03).
-	if _, err := ptyFile.Write([]byte{0x03}); err != nil {
-		t.Fatalf("write Ctrl+C: %v; initial output=%q", err, string(initial))
-	}
+	sendQuit(t, ptyFile)
 
 	code, out := waitForExit(t, cmd, ptyFile, 3*time.Second)
 	if code != 0 {
@@ -303,10 +317,9 @@ func TestE2E_PTY_SIGWINCH_Survives(t *testing.T) {
 	}
 	time.Sleep(50 * time.Millisecond)
 
-	// Ctrl+C to exit.
-	if _, err := ptyFile.Write([]byte{0x03}); err != nil {
-		t.Fatalf("write Ctrl+C: %v; initial output=%q", err, string(initial))
-	}
+	// Double Ctrl+C to exit (spec-1.15 D-5 quit protocol).
+	_ = initial
+	sendQuit(t, ptyFile)
 
 	code, out := waitForExit(t, cmd, ptyFile, 3*time.Second)
 	if code != 0 {
@@ -332,9 +345,8 @@ func TestE2E_PTY_TerminalStateRestored(t *testing.T) {
 	initial := readForBytes(ctx, ptyFile, 1)
 	time.Sleep(300 * time.Millisecond)
 
-	if _, err := ptyFile.Write([]byte{0x03}); err != nil {
-		t.Fatalf("write Ctrl+C: %v; initial output=%q", err, string(initial))
-	}
+	_ = initial
+	sendQuit(t, ptyFile)
 	code, out := waitForExit(t, cmd, ptyFile, 3*time.Second)
 	if code != 0 {
 		t.Errorf("expected exit code 0; got %d; initial output=%q; output=%q", code, string(initial), string(out))

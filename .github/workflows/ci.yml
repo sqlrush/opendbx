@@ -378,6 +378,15 @@ jobs:
         env:
           INPUT_VISUAL_REQUIRED: ${{ vars.INPUT_VISUAL_REQUIRED || '' }}
         run: make ui-input-golden
+      - name: Layer 3 keybindings visual golden (spec-1.17 D-8)
+        # Keybindings cursor/history fixtures parked under
+        # tests/integration/uitest/keybindings/testdata/visual/Keybindings*/
+        # — captured in a future T-2.5 session. Independent env gate
+        # (KEYBINDINGS_VISUAL_REQUIRED). 10th independent block-style
+        # visual env gate per spec-1.17 D-8.
+        env:
+          KEYBINDINGS_VISUAL_REQUIRED: ${{ vars.KEYBINDINGS_VISUAL_REQUIRED || '' }}
+        run: make ui-keybindings-golden
 
   # spec-0.11.5 D-4/D-5: Layer 5 screenshot evidence. Required context,
   # label-gated. PR body/label edits retrigger this workflow so stale
