@@ -4,13 +4,16 @@
 
 package input
 
-import "unicode/utf8"
+import (
+	"fmt"
+	"unicode/utf8"
+)
 
 // MovementKind is the cursor movement intent passed to MoveCursor
 // (spec-1.17 R2 D-3 / CRIT-2 absorb). Lives in input package — NOT
 // keybindings — to keep the input(9.5) → keybindings(9.6) DAG direction
 // forward only. program (10) translates keybindings.Action to
-// input.MovementKind via actionToMovement at the dispatch boundary.
+// input.MovementKind via program.ActionToMovement at the dispatch boundary.
 type MovementKind int
 
 const (
@@ -40,7 +43,7 @@ func (m MovementKind) String() string {
 	case MoveEnd:
 		return "End"
 	}
-	return "MovementKind(?)"
+	return fmt.Sprintf("MovementKind(%d)", int(m))
 }
 
 // MoveCursor returns the new cursor position after applying movement

@@ -124,6 +124,60 @@ func TestRing_AtAllIndices(t *testing.T) {
 	}
 }
 
+// TestRing_Clone verifies Clone produces an independent deep copy — the
+// clone's backing array is separate, so a Push on one does not mutate the
+// other (spec-1.17 R-fix MED-3 immutability requirement).
+func TestRing_Clone(t *testing.T) {
+	t.Parallel()
+	orig := NewRing()
+	orig.Push("a")
+	orig.Push("b")
+
+	clone := orig.Clone()
+	if clone.Len() != 2 {
+		t.Fatalf("clone.Len() = %d; want 2", clone.Len())
+	}
+	if s, _ := clone.At(0); s != "a" {
+		t.Errorf("clone.At(0) = %q; want \"a\"", s)
+	}
+
+	// Push on the clone must NOT change orig.
+	clone.Push("c")
+	if orig.Len() != 2 {
+		t.Errorf("orig.Len() mutated to %d after clone.Push; want 2", orig.Len())
+	}
+	if clone.Len() != 3 {
+		t.Errorf("clone.Len() = %d; want 3", clone.Len())
+	}
+
+	// Push on orig must NOT change the earlier clone state beyond its own.
+	orig.Push("z")
+	if got, _ := clone.At(2); got != "c" {
+		t.Errorf("clone.At(2) = %q after orig.Push; want \"c\" (no aliasing)", got)
+	}
+}
+
+// TestRing_Clone_BackingArrayIsolation pushes past capacity on both the
+// original and a clone to confirm the backing arrays are truly separate.
+func TestRing_Clone_BackingArrayIsolation(t *testing.T) {
+	t.Parallel()
+	orig := NewRing()
+	orig.Push("seed")
+	clone := orig.Clone()
+	// Fill orig past capacity; clone must be unaffected.
+	for i := 0; i < 300; i++ {
+		orig.Push(fmtEntry(i))
+	}
+	if clone.Len() != 1 {
+		t.Errorf("clone.Len() = %d after orig overfill; want 1 (isolated backing array)", clone.Len())
+	}
+	if s, _ := clone.At(0); s != "seed" {
+		t.Errorf("clone.At(0) = %q; want \"seed\"", s)
+	}
+}
+
+func fmtEntry(i int) string { return "e" + string(rune('0'+i%10)) }
+
 // BenchmarkInputRing_Push targets spec-1.17 § 4.4 < 200 ns/op including
 // dedup check.
 func BenchmarkInputRing_Push(b *testing.B) {

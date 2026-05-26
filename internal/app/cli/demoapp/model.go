@@ -5,6 +5,8 @@
 package demoapp
 
 import (
+	"unicode/utf8"
+
 	"github.com/sqlrush/opendbx/internal/app/cli/input"
 	"github.com/sqlrush/opendbx/internal/app/cli/keybindings"
 	"github.com/sqlrush/opendbx/internal/app/cli/program"
@@ -12,6 +14,12 @@ import (
 	"github.com/sqlrush/opendbx/internal/app/cli/render/scheduler"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/style"
 )
+
+// LogCapacity bounds the demo scrollback log (spec-1.17 R-fix MED-4).
+// Without a cap the log grows unbounded across a long session → OOM.
+// Aligned with input.RingCapacity. spec-1.20 replaces demoapp with a
+// real bounded scrollback.
+const LogCapacity = 256
 
 // Model is the spec-1.17 D-6b minimal demonstrator. It carries the
 // pipeline state needed to exercise spec-1.15/1.16/1.17:
@@ -100,7 +108,7 @@ func (m *Model) handleAction(msg program.KeyActionMsg) *Model {
 
 	case keybindings.ActionMoveLeft, keybindings.ActionMoveRight,
 		keybindings.ActionMoveHome, keybindings.ActionMoveEnd:
-		next.cursor = input.MoveCursor(m.buffer, m.cursor, programActionToMovement(msg.Action))
+		next.cursor = input.MoveCursor(m.buffer, m.cursor, program.ActionToMovement(msg.Action))
 
 	case keybindings.ActionHistoryPrev:
 		applyHistoryPrev(&next)
@@ -110,9 +118,11 @@ func (m *Model) handleAction(msg program.KeyActionMsg) *Model {
 
 	case keybindings.ActionSubmit:
 		if m.buffer != "" {
-			next.log = append([]string(nil), m.log...)
-			next.log = append(next.log, m.buffer)
+			// spec-1.17 R-fix MED-3: Clone the Ring so the prior Model's
+			// Ring is not mutated through a shared pointer (immutable update).
+			next.ring = m.ring.Clone()
 			next.ring.Push(m.buffer)
+			next.log = appendLogBounded(m.log, m.buffer)
 		}
 		next.buffer = ""
 		next.cursor = 0
@@ -146,7 +156,7 @@ func applyHistoryPrev(m *Model) {
 		m.nav.index--
 		entry, _ := m.ring.At(m.nav.index)
 		m.buffer = entry
-		m.cursor = runeCount(entry)
+		m.cursor = utf8.RuneCountInString(entry)
 	}
 }
 
@@ -165,35 +175,21 @@ func applyHistoryNext(m *Model) {
 	}
 	entry, _ := m.ring.At(m.nav.index)
 	m.buffer = entry
-	m.cursor = runeCount(entry)
+	m.cursor = utf8.RuneCountInString(entry)
 }
 
-// programActionToMovement is a local copy of program.actionToMovement —
-// demoapp re-implements the small table to avoid an export from
-// program (which is the canonical owner; spec-1.17 R2 D-3 boundary).
-// 3-line table is duplicated by design rather than exported.
-func programActionToMovement(a keybindings.Action) input.MovementKind {
-	switch a {
-	case keybindings.ActionMoveLeft:
-		return input.MoveLeft
-	case keybindings.ActionMoveRight:
-		return input.MoveRight
-	case keybindings.ActionMoveHome:
-		return input.MoveHome
-	case keybindings.ActionMoveEnd:
-		return input.MoveEnd
+// appendLogBounded appends entry to log, evicting the oldest entries
+// when the length would exceed LogCapacity (spec-1.17 R-fix MED-4 FIFO
+// bound). Returns a fresh slice — does not mutate the input (immutable
+// update; the prior Model keeps its log).
+func appendLogBounded(log []string, entry string) []string {
+	next := make([]string, 0, len(log)+1)
+	next = append(next, log...)
+	next = append(next, entry)
+	if len(next) > LogCapacity {
+		next = next[len(next)-LogCapacity:]
 	}
-	return input.MoveNone
-}
-
-// runeCount returns the rune count of s. Inlined here to avoid an
-// extra import; demoapp is a leaf consumer.
-func runeCount(s string) int {
-	n := 0
-	for range s {
-		n++
-	}
-	return n
+	return next
 }
 
 // View renders the log entries as the scrollback area. Each log line

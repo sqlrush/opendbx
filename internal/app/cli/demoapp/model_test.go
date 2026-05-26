@@ -243,3 +243,54 @@ func TestModel_ImmutableUpdate(t *testing.T) {
 		t.Errorf("Update mutated receiver buffer to %q; want unchanged \"\"", m.buffer)
 	}
 }
+
+// TestModel_SubmitDoesNotMutatePriorRing locks the spec-1.17 R-fix MED-3
+// contract: ActionSubmit Clones the Ring so the prior Model's Ring is not
+// mutated through a shared pointer. Captures a reference to the pre-submit
+// Model and asserts its ring length is unchanged after the submit.
+func TestModel_SubmitDoesNotMutatePriorRing(t *testing.T) {
+	t.Parallel()
+	// Build a Model with one history entry already.
+	m0 := apply(New(),
+		keyAction(terminal.KeyRune, 'a'),
+		keyAction(terminal.KeyEnter, 0),
+	)
+	priorRingLen := m0.ring.Len() // == 1
+	priorLogLen := len(m0.log)    // == 1
+
+	// Submit a second entry from m0.
+	m1 := apply(m0,
+		keyAction(terminal.KeyRune, 'b'),
+		keyAction(terminal.KeyEnter, 0),
+	)
+
+	// The prior model m0 must be unchanged (no shared-pointer mutation).
+	if m0.ring.Len() != priorRingLen {
+		t.Errorf("prior Model ring mutated: Len = %d; want %d (Clone failed)", m0.ring.Len(), priorRingLen)
+	}
+	if len(m0.log) != priorLogLen {
+		t.Errorf("prior Model log mutated: len = %d; want %d", len(m0.log), priorLogLen)
+	}
+	// The new model has both entries.
+	if m1.ring.Len() != 2 {
+		t.Errorf("new Model ring Len = %d; want 2", m1.ring.Len())
+	}
+}
+
+// TestModel_LogBounded verifies the spec-1.17 R-fix MED-4 FIFO cap: the
+// log never exceeds LogCapacity even after many submits, and retains the
+// most recent entries.
+func TestModel_LogBounded(t *testing.T) {
+	t.Parallel()
+	m := New()
+	total := LogCapacity + 50
+	for i := 0; i < total; i++ {
+		m = apply(m,
+			keyAction(terminal.KeyRune, rune('a'+i%26)),
+			keyAction(terminal.KeyEnter, 0),
+		)
+	}
+	if len(m.log) != LogCapacity {
+		t.Errorf("log len = %d after %d submits; want cap %d", len(m.log), total, LogCapacity)
+	}
+}

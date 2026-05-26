@@ -76,3 +76,18 @@ func (r *Ring) At(idx int) (string, bool) {
 	pos := (r.head - r.size + idx + RingCapacity) % RingCapacity
 	return r.entries[pos], true
 }
+
+// Clone returns a deep copy of the Ring — a fresh *Ring with its own
+// backing entries array. spec-1.17 R-fix MED-3: callers that hold a
+// Model by value and want an immutable update (e.g. demoapp on submit)
+// MUST Clone before Push so the prior Model's Ring is not mutated through
+// a shared pointer. The returned Ring shares no mutable state with r.
+func (r *Ring) Clone() *Ring {
+	entries := make([]string, len(r.entries))
+	copy(entries, r.entries)
+	return &Ring{
+		entries: entries,
+		head:    r.head,
+		size:    r.size,
+	}
+}

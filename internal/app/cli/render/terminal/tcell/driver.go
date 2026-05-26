@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 
 	tcellv2 "github.com/gdamore/tcell/v2"
 
@@ -16,25 +17,32 @@ import (
 	"github.com/sqlrush/opendbx/internal/platform/errcode"
 )
 
-// ErrDriverBackpressure is returned by PostEvent when the tcell event
+// errDriverBackpressure is returned by PostEvent when the tcell event
 // queue is full (spec-0.13 T-13 code-reviewer MED-2 PostEvent contract).
-// Callers may retry or drop the event; the queue holds tcell's default
-// 10-event buffer.
-var ErrDriverBackpressure = errors.New("tcell driver: PostEvent queue full")
+// Unexported (spec-1.17 R-fix MED-7): an internal flow-control signal,
+// not a user-facing error — no cross-package caller errors.Is it.
+var errDriverBackpressure = errors.New("tcell driver: PostEvent queue full")
 
-// ErrScreenClosed is returned by PollEvent when the underlying tcell
+// errScreenClosed is returned by PollEvent when the underlying tcell
 // screen has been finalized (tcell.Screen.PollEvent returned nil). This
 // is the normal shutdown path — the PollEvent goroutine treats it as a
-// signal to exit. A sentinel error (rather than a bare (nil, nil))
-// keeps the contract nilnil-clean (spec-1.17 R3 golangci fix).
-var ErrScreenClosed = errors.New("tcell driver: screen closed")
+// signal to exit. A sentinel error (rather than a bare (nil, nil)) keeps
+// the contract nilnil-clean. Unexported (spec-1.17 R-fix MED-7): internal
+// signal only; the poll goroutine returns on any non-nil err.
+var errScreenClosed = errors.New("tcell driver: screen closed")
 
 // Driver implements terminal.Driver over a tcell.Screen. Constructed by
 // NewDriver; lifecycle owned by scheduler.Run (Init/Fini via sync.Once).
+//
+// Concurrency (spec-1.17 R-fix HIGH-2): cols/rows are accessed from two
+// goroutines — the scheduler goroutine (Size() every frame, Resize()) and
+// the PollEvent goroutine (EventResize). They are stored as atomic.Int32
+// so concurrent read/write is race-free. A torn one-frame-stale size read
+// is harmless for rendering (the next frame self-corrects).
 type Driver struct {
 	screen   tcellv2.Screen
-	cols     int
-	rows     int
+	cols     atomic.Int32
+	rows     atomic.Int32
 	initOnce sync.Once
 	initErr  error
 	finiOnce sync.Once
@@ -66,7 +74,9 @@ func (d *Driver) Init() error {
 				"verify $TERM is set and the terminal supports ANSI escape sequences")
 			return
 		}
-		d.cols, d.rows = d.screen.Size()
+		cols, rows := d.screen.Size()
+		d.cols.Store(dim(cols))
+		d.rows.Store(dim(rows))
 	})
 	// errcode-lint:exempt -- spec-1.17 D-6a: d.initErr is errcode.Wrap'd (TERMINAL.INIT_FAILED) at the assignment above; nil on success.
 	return d.initErr
@@ -90,10 +100,11 @@ func (d *Driver) Sync() { d.screen.Sync() }
 // Clear wipes the back buffer; next Show paints a blank frame.
 func (d *Driver) Clear() { d.screen.Clear() }
 
-// Size returns the cached cols/rows. Resize updates the cache; the
+// Size returns the cached cols/rows (atomic reads; spec-1.17 R-fix
+// HIGH-2). Resize / the PollEvent resize branch update the cache; the
 // underlying tcell.Screen.Size is consulted only at Init.
 func (d *Driver) Size() (cols, rows int) {
-	return d.cols, d.rows
+	return int(d.cols.Load()), int(d.rows.Load())
 }
 
 // SetCell writes a single styled cell. Coordinates outside Size()
@@ -102,20 +113,22 @@ func (d *Driver) SetCell(x, y int, ch rune, st style.Style) {
 	d.screen.SetContent(x, y, ch, nil, toTcellStyle(st))
 }
 
-// PollEvent translates a tcell event to a terminal.Event, honoring
-// ctx cancellation by posting an EventInterrupt sentinel.
+// PollEvent translates a tcell event to a terminal.Event.
 //
-// The translation table is encoded in fromTcellKey / fromTcellMod.
-// Unknown tcell events return (nil, nil) so the caller loop continues
-// (spec-1.17 D-6a: future event types fall-through safely).
+// ctx contract (spec-1.17 R-fix MED-5): PollEvent returns ctx.Err() if
+// ctx is cancelled either before the call or *while blocked* in
+// tcell.screen.PollEvent. The cancel-while-blocked case is handled by a
+// short-lived bridge goroutine that posts a tcell interrupt on ctx.Done,
+// waking the blocked PollEvent; on return we re-check ctx and surface
+// ctx.Err() ahead of the woken event. The bridge is torn down before
+// PollEvent returns (no goroutine leak). Keystrokes are human-paced, so
+// the per-call goroutine cost is negligible.
 //
-// ctx.Done bridge: a goroutine paired with each PollEvent call would be
-// expensive; instead callers (program.pollEvents) ensure their own
-// ctx-cancel routing via scheduler.EmitMsg. tcell.PollEvent returns nil
-// when screen.Fini is called, which the caller treats as exit.
+// Unknown/uninteresting tcell events return an EventInterrupt the caller
+// loop drops, so polling continues (spec-1.17 D-6a: future event types
+// fall through safely without exiting the input loop).
 func (d *Driver) PollEvent(ctx context.Context) (terminal.Event, error) {
-	// Check ctx upfront — saves us from blocking in tcell when caller
-	// has already cancelled.
+	// Fast path: ctx already cancelled — don't block in tcell.
 	select {
 	case <-ctx.Done():
 		// errcode-lint:exempt -- spec-1.17 D-6a: ctx.Err is a stdlib sentinel (context.Canceled / DeadlineExceeded); caller maps it.
@@ -123,30 +136,64 @@ func (d *Driver) PollEvent(ctx context.Context) (terminal.Event, error) {
 	default:
 	}
 
+	// Bridge ctx cancellation to wake a blocked screen.PollEvent.
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		select {
+		case <-ctx.Done():
+			// PostEvent is thread-safe; ignore err (screen may be Fini'd).
+			_ = d.screen.PostEvent(tcellv2.NewEventInterrupt(ctxWakeup{}))
+		case <-stop:
+		}
+	}()
+
 	ev := d.screen.PollEvent()
+
+	// If ctx was cancelled while we were blocked, surface it ahead of the
+	// (possibly bridge-injected) event — honors the Driver ctx contract.
+	// errcode-lint:exempt -- spec-1.17 MED-5: ctx.Err is a stdlib sentinel (context.Canceled / DeadlineExceeded); caller maps it.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	if ev == nil {
 		// Screen post-Fini; signal the caller loop to exit (normal shutdown).
-		// errcode-lint:exempt -- spec-1.17 D-6a: ErrScreenClosed is a package sentinel; the PollEvent goroutine returns on any non-nil err.
-		return nil, ErrScreenClosed
+		// errcode-lint:exempt -- spec-1.17 D-6a: errScreenClosed is a package sentinel; the PollEvent goroutine returns on any non-nil err.
+		return nil, errScreenClosed
 	}
 	switch e := ev.(type) {
 	case *tcellv2.EventKey:
 		return fromTcellEventKey(e), nil
 	case *tcellv2.EventResize:
 		cols, rows := e.Size()
-		d.cols, d.rows = cols, rows
+		d.cols.Store(dim(cols))
+		d.rows.Store(dim(rows))
 		return terminal.EventResize{Cols: cols, Rows: rows}, nil
 	case *tcellv2.EventInterrupt:
 		return terminal.EventInterrupt{Data: e.Data()}, nil
 	}
 	// Unknown/uninteresting tcell event (mouse / paste / focus / time).
-	// Return an EventInterrupt the program loop drops so polling continues —
+	// Return an EventInterrupt the caller loop drops so polling continues —
 	// returning (nil, nil) here would make the caller exit the loop.
 	return terminal.EventInterrupt{Data: nil}, nil
 }
 
+// ctxWakeup is the payload for the bridge interrupt PollEvent posts on
+// ctx cancellation. Distinct type so a reader can tell it apart from a
+// real EventInterrupt payload in traces.
+type ctxWakeup struct{}
+
+// dim narrows a terminal dimension (cols/rows) to int32 for atomic
+// storage. Terminal dimensions are small non-negative values (tcell caps
+// well under int32), so the conversion cannot overflow; gosec G115
+// cannot prove the bound.
+//
+//nolint:gosec // spec-1.17 R-fix HIGH-2: terminal cols/rows are small non-negative ints, never overflow int32.
+func dim(v int) int32 { return int32(v) }
+
 // PostEvent enqueues a terminal.Event onto the tcell event queue so the
-// next PollEvent observes it. Returns ErrDriverBackpressure when the
+// next PollEvent observes it. Returns errDriverBackpressure when the
 // queue is full (spec-0.13 T-13 MED-2 contract).
 //
 // Currently only EventInterrupt is round-tripped (used by program for
@@ -158,17 +205,18 @@ func (d *Driver) PostEvent(ev terminal.Event) error {
 		return nil // unsupported event type — silent no-op (caller can extend)
 	}
 	if err := d.screen.PostEvent(tev); err != nil {
-		// errcode-lint:exempt -- spec-1.17 D-6a: ErrDriverBackpressure is a package sentinel (spec-0.13 T-13 MED-2 PostEvent backpressure contract); callers errors.Is against it.
-		return ErrDriverBackpressure
+		// errcode-lint:exempt -- spec-1.17 D-6a: errDriverBackpressure is a package sentinel (spec-0.13 T-13 MED-2 PostEvent backpressure contract).
+		return errDriverBackpressure
 	}
 	return nil
 }
 
-// Resize updates the cached cols/rows. Called by callers that learn of
-// a resize through external channels (signal handler, etc.); tcell's
-// own resize path runs through PollEvent → EventResize.
+// Resize updates the cached cols/rows (atomic store; spec-1.17 R-fix
+// HIGH-2). Called by the scheduler goroutine; tcell's own resize path
+// runs through PollEvent → EventResize.
 func (d *Driver) Resize(cols, rows int) {
-	d.cols, d.rows = cols, rows
+	d.cols.Store(dim(cols))
+	d.rows.Store(dim(rows))
 	d.screen.Sync()
 }
 

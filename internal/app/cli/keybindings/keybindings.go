@@ -5,6 +5,8 @@
 package keybindings
 
 import (
+	"fmt"
+
 	"github.com/sqlrush/opendbx/internal/app/cli/render/terminal"
 )
 
@@ -52,7 +54,7 @@ const (
 
 // String renders an Action for debug / logging. Returns the const
 // identifier minus the "Action" prefix; e.g. "InsertRune", "Quit".
-// Unknown values return "Action(<n>)".
+// Unknown values return "Action(<n>)" with the numeric value.
 func (a Action) String() string {
 	switch a {
 	case ActionNone:
@@ -82,7 +84,7 @@ func (a Action) String() string {
 	case ActionQuit:
 		return "Quit"
 	}
-	return "Action(?)"
+	return fmt.Sprintf("Action(%d)", int(a))
 }
 
 // KeyEvent is the input-side dehydrated key event passed to Resolve.
@@ -96,9 +98,12 @@ type KeyEvent struct {
 }
 
 // Resolve maps a KeyEvent to a high-level Action via DefaultBindings.
-// Returns ActionNone for codes not in the binding table — caller
-// (program.handleMsg) falls through to raw KeyMsg dispatch so Models
-// implementing custom key handling can still intercept.
+// Returns ActionNone for codes not in the binding table.
+//
+// Delivery (spec-1.17 R-fix LOW-3 doc fix): program.handleMsg wraps
+// every KeyMsg as KeyActionMsg{Action, Key} — including ActionNone — so
+// Models implementing custom key handling inspect KeyActionMsg.Key for
+// unbound keys. (handleMsg does NOT deliver a bare KeyMsg.)
 //
 // spec-2.x user customization will overlay LoadUserBindings on top of
 // DefaultBindings; Resolve will consult the merged table.

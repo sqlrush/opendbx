@@ -66,8 +66,10 @@ func TestDriver_SetCell_ColorBranches(t *testing.T) {
 	}
 }
 
-// TestDriver_PollEvent_UnknownEvent posts an unsupported tcell event
-// type and asserts PollEvent returns (nil, nil) for fall-through.
+// TestDriver_PollEvent_UnknownEvent posts an EventInterrupt (handled)
+// and asserts it round-trips. Uninteresting/unknown event types return
+// an EventInterrupt sentinel (not (nil, nil)) so the caller loop keeps
+// polling — spec-1.17 R3 (NIT-1 comment alignment).
 func TestDriver_PollEvent_UnknownEvent(t *testing.T) {
 	t.Parallel()
 	sim := tcellv2.NewSimulationScreen("UTF-8")

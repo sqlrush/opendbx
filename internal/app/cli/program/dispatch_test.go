@@ -37,8 +37,8 @@ func TestActionToMovement(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.action.String(), func(t *testing.T) {
-			if got := actionToMovement(tc.action); got != tc.want {
-				t.Errorf("actionToMovement(%v) = %v; want %v", tc.action, got, tc.want)
+			if got := ActionToMovement(tc.action); got != tc.want {
+				t.Errorf("ActionToMovement(%v) = %v; want %v", tc.action, got, tc.want)
 			}
 		})
 	}

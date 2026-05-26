@@ -55,32 +55,52 @@ func newHarness(t *testing.T) *harness {
 	// so the first InjectKey (which also touches sim internal state) is
 	// race-free. tcell's SimulationScreen.Init is NOT concurrency-safe
 	// with other sim methods, so this sync is mandatory.
-	if !program.WaitStartedForTest(ctx, p) {
+	//
+	// spec-1.17 R-fix LOW-2: use a bounded setup ctx so a Run that panics
+	// before close(schedSet) fails the test instead of hanging forever.
+	setupCtx, setupCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer setupCancel()
+	if !program.WaitStartedForTest(setupCtx, p) {
 		t.Fatalf("scheduler did not reach Started within harness setup")
 	}
 	return h
 }
 
-// typeRunes injects a sequence of printable runes.
+// inject posts one key and deterministically waits for handleMsg to
+// process it (spec-1.17 R-fix MED-7: ProcessedMsgCountForTest delta,
+// not time.Sleep). One-key-at-a-time also avoids overflowing tcell's
+// bounded SimulationScreen event queue.
+func (h *harness) inject(code int, r rune) {
+	h.t.Helper()
+	before := program.ProcessedMsgCountForTest(h.prog)
+	h.driver.InjectKeyForTest(code, r)
+	deadline := time.Now().Add(2 * time.Second)
+	for program.ProcessedMsgCountForTest(h.prog) <= before {
+		if time.Now().After(deadline) {
+			h.t.Fatalf("injected key (code=%d rune=%q) not processed within 2s", code, r)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// typeRunes injects a sequence of printable runes, each fully processed
+// before the next.
 func (h *harness) typeRunes(s string) {
 	for _, r := range s {
-		h.driver.InjectKeyForTest(terminal.KeyRune, r)
-		time.Sleep(3 * time.Millisecond)
+		h.inject(terminal.KeyRune, r)
 	}
 }
 
 // key injects a single non-rune key by terminal.Key* code.
 func (h *harness) key(code int) {
-	h.driver.InjectKeyForTest(code, 0)
-	time.Sleep(5 * time.Millisecond)
+	h.inject(code, 0)
 }
 
 // finish cancels the program loop, joins it, and returns the final
-// demoapp Model for assertions.
+// demoapp Model for assertions. All injected keys are already drained
+// (inject() waits per key), so no drain sleep is needed.
 func (h *harness) finish() *demoapp.Model {
 	h.t.Helper()
-	// Let the last injected key drain.
-	time.Sleep(30 * time.Millisecond)
 	h.cancel()
 	select {
 	case <-h.done:

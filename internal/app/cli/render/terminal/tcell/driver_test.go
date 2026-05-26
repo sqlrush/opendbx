@@ -47,7 +47,7 @@ func TestFromTcellEventKey_MappingTable(t *testing.T) {
 		{"Enter (13)", tcellv2.KeyEnter, 0, 0, terminal.KeyEnter, 0, 0},
 		{"Escape (27)", tcellv2.KeyEscape, 0, 0, terminal.KeyEscape, 0, 0},
 		{"CtrlC (67)", tcellv2.KeyCtrlC, 0, tcellv2.ModCtrl, terminal.KeyCtrlC, 'c', terminal.ModCtrl},
-		{"CtrlBackslash (28)", tcellv2.KeyCtrlBackslash, 0, tcellv2.ModCtrl, terminal.KeyCtrlBackslash, 0, terminal.ModCtrl},
+		{"CtrlBackslash (92)", tcellv2.KeyCtrlBackslash, 0, tcellv2.ModCtrl, terminal.KeyCtrlBackslash, 0, terminal.ModCtrl},
 		{"Rune 'a'", tcellv2.KeyRune, 'a', 0, terminal.KeyRune, 'a', 0},
 		{"Rune '中' (CJK)", tcellv2.KeyRune, '中', 0, terminal.KeyRune, '中', 0},
 		{"Shift+Left", tcellv2.KeyLeft, 0, tcellv2.ModShift, terminal.KeyLeft, 0, terminal.ModShift},
@@ -149,6 +149,38 @@ func TestPollEvent_CtxCancelled(t *testing.T) {
 	_, err := d.PollEvent(ctx)
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("PollEvent returned err=%v; want context.Canceled", err)
+	}
+}
+
+// TestPollEvent_CancelWhileBlocked verifies the spec-1.17 R-fix MED-5
+// contract: PollEvent returns ctx.Err() when ctx is cancelled *while the
+// call is already blocked* in tcell.screen.PollEvent (no event pending).
+// The ctx-bridge goroutine must post a wakeup interrupt and PollEvent
+// must surface ctx.Err() ahead of that injected event.
+func TestPollEvent_CancelWhileBlocked(t *testing.T) {
+	t.Parallel()
+	sim := tcellv2.NewSimulationScreen("UTF-8")
+	d := NewDriver(sim)
+	if err := d.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer d.Fini()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel shortly after PollEvent is (presumably) blocked with no
+	// pending event — exercises the cancel-while-blocked bridge path.
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err := d.PollEvent(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("PollEvent returned err=%v; want context.Canceled", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("PollEvent blocked %v after cancel; bridge did not wake it", elapsed)
 	}
 }
 
@@ -287,8 +319,8 @@ func TestSetCell_StyleConversion(t *testing.T) {
 	defer d.Fini()
 
 	sim.SetSize(20, 5)
-	// Synthetic Resize event so cached cols/rows match the SetSize.
-	d.cols, d.rows = 20, 5
+	// Synthetic Resize so cached cols/rows match the SetSize.
+	d.Resize(20, 5)
 
 	st := style.Style{
 		FG:        style.RGB(255, 128, 0),

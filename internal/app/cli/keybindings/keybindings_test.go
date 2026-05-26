@@ -96,7 +96,7 @@ func TestActionString(t *testing.T) {
 		{ActionSubmit, "Submit"},
 		{ActionCancel, "Cancel"},
 		{ActionQuit, "Quit"},
-		{Action(9999), "Action(?)"},
+		{Action(9999), "Action(9999)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.want, func(t *testing.T) {

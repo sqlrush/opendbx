@@ -73,7 +73,7 @@ func TestMovementKindString(t *testing.T) {
 		{MoveRight, "Right"},
 		{MoveHome, "Home"},
 		{MoveEnd, "End"},
-		{MovementKind(99), "MovementKind(?)"},
+		{MovementKind(99), "MovementKind(99)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.want, func(t *testing.T) {

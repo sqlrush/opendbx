@@ -27,15 +27,17 @@ type KeyActionMsg struct {
 	Action keybindings.Action
 }
 
-// actionToMovement is the program-layer translator from
+// ActionToMovement is the program-layer translator from
 // keybindings.Action to input.MovementKind. This is the single
 // boundary that satisfies the DAG forward-only contract:
 //
 //	input(9.5) ←─ program(10) ─→ keybindings(9.6)
 //
 // input and keybindings do not import each other; program imports both
-// and bridges. spec-1.17 R2 D-3 + CRIT-2 absorb.
-func actionToMovement(a keybindings.Action) input.MovementKind {
+// and bridges. spec-1.17 R2 D-3 + CRIT-2 absorb. Exported (spec-1.17
+// R-fix LOW) so demoapp (and spec-1.20 Models) reuse it instead of
+// duplicating the table.
+func ActionToMovement(a keybindings.Action) input.MovementKind {
 	switch a {
 	case keybindings.ActionMoveLeft:
 		return input.MoveLeft

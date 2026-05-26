@@ -38,6 +38,17 @@ func CurrentModelForTest(p *Program) Model {
 	return p.model
 }
 
+// ProcessedMsgCountForTest returns the number of Msgs handleMsg has
+// drained (atomic read; race-free from the test goroutine). spec-1.17
+// R-fix MED-7 integration seam: the harness injects a key, then waits
+// for this count to increase — deterministic synchronization without
+// time.Sleep and without racing on p.model.
+//
+// Test code only.
+func ProcessedMsgCountForTest(p *Program) int64 {
+	return p.msgCount.Load()
+}
+
 // WaitStartedForTest blocks until the Program's scheduler has completed
 // driver.Init (the Started signal). spec-1.17 D-7 integration harness:
 // callers MUST wait on this before touching a shared SimulationScreen,
