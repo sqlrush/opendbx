@@ -6,6 +6,7 @@ package tcell
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -146,7 +147,7 @@ func TestPollEvent_CtxCancelled(t *testing.T) {
 	cancel()
 
 	_, err := d.PollEvent(ctx)
-	if err != context.Canceled {
+	if !errors.Is(err, context.Canceled) {
 		t.Errorf("PollEvent returned err=%v; want context.Canceled", err)
 	}
 }
@@ -297,9 +298,9 @@ func TestSetCell_StyleConversion(t *testing.T) {
 	d.SetCell(2, 1, 'X', st)
 	d.Show()
 
-	got, _, _, _ := sim.GetContent(2, 1)
-	if got != 'X' {
-		t.Errorf("cell rune = %q; want 'X'", got)
+	got, _, _ := sim.Get(2, 1)
+	if got != "X" {
+		t.Errorf("cell content = %q; want \"X\"", got)
 	}
 }
 

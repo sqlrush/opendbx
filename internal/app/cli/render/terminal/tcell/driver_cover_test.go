@@ -61,8 +61,8 @@ func TestDriver_SetCell_ColorBranches(t *testing.T) {
 	}
 	d.Show()
 	// Smoke: the first painted cell carries 'x'.
-	if r, _, _, _ := sim.GetContent(0, 0); r != 'x' {
-		t.Errorf("cell(0,0) = %q; want 'x'", r)
+	if s, _, _ := sim.Get(0, 0); s != "x" {
+		t.Errorf("cell(0,0) = %q; want \"x\"", s)
 	}
 }
 

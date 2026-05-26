@@ -48,6 +48,9 @@ func (d *Driver) InjectKeyForTest(code int, r rune) {
 	case terminal.KeyCtrlA, terminal.KeyCtrlC, terminal.KeyCtrlE, terminal.KeyCtrlBackslash:
 		mod = tcellv2.ModCtrl
 	}
+	// spec-1.17 D-6a: terminal.Key codes are bounded tcell iota values
+	// (max KeyDelete=271), well within int16 — the conversion cannot overflow.
+	//nolint:gosec // spec-1.17 D-6a: terminal.Key codes ≤ 271 fit int16 (tcell.Key); bounded by construction, G115 cannot prove it.
 	sim.InjectKey(tcellv2.Key(code), r, mod)
 }
 

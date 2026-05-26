@@ -22,6 +22,13 @@ import (
 // 10-event buffer.
 var ErrDriverBackpressure = errors.New("tcell driver: PostEvent queue full")
 
+// ErrScreenClosed is returned by PollEvent when the underlying tcell
+// screen has been finalized (tcell.Screen.PollEvent returned nil). This
+// is the normal shutdown path — the PollEvent goroutine treats it as a
+// signal to exit. A sentinel error (rather than a bare (nil, nil))
+// keeps the contract nilnil-clean (spec-1.17 R3 golangci fix).
+var ErrScreenClosed = errors.New("tcell driver: screen closed")
+
 // Driver implements terminal.Driver over a tcell.Screen. Constructed by
 // NewDriver; lifecycle owned by scheduler.Run (Init/Fini via sync.Once).
 type Driver struct {
@@ -118,8 +125,9 @@ func (d *Driver) PollEvent(ctx context.Context) (terminal.Event, error) {
 
 	ev := d.screen.PollEvent()
 	if ev == nil {
-		// Screen post-Fini; return EOF-style nil to drain the caller loop.
-		return nil, nil
+		// Screen post-Fini; signal the caller loop to exit (normal shutdown).
+		// errcode-lint:exempt -- spec-1.17 D-6a: ErrScreenClosed is a package sentinel; the PollEvent goroutine returns on any non-nil err.
+		return nil, ErrScreenClosed
 	}
 	switch e := ev.(type) {
 	case *tcellv2.EventKey:
@@ -131,8 +139,10 @@ func (d *Driver) PollEvent(ctx context.Context) (terminal.Event, error) {
 	case *tcellv2.EventInterrupt:
 		return terminal.EventInterrupt{Data: e.Data()}, nil
 	}
-	// Unknown event — return (nil, nil) to skip without erroring.
-	return nil, nil
+	// Unknown/uninteresting tcell event (mouse / paste / focus / time).
+	// Return an EventInterrupt the program loop drops so polling continues —
+	// returning (nil, nil) here would make the caller exit the loop.
+	return terminal.EventInterrupt{Data: nil}, nil
 }
 
 // PostEvent enqueues a terminal.Event onto the tcell event queue so the
@@ -255,9 +265,14 @@ func toTcellColor(c style.Color) tcellv2.Color {
 	}
 	if uint32(c) >= truecolorBit {
 		rgb := uint32(c) & 0xFFFFFF
-		r := uint8(rgb >> 16)
-		g := uint8(rgb >> 8)
-		b := uint8(rgb)
+		// Each channel is masked to 8 bits, so the uint8 conversions
+		// cannot overflow; gosec G115 cannot prove the mask bound.
+		//nolint:gosec // spec-1.17 D-6a: & 0xFF masks each channel to 8 bits — uint8 conversion is provably in range.
+		r := uint8((rgb >> 16) & 0xFF)
+		//nolint:gosec // spec-1.17 D-6a: & 0xFF masks each channel to 8 bits — uint8 conversion is provably in range.
+		g := uint8((rgb >> 8) & 0xFF)
+		//nolint:gosec // spec-1.17 D-6a: & 0xFF masks each channel to 8 bits — uint8 conversion is provably in range.
+		b := uint8(rgb & 0xFF)
 		return tcellv2.NewRGBColor(int32(r), int32(g), int32(b))
 	}
 	// Palette: stored as idx+1 so 0 stays distinct from palette[0].
