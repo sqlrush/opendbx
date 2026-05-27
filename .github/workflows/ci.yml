@@ -387,6 +387,15 @@ jobs:
         env:
           KEYBINDINGS_VISUAL_REQUIRED: ${{ vars.KEYBINDINGS_VISUAL_REQUIRED || '' }}
         run: make ui-keybindings-golden
+      - name: Layer 3 LLM chat visual golden (spec-1.20 D-10)
+        # LLM chat fixtures parked under
+        # tests/integration/uitest/llmchat/testdata/visual/LLMChat*/ —
+        # captured in a future T-2.5 session. Independent env gate
+        # (LLMCHAT_VISUAL_REQUIRED). 11th independent block-style visual
+        # env gate per spec-1.20 D-10 (parked-only / capture pending).
+        env:
+          LLMCHAT_VISUAL_REQUIRED: ${{ vars.LLMCHAT_VISUAL_REQUIRED || '' }}
+        run: make ui-llmchat-golden
 
   # spec-0.11.5 D-4/D-5: Layer 5 screenshot evidence. Required context,
   # label-gated. PR body/label edits retrigger this workflow so stale

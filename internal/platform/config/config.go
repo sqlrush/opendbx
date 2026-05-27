@@ -74,6 +74,11 @@ type LLMConfig struct {
 	MaxRetries     int           `yaml:"max_retries" json:"max_retries" env:"OPENDBX_LLM_MAX_RETRIES" validate:"min=0,max=10"`
 	StripThink     bool          `yaml:"strip_think" json:"strip_think" env:"OPENDBX_LLM_STRIP_THINK"`
 	ThinkingMode   string        `yaml:"thinking_mode" json:"thinking_mode" env:"OPENDBX_LLM_THINKING_MODE" validate:"required,oneof=enabled disabled adaptive"`
+	// ThinkingBudget is the extended-thinking token budget when ThinkingMode
+	// is "enabled" (spec-1.20 R2.1 / T-10a HIGH-2 wiring). Anthropic requires
+	// ≥1024 and < max_tokens; that bound is enforced at request time by
+	// llm.ValidateRequest. Ignored when ThinkingMode != "enabled".
+	ThinkingBudget int `yaml:"thinking_budget" json:"thinking_budget" env:"OPENDBX_LLM_THINKING_BUDGET" validate:"min=0"`
 }
 
 // SessionConfig — session lifecycle + memory bounds.
@@ -119,7 +124,7 @@ type ConnectionConfig struct {
 // ModelConfig — LLM model endpoint. Stage 0 minimal; spec-1.20 fills rest.
 type ModelConfig struct {
 	Name     string `yaml:"name" json:"name" validate:"required"`
-	Provider string `yaml:"provider" json:"provider" validate:"oneof=anthropic openai-compat ollama"`
+	Provider string `yaml:"provider" json:"provider" validate:"oneof=anthropic openai-compat ollama fake"`
 	BaseURL  string `yaml:"base_url" json:"base_url"`
 	APIKey   string `yaml:"api_key,omitempty" json:"api_key,omitempty" redact:"true"`
 }

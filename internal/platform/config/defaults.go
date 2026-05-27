@@ -45,7 +45,13 @@ func Default() *Config {
 			RequestTimeout: 30 * time.Second,
 			MaxRetries:     3,
 			StripThink:     false,
-			ThinkingMode:   "adaptive",
+			// T-10a HIGH-1: default to "disabled" so a freshly-configured
+			// install reaches the Anthropic provider for a real conversation.
+			// "adaptive" is spec-3.11 (factory → LLM.NOT_IMPLEMENTED), so it
+			// must NOT be the out-of-box default (the deliverable is a live
+			// chat once an API key + model are set).
+			ThinkingMode:   "disabled",
+			ThinkingBudget: 2048, // used only when ThinkingMode == "enabled"
 		},
 		Session: SessionConfig{
 			StorageDir:         "", // empty = use ~/.opendbx/sessions/

@@ -11,10 +11,14 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 
-	"github.com/sqlrush/opendbx/internal/app/cli/demoapp"
+	"github.com/sqlrush/opendbx/internal/app/cli/llmapp"
 	"github.com/sqlrush/opendbx/internal/app/cli/program"
 	tcelladapter "github.com/sqlrush/opendbx/internal/app/cli/render/terminal/tcell"
 	"github.com/sqlrush/opendbx/internal/app/cli/tui"
+	"github.com/sqlrush/opendbx/internal/domain/llm"
+	"github.com/sqlrush/opendbx/internal/domain/llm/factory"
+	"github.com/sqlrush/opendbx/internal/domain/llm/fake"
+	"github.com/sqlrush/opendbx/internal/platform/config"
 )
 
 // newScreenFn is the screen factory for the program.Run production path
@@ -64,8 +68,11 @@ func setNewScreenFn(fn func() (tcell.Screen, error)) {
 // Returns nil on key-exit (Ctrl+C double-press / Ctrl+\), ctx.Err on
 // cancel, ErrInitFailed wrap on tcell screen construction failure.
 //
-// The Model is currently demoapp.New() (minimal demonstrator); spec-1.20
-// LLM client replaces it with the real production Model.
+// The Model is llmapp.New (spec-1.20 D-6 production chat). 原则 3: when
+// the LLM provider cannot be constructed (no API key / unknown provider),
+// we do NOT silently fall back to demoapp — instead llmapp is started with
+// a provider that surfaces the LLM.* errcode on the first message, so the
+// user sees an explicit, actionable error.
 func LaunchInteractiveTUI(ctx context.Context) error {
 	screen, err := getNewScreenFn()()
 	if err != nil {
@@ -75,7 +82,7 @@ func LaunchInteractiveTUI(ctx context.Context) error {
 	// NOTE: no `defer screen.Fini()` — Driver.Fini (spec-1.17 D-6a)
 	// owns screen teardown via scheduler.Run shutdown.
 	driver := tcelladapter.NewDriver(screen)
-	model := demoapp.New()
+	model := newChatModel()
 	p := program.New(driver, model)
 
 	// errcode-lint:exempt -- spec-1.17 D-6b: program.Run returns scheduler.Run's result verbatim (context.Canceled / DeadlineExceeded on shutdown; pre-wrapped driver.Init errors otherwise). The mapping below converts an internal user-quit cancel to nil; all returned errors are stdlib sentinels or pre-wrapped.
@@ -94,4 +101,42 @@ func LaunchInteractiveTUI(ctx context.Context) error {
 		return nil
 	}
 	return runErr
+}
+
+// newChatModel loads config, builds the LLM provider via the factory, and
+// returns the spec-1.20 llmapp chat Model. 原则 3: a provider-construction
+// failure does NOT fall back to demoapp — it yields a provider whose
+// Stream returns the LLM.* errcode, so the user gets an explicit error
+// (with the actionable Hint) on their first message rather than a silent
+// offline demo.
+func newChatModel() program.Model {
+	cfg, cfgErr := config.Load(config.LoadOptions{})
+	if cfgErr != nil || cfg == nil {
+		// Config load failed entirely — surface UNAVAILABLE on first message.
+		return llmapp.New(fake.New().WithStartErr(llm.ErrUnavailable), llmapp.Options{})
+	}
+	provider, perr := factory.New(*cfg)
+	opts := llmapp.Options{
+		ModelName:      cfg.LLM.ActiveModel,
+		MaxHistory:     cfg.Session.MaxHistoryMessages,
+		StripThink:     cfg.LLM.StripThink,
+		ThinkingMode:   thinkingModeFromConfig(cfg.LLM.ThinkingMode),
+		ThinkingBudget: cfg.LLM.ThinkingBudget,
+	}
+	if perr != nil {
+		// 原则 3: explicit error, no demoapp fallback.
+		return llmapp.New(fake.New().WithStartErr(perr), opts)
+	}
+	return llmapp.New(provider, opts)
+}
+
+// thinkingModeFromConfig maps the config thinking_mode string to the
+// domain enum (T-10a HIGH-2 wiring). "adaptive" is never constructed here —
+// factory.New rejects it with LLM.NOT_IMPLEMENTED before this is reached —
+// so it folds into Disabled defensively.
+func thinkingModeFromConfig(s string) llm.ThinkingMode {
+	if s == "enabled" {
+		return llm.ThinkingEnabled
+	}
+	return llm.ThinkingDisabled
 }
