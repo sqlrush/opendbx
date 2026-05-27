@@ -57,3 +57,16 @@ card's `spec_ref` field.
 - **go_directive**: requires `go 1.20+`; opendbx is at `go 1.24` so compatible.
 - **pkgsite**: https://pkg.go.dev/github.com/alecthomas/chroma/v2@v2.24.1
 - **spec_ref**: spec-1.12-code-highlight-block.md § 5 (D-1 dep contract)
+
+## `github.com/anthropics/anthropic-sdk-go` v1.45.0
+
+- **license**: MIT (module LICENSE; codex T-2 verified)
+- **maintenance**: active (Anthropic first-party; v1.45.0 released 2026-05-21; ~20 minors in 4 months)
+- **alternatives considered**:
+  - hand-rolled Anthropic Messages API HTTP/SSE client — rejected in spec-1.20 § 5 (SSE parse / retry / auth / beta-header / API-version churn maintenance cost; hand-rolled SSE was an opendb 痛点 1.1 root cause). **Re-weighed in spec-1.20 R-fix (option C)** once the transitive closure surfaced; user path-3/3 chose to keep the official SDK (option A) — protocol/SSE correctness > supply-chain surface for the 1.20 demoable goal. Hand-rolled narrowing deferred to spec-1.20.1 / 3.x if dep policy tightens.
+  - `sashabaranov/go-openai` (OpenAI-compat) — wrong vendor; OpenAI-compat adapter is spec-3.11.
+- **risk**: **transitive-closure supply-chain (HIGH, accepted module-graph-only)** — the SDK is a SINGLE module bundling Anthropic + AWS Bedrock + GCP Vertex + MCP backends, so MVS pulls ~60 transitive modules (full `aws-sdk-go-v2`, `cloud.google.com/go/*`, `google.golang.org/{api,grpc,protobuf}`, `modelcontextprotocol/go-sdk`, otel) into `go list -m all` + go.sum. **`go mod why -m` confirms NONE are compiled into the opendbx binary** — only the Claude Messages API path is imported; the rest is module-graph / go.sum surface, not a runtime dependency. spec-1.20 R-fix option-B investigation: no SDK version since v1.25.0 drops AWS/GCP (direct requires of the SDK's own go.mod); bedrock/vertex are same-module subpackages so build-tag/replace cannot prune them; the closure is inherent to the single-module multi-backend design and not avoidable while using this SDK. All transitive modules are version-pinned in `allowlist.json:transitive_lock`. API churn risk medium (fast-moving SDK; pinned v1.45.0, upgrade requires review). x/crypto pulled to v0.40.0 (the spec-0.12-predicted bump; > v0.17.0 so CVE-2022-27191 / CVE-2023-48795 covered).
+- **isolation**: IMP-7 (llm-sdk-isolation) — only `internal/domain/llm/anthropic` may import the SDK; app layer is SDK-free via the `llm.Provider` interface (规则 16).
+- **go_directive**: SDK requires `go 1.22+`; opendbx is at `go 1.24` so compatible.
+- **pkgsite**: https://pkg.go.dev/github.com/anthropics/anthropic-sdk-go@v1.45.0
+- **spec_ref**: spec-1.20-llm-client.md § 5 (dep decision) + R-fix option-A (transitive lock)
