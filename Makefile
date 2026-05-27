@@ -190,7 +190,7 @@ gate: import-check dep-check golden ## Local layer-2 gate (must pass before push
 	gofmt -l . | tee /tmp/opendbx-fmt.txt && [ ! -s /tmp/opendbx-fmt.txt ] || (echo "gofmt failed" && exit 1)
 	$(GO) vet ./...
 	$(GO) mod tidy && git diff --exit-code go.mod go.sum 2>/dev/null || (echo "go.mod/go.sum dirty after tidy" && exit 1)
-	@command -v golangci-lint >/dev/null 2>&1 && golangci-lint run --timeout 5m || echo "golangci-lint not installed (skip in bootstrap)"
+	@if command -v golangci-lint >/dev/null 2>&1; then golangci-lint run --timeout 5m; else echo "golangci-lint not installed (skip in bootstrap)"; fi
 	CGO_ENABLED=0 $(GO) build ./...
 	$(MAKE) makefile-check
 	$(MAKE) registry-drift-check

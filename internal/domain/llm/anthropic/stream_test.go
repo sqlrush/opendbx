@@ -157,8 +157,8 @@ func TestClassifyStreamErr(t *testing.T) {
 	}
 	// Non-SDK error passes through unchanged (ctx errors / ErrDecodeFailed).
 	passthrough := errors.New("ctx boom")
-	if classifyStreamErr(passthrough) != passthrough {
-		t.Errorf("non-SDK error should pass through unchanged")
+	if got := classifyStreamErr(passthrough); !errors.Is(got, passthrough) {
+		t.Errorf("non-SDK error should pass through unchanged; got %v", got)
 	}
 	if !errors.Is(classifyStreamErr(llm.ErrDecodeFailed), llm.ErrDecodeFailed) {
 		t.Errorf("ErrDecodeFailed should pass through")
