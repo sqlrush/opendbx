@@ -12,6 +12,7 @@ import (
 
 	openaisdk "github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
+	"github.com/openai/openai-go/shared"
 
 	"github.com/sqlrush/opendbx/internal/domain/llm"
 )
@@ -100,9 +101,25 @@ func (p *Provider) toParams(req llm.Request) openaisdk.ChatCompletionNewParams {
 	if req.Temperature != nil {
 		params.Temperature = openaisdk.Float(*req.Temperature)
 	}
+	// Tools → OpenAI function tools (Strict omitted — constrained-gen 是 spec-3.11;
+	// decode-only in 1.20.1, multi-turn tool_result round-trip 是 spec-1.21).
+	if len(req.Tools) > 0 {
+		tools := make([]openaisdk.ChatCompletionToolParam, 0, len(req.Tools))
+		for _, t := range req.Tools {
+			fn := shared.FunctionDefinitionParam{Name: t.Name}
+			if t.Description != "" {
+				fn.Description = openaisdk.String(t.Description)
+			}
+			if t.InputSchema != nil {
+				fn.Parameters = shared.FunctionParameters(t.InputSchema)
+			}
+			tools = append(tools, openaisdk.ChatCompletionToolParam{Function: fn})
+		}
+		params.Tools = tools
+	}
 	// ThinkingBudget is dropped on the request side for openai (no OpenAI
 	// equivalent; spec-1.20.1 Q3 provider-agnostic ValidateRequest still
-	// checks the budget, adapter ignores it). Tools → T-5.
+	// checks the budget, adapter ignores it).
 	return params
 }
 
