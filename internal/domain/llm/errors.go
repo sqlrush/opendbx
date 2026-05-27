@@ -50,7 +50,7 @@ var (
 	ErrNotImplemented = errcode.Register(
 		"LLM.NOT_IMPLEMENTED",
 		"该 LLM provider / 模式在当前 stage 未实现",
-		"openai-compat / ollama / adaptive thinking 在 spec-3.11 落地; 现用 provider=anthropic + thinking=enabled+显式 budget",
+		"adaptive thinking 在 spec-3.11 落地; openai-compat/ollama 已在 spec-1.20.1 落地 (配 model base_url + model)",
 	)
 	// ErrDecodeFailed — SSE event / tool_use input JSON decode failed.
 	ErrDecodeFailed = errcode.Register(
@@ -77,6 +77,14 @@ var (
 		"LLM.PROVIDER_REFUSAL",
 		"LLM provider 拒绝生成 (refusal)",
 		"请用户重新表述请求; refusal 通常因安全策略, 与 content filter 不同",
+	)
+	// ErrContentFiltered — OpenAI finish_reason=content_filter (平台内容过滤,
+	// 区别于 provider refusal — spec-1.20.1 Q4: FROZEN FinishRefusal 明注
+	// "NOT content_filter", 故 content_filter → FinishError + 此码, 不复用 Refusal).
+	ErrContentFiltered = errcode.Register(
+		"LLM.CONTENT_FILTERED",
+		"LLM 平台内容过滤拦截输出 (content_filter)",
+		"模型输出被平台安全过滤拦截; 调整 prompt 措辞或换模型; 与 provider refusal 不同",
 	)
 )
 

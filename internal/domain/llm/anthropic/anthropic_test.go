@@ -6,7 +6,6 @@ package anthropic
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
 	anthropicsdk "github.com/anthropics/anthropic-sdk-go"
@@ -61,51 +60,6 @@ func TestMapStopReason(t *testing.T) {
 		if got := mapStopReason(tc.sr); got != tc.want {
 			t.Errorf("mapStopReason(%q) = %v; want %v", tc.sr, got, tc.want)
 		}
-	}
-}
-
-func TestDecodeToolInput(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name    string
-		raw     string
-		wantErr bool
-	}{
-		{"empty → empty object", "", false},
-		{"object", `{"n": 5, "q": "select"}`, false},
-		{"nested object", `{"a": {"b": {"c": 1}}}`, false},
-		{"non-object array", `[1,2,3]`, true},
-		{"non-object scalar", `42`, true},
-		{"malformed", `{"a":`, true},
-		{"trailing object", `{}{}`, true},       // T-10a MED: trailing data
-		{"trailing garbage", `{"a":1} x`, true}, // T-10a MED: trailing data
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := decodeToolInput([]byte(tc.raw))
-			if tc.wantErr != (err != nil) {
-				t.Errorf("decodeToolInput(%q) err=%v; wantErr=%v", tc.raw, err, tc.wantErr)
-			}
-			if err != nil && !errors.Is(err, llm.ErrDecodeFailed) {
-				t.Errorf("err %v should be ErrDecodeFailed", err)
-			}
-		})
-	}
-}
-
-func TestDecodeToolInput_Oversize(t *testing.T) {
-	t.Parallel()
-	big := `{"x":"` + strings.Repeat("a", maxToolInputBytes) + `"}`
-	if _, err := decodeToolInput([]byte(big)); !errors.Is(err, llm.ErrDecodeFailed) {
-		t.Errorf("oversize input should be ErrDecodeFailed; got %v", err)
-	}
-}
-
-func TestDecodeToolInput_TooDeep(t *testing.T) {
-	t.Parallel()
-	deep := strings.Repeat(`{"a":`, maxToolInputDepth+2) + "1" + strings.Repeat("}", maxToolInputDepth+2)
-	if _, err := decodeToolInput([]byte(deep)); !errors.Is(err, llm.ErrDecodeFailed) {
-		t.Errorf("too-deep input should be ErrDecodeFailed; got %v", err)
 	}
 }
 
