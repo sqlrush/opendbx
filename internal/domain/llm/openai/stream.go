@@ -7,6 +7,7 @@ package openai
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"sort"
 	"sync"
 
@@ -68,9 +69,35 @@ func (s *stream) Next() bool {
 // Chunk returns the current chunk.
 func (s *stream) Chunk() llm.Chunk { return s.cur }
 
-// Err returns the terminal error. T-6 maps via classifyOpenAIErr
-// (openai.Error.StatusCode → LLM.* + ctx/ErrDecodeFailed pass-through).
-func (s *stream) Err() error { return s.err }
+// Err returns the terminal error, mapped to a registered LLM.* errcode
+// (原则 3 + 规则 7: a raw SDK transport/API error must not escape un-classified).
+func (s *stream) Err() error { return classifyOpenAIErr(s.err) }
+
+// classifyOpenAIErr maps an SDK API error to a registered LLM.* errcode by
+// HTTP status (mirror anthropic classifyStreamErr). Non-SDK errors (ctx
+// cancel/deadline, our own ErrDecodeFailed) pass through unchanged — ctx is
+// classified by the app-layer finishFromErr; ErrDecodeFailed is already a
+// registered code.
+func classifyOpenAIErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	var apiErr *openaisdk.Error
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case 400, 422:
+			return llm.ErrRequestInvalid
+		case 401, 403:
+			return llm.ErrAuthFailed
+		case 408:
+			return llm.ErrTimeout
+		default:
+			// 404 model/endpoint not found / 429 rate-limit / 5xx / unknown.
+			return llm.ErrUnavailable
+		}
+	}
+	return err
+}
 
 // Close releases the SDK stream (idempotent via sync.Once — ssestream.Stream
 // .Close is not itself idempotent, same hazard as anthropic).

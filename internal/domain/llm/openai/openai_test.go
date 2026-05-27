@@ -184,6 +184,41 @@ func TestToolAccumulate_TooMany(t *testing.T) {
 	}
 }
 
+// TestClassifyOpenAIErr: SDK API error status → registered LLM.*; non-SDK
+// errors pass through (mirror anthropic classifyStreamErr).
+func TestClassifyOpenAIErr(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		status int
+		want   error
+	}{
+		{400, llm.ErrRequestInvalid},
+		{422, llm.ErrRequestInvalid},
+		{401, llm.ErrAuthFailed},
+		{403, llm.ErrAuthFailed},
+		{408, llm.ErrTimeout},
+		{404, llm.ErrUnavailable},
+		{429, llm.ErrUnavailable},
+		{500, llm.ErrUnavailable},
+	}
+	for _, tc := range cases {
+		got := classifyOpenAIErr(&openaisdk.Error{StatusCode: tc.status})
+		if !errors.Is(got, tc.want) {
+			t.Errorf("status %d → %v; want %v", tc.status, got, tc.want)
+		}
+	}
+	if classifyOpenAIErr(nil) != nil {
+		t.Errorf("nil → nil")
+	}
+	passthrough := errors.New("ctx boom")
+	if got := classifyOpenAIErr(passthrough); !errors.Is(got, passthrough) {
+		t.Errorf("non-SDK error should pass through; got %v", got)
+	}
+	if !errors.Is(classifyOpenAIErr(llm.ErrDecodeFailed), llm.ErrDecodeFailed) {
+		t.Errorf("ErrDecodeFailed should pass through")
+	}
+}
+
 func TestToParams_Tools(t *testing.T) {
 	t.Parallel()
 	p, _ := New(Config{APIKey: "sk", Model: "m", BaseURL: "http://x/v1"})

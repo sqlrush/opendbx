@@ -8,6 +8,7 @@ import (
 	"github.com/sqlrush/opendbx/internal/domain/llm"
 	"github.com/sqlrush/opendbx/internal/domain/llm/anthropic"
 	"github.com/sqlrush/opendbx/internal/domain/llm/fake"
+	"github.com/sqlrush/opendbx/internal/domain/llm/openai"
 	"github.com/sqlrush/opendbx/internal/platform/config"
 )
 
@@ -31,7 +32,8 @@ type resolved struct {
 // Provider dispatch:
 //   - "anthropic" → anthropic.New
 //   - "fake"      → fake (empty scripted; tests inject their own via fake.New)
-//   - "openai-compat" | "ollama" → LLM.NOT_IMPLEMENTED (spec-3.11)
+//   - "openai-compat" → openai.New (cloud OpenAI-compat; key + base_url required) [spec-1.20.1]
+//   - "ollama"        → openai.New (keyless local OpenAI-compat endpoint) [spec-1.20.1]
 //   - other → LLM.UNAVAILABLE
 //
 // 原则 3: an unconstructable provider returns an LLM.* errcode — never a
@@ -47,8 +49,10 @@ func New(cfg config.Config) (llm.Provider, error) {
 		return anthropic.New(anthropic.Config{APIKey: r.apiKey, Model: r.model, BaseURL: r.baseURL})
 	case "fake":
 		return fake.New(), nil
-	case "openai-compat", "ollama":
-		return nil, llm.ErrNotImplemented
+	case "openai-compat":
+		return openai.New(openai.Config{APIKey: r.apiKey, Model: r.model, BaseURL: r.baseURL, Name: "openai-compat"})
+	case "ollama":
+		return openai.New(openai.Config{APIKey: r.apiKey, Model: r.model, BaseURL: r.baseURL, Name: "ollama", AllowKeyless: true})
 	default:
 		return nil, llm.ErrUnavailable
 	}
