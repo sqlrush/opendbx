@@ -119,7 +119,7 @@ type ConnectionConfig struct {
 // ModelConfig — LLM model endpoint. Stage 0 minimal; spec-1.20 fills rest.
 type ModelConfig struct {
 	Name     string `yaml:"name" json:"name" validate:"required"`
-	Provider string `yaml:"provider" json:"provider" validate:"oneof=anthropic openai-compat ollama"`
+	Provider string `yaml:"provider" json:"provider" validate:"oneof=anthropic openai-compat ollama fake"`
 	BaseURL  string `yaml:"base_url" json:"base_url"`
 	APIKey   string `yaml:"api_key,omitempty" json:"api_key,omitempty" redact:"true"`
 }
