@@ -1,0 +1,239 @@
+// Copyright 2026 opendbx contributors. See LICENSE.
+//
+// Author: sqlrush
+
+package llmapp
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/sqlrush/opendbx/internal/app/cli/keybindings"
+	"github.com/sqlrush/opendbx/internal/app/cli/program"
+	"github.com/sqlrush/opendbx/internal/app/cli/render/block"
+	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
+	"github.com/sqlrush/opendbx/internal/app/cli/render/terminal"
+	"github.com/sqlrush/opendbx/internal/domain/llm"
+	"github.com/sqlrush/opendbx/internal/domain/llm/fake"
+)
+
+func keyAction(code int, r rune) program.KeyActionMsg {
+	k := program.KeyMsg{Code: code, Rune: r}
+	return program.KeyActionMsg{Key: k, Action: keybindings.Resolve(keybindings.KeyEvent{Code: code, Rune: r})}
+}
+
+func typeAndModel(t *testing.T, m *Model, text string) *Model {
+	t.Helper()
+	cur := program.Model(m)
+	for _, r := range text {
+		next, _ := cur.Update(keyAction(terminal.KeyRune, r))
+		cur = next
+	}
+	return cur.(*Model)
+}
+
+// runStream drives the full reader-Cmd loop synchronously with a fake
+// provider (no goroutine timing): submit → run startCmd → loop
+// readControlMsg → Cmd → control/done until idle. Returns the final Model.
+func runStream(t *testing.T, m *Model) *Model {
+	t.Helper()
+	cur := program.Model(m)
+	mm, cmd := cur.Update(keyAction(terminal.KeyEnter, 0))
+	cur = mm
+	// Drive the Cmd chain until no Cmd is returned (stream fully drained).
+	for cmd != nil {
+		msg := cmd()
+		if msg == nil {
+			break
+		}
+		cur, cmd = cur.Update(msg)
+	}
+	return cur.(*Model)
+}
+
+func newFakeModel(p llm.Provider) *Model {
+	return New(p, Options{ModelName: "fake-model", MaxTokens: 1024})
+}
+
+func TestModel_InputEditing(t *testing.T) {
+	t.Parallel()
+	m := typeAndModel(t, newFakeModel(fake.New()), "hello")
+	if st := m.InputState(); st.Buffer != "hello" || st.Cursor != 5 {
+		t.Errorf("InputState = %+v; want hello/5", st)
+	}
+}
+
+func TestModel_SubmitClearsBuffer(t *testing.T) {
+	t.Parallel()
+	m := typeAndModel(t, newFakeModel(fake.Scripted("hi there", llm.FinishStop)), "question")
+	final := runStream(t, m)
+	if final.InputState().Buffer != "" {
+		t.Errorf("buffer not cleared after submit: %q", final.InputState().Buffer)
+	}
+	if final.streaming {
+		t.Errorf("still streaming after drain; want idle")
+	}
+	// scrollback has the user echo + assistant text drained.
+	if len(final.scrollback) == 0 {
+		t.Errorf("scrollback empty after stream")
+	}
+}
+
+func TestModel_SubmitEmptyNoOp(t *testing.T) {
+	t.Parallel()
+	m := newFakeModel(fake.Scripted("x", llm.FinishStop))
+	next, cmd := m.Update(keyAction(terminal.KeyEnter, 0))
+	if cmd != nil {
+		t.Errorf("empty submit should return nil cmd")
+	}
+	if next.(*Model).streaming {
+		t.Errorf("empty submit should not start streaming")
+	}
+}
+
+func TestModel_StreamingBlocksInput(t *testing.T) {
+	t.Parallel()
+	// While streaming, rune input is ignored (single-turn).
+	m := newFakeModel(fake.New(llm.Chunk{Token: "a"})) // no finish → stays "streaming" mid-flight in model
+	m = typeAndModel(t, m, "q")
+	mm, _ := m.Update(keyAction(terminal.KeyEnter, 0))
+	streamingModel := mm.(*Model)
+	if !streamingModel.streaming {
+		t.Fatalf("expected streaming=true after submit")
+	}
+	after, _ := streamingModel.Update(keyAction(terminal.KeyRune, 'z'))
+	if after.(*Model).InputState().Buffer != "" {
+		t.Errorf("input during streaming should be ignored; buffer=%q", after.(*Model).InputState().Buffer)
+	}
+}
+
+// TestModel_SawContent_TextVsThinking is the R2.2 HIGH-2 regression:
+// text + FinishLength must NOT trigger STREAM_EMPTY (sawContent=true),
+// while thinking-only + FinishLength MUST (sawContent=false).
+func TestModel_SawContent_TextThenLength(t *testing.T) {
+	t.Parallel()
+	m := typeAndModel(t, newFakeModel(fake.New(
+		llm.Chunk{Token: "partial answer"},
+		llm.Chunk{FinishReason: llm.FinishLength},
+	)), "q")
+	final := runStream(t, m)
+	if hasNode(final, "STREAM_EMPTY") {
+		t.Errorf("text+Length wrongly produced STREAM_EMPTY")
+	}
+	if !hasNode(final, "截断") {
+		t.Errorf("text+Length should show truncation marker")
+	}
+}
+
+func TestModel_SawContent_ThinkingOnlyLength(t *testing.T) {
+	t.Parallel()
+	m := typeAndModel(t, newFakeModel(fake.New(
+		llm.Chunk{Token: "reasoning", Thinking: true},
+		llm.Chunk{FinishReason: llm.FinishLength},
+	)).withStripThink(true), "q")
+	final := runStream(t, m)
+	if !hasNode(final, "STREAM_EMPTY") {
+		t.Errorf("thinking-only+Length should produce STREAM_EMPTY status")
+	}
+}
+
+func TestModel_ImmediateError(t *testing.T) {
+	t.Parallel()
+	m := typeAndModel(t, newFakeModel(fake.New().WithStartErr(llm.ErrAuthFailed)), "q")
+	final := runStream(t, m)
+	if !hasNode(final, "错误") {
+		t.Errorf("immediate auth error should render an error node; scrollback=%v", nodeTexts(final))
+	}
+	if final.streaming {
+		t.Errorf("should be idle after immediate error")
+	}
+}
+
+func TestModel_ToolUsePlaceholder(t *testing.T) {
+	t.Parallel()
+	m := typeAndModel(t, newFakeModel(fake.New(
+		llm.Chunk{FinishReason: llm.FinishToolUse, ToolUses: []llm.ToolUse{{Name: "topsql"}}},
+	)), "q")
+	final := runStream(t, m)
+	if !hasNode(final, "topsql") || !hasNode(final, "spec-1.21") {
+		t.Errorf("tool-use should render placeholder; got %v", nodeTexts(final))
+	}
+}
+
+func TestModel_StatusSegments(t *testing.T) {
+	t.Parallel()
+	m := newFakeModel(fake.New())
+	segs := m.StatusSegments()
+	if len(segs) == 0 || segs[0].Text != "fake-model" {
+		t.Errorf("status = %+v; want [fake-model]", segs)
+	}
+}
+
+func TestModel_HistoryBounded(t *testing.T) {
+	t.Parallel()
+	m := New(fake.Scripted("ok", llm.FinishStop), Options{MaxHistory: 3, MaxTokens: 100})
+	cur := m
+	for i := 0; i < 6; i++ {
+		cur = typeAndModel(t, cur, "msg")
+		cur = runStream(t, cur)
+	}
+	if len(cur.history) > 3 {
+		t.Errorf("history len = %d; want ≤ 3 (bounded)", len(cur.history))
+	}
+}
+
+func TestModel_BuildRequest_SystemCacheBreak(t *testing.T) {
+	t.Parallel()
+	m := New(fake.New(), Options{SystemPrompt: "base", MaxTokens: 100})
+	req := m.buildRequest("hi")
+	if len(req.System) != 1 || !req.System[0].CacheBreak {
+		t.Errorf("System = %+v; want 1 block CacheBreak=true", req.System)
+	}
+	if len(req.Messages) != 1 || req.Messages[0].Role != llm.RoleUser {
+		t.Errorf("Messages = %+v; want 1 user msg", req.Messages)
+	}
+}
+
+// --- helpers ---
+
+func (m *Model) withStripThink(v bool) *Model { m.stripThink = v; return m }
+
+func nodeTexts(m *Model) []string {
+	out := make([]string, 0, len(m.scrollback))
+	ctx := blockCtx()
+	for _, n := range m.scrollback {
+		b, err := n.Render(ctx)
+		if err != nil || b == nil {
+			continue
+		}
+		out = append(out, gridText(b))
+	}
+	return out
+}
+
+func hasNode(m *Model, substr string) bool {
+	for _, txt := range nodeTexts(m) {
+		if strings.Contains(txt, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func blockCtx() block.Context { return block.Context{Cols: 200, Rows: 10} }
+
+func gridText(b buffer.Buffer) string {
+	cols, rows := b.Size()
+	var sb strings.Builder
+	for y := 0; y < rows; y++ {
+		for x := 0; x < cols; x++ {
+			c := b.Cell(x, y)
+			if c.Ch <= 0 {
+				continue
+			}
+			sb.WriteRune(c.Ch)
+		}
+		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
