@@ -266,6 +266,22 @@ func TestModel_BuildRequest_SystemCacheBreak(t *testing.T) {
 	}
 }
 
+// TestModel_BuildRequest_Thinking is the T-10a HIGH-2 regression: thinking
+// config must reach llm.Request (was dropped — domain support unreachable).
+func TestModel_BuildRequest_Thinking(t *testing.T) {
+	t.Parallel()
+	m := New(fake.New(), Options{MaxTokens: 4096, ThinkingMode: llm.ThinkingEnabled, ThinkingBudget: 2048})
+	req := m.buildRequest("hi")
+	if req.ThinkingMode != llm.ThinkingEnabled || req.ThinkingBudget != 2048 {
+		t.Errorf("thinking not wired into request: mode=%v budget=%d", req.ThinkingMode, req.ThinkingBudget)
+	}
+	// Default Options → thinking disabled (no budget required).
+	d := New(fake.New(), Options{MaxTokens: 100}).buildRequest("hi")
+	if d.ThinkingMode != llm.ThinkingDisabled {
+		t.Errorf("default thinking mode = %v; want Disabled", d.ThinkingMode)
+	}
+}
+
 // --- helpers ---
 
 func (m *Model) withStripThink(v bool) *Model { next := *m; next.stripThink = v; return &next }

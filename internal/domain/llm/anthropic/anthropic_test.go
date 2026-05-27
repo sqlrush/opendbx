@@ -77,6 +77,8 @@ func TestDecodeToolInput(t *testing.T) {
 		{"non-object array", `[1,2,3]`, true},
 		{"non-object scalar", `42`, true},
 		{"malformed", `{"a":`, true},
+		{"trailing object", `{}{}`, true},       // T-10a MED: trailing data
+		{"trailing garbage", `{"a":1} x`, true}, // T-10a MED: trailing data
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

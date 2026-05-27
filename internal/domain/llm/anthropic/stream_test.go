@@ -128,6 +128,43 @@ func TestStreamIterator_DecoderError(t *testing.T) {
 	}
 }
 
+// TestClassifyStreamErr is the T-10a HIGH-3 regression: a raw SDK API error
+// must be mapped to a registered LLM.* errcode by HTTP status (原则 3 — no
+// raw SDK error escapes the adapter), while non-SDK errors pass through.
+func TestClassifyStreamErr(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		status int
+		want   error
+	}{
+		{400, llm.ErrRequestInvalid},
+		{422, llm.ErrRequestInvalid},
+		{401, llm.ErrAuthFailed},
+		{403, llm.ErrAuthFailed},
+		{408, llm.ErrTimeout},
+		{429, llm.ErrUnavailable},
+		{500, llm.ErrUnavailable},
+		{529, llm.ErrUnavailable},
+	}
+	for _, tc := range cases {
+		got := classifyStreamErr(&anthropicsdk.Error{StatusCode: tc.status})
+		if !errors.Is(got, tc.want) {
+			t.Errorf("status %d → %v; want %v", tc.status, got, tc.want)
+		}
+	}
+	if classifyStreamErr(nil) != nil {
+		t.Errorf("nil should map to nil")
+	}
+	// Non-SDK error passes through unchanged (ctx errors / ErrDecodeFailed).
+	passthrough := errors.New("ctx boom")
+	if classifyStreamErr(passthrough) != passthrough {
+		t.Errorf("non-SDK error should pass through unchanged")
+	}
+	if !errors.Is(classifyStreamErr(llm.ErrDecodeFailed), llm.ErrDecodeFailed) {
+		t.Errorf("ErrDecodeFailed should pass through")
+	}
+}
+
 // TestStreamIterator_OversizeToolInputBuffer is the T-10a HIGH-2 regression:
 // a single huge input_json_delta must be rejected DURING accumulation
 // (before the buffer grows unbounded), surfacing ErrDecodeFailed and

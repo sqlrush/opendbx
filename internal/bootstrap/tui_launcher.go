@@ -117,13 +117,26 @@ func newChatModel() program.Model {
 	}
 	provider, perr := factory.New(*cfg)
 	opts := llmapp.Options{
-		ModelName:  cfg.LLM.ActiveModel,
-		MaxHistory: cfg.Session.MaxHistoryMessages,
-		StripThink: cfg.LLM.StripThink,
+		ModelName:      cfg.LLM.ActiveModel,
+		MaxHistory:     cfg.Session.MaxHistoryMessages,
+		StripThink:     cfg.LLM.StripThink,
+		ThinkingMode:   thinkingModeFromConfig(cfg.LLM.ThinkingMode),
+		ThinkingBudget: cfg.LLM.ThinkingBudget,
 	}
 	if perr != nil {
 		// 原则 3: explicit error, no demoapp fallback.
 		return llmapp.New(fake.New().WithStartErr(perr), opts)
 	}
 	return llmapp.New(provider, opts)
+}
+
+// thinkingModeFromConfig maps the config thinking_mode string to the
+// domain enum (T-10a HIGH-2 wiring). "adaptive" is never constructed here —
+// factory.New rejects it with LLM.NOT_IMPLEMENTED before this is reached —
+// so it folds into Disabled defensively.
+func thinkingModeFromConfig(s string) llm.ThinkingMode {
+	if s == "enabled" {
+		return llm.ThinkingEnabled
+	}
+	return llm.ThinkingDisabled
 }

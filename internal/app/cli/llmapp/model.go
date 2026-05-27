@@ -38,16 +38,24 @@ type Options struct {
 	MaxTokens    int
 	MaxHistory   int // message cap (FIFO); ≤0 → defaultMaxHistory
 	StripThink   bool
+	// ThinkingMode / ThinkingBudget wire request-side extended thinking
+	// from config into every llm.Request (T-10a HIGH-2 — previously the
+	// domain/adapter support was unreachable from production). Budget is
+	// validated (≥1024, < MaxTokens) by llm.ValidateRequest when enabled.
+	ThinkingMode   llm.ThinkingMode
+	ThinkingBudget int
 }
 
 // Model is the spec-1.20 production chat Model (replaces demoapp).
 type Model struct {
-	provider     llm.Provider
-	modelName    string
-	systemPrompt string
-	maxTokens    int
-	maxHistory   int
-	stripThink   bool
+	provider       llm.Provider
+	modelName      string
+	systemPrompt   string
+	maxTokens      int
+	maxHistory     int
+	stripThink     bool
+	thinkingMode   llm.ThinkingMode
+	thinkingBudget int
 
 	buffer string
 	cursor int
@@ -80,12 +88,14 @@ func New(provider llm.Provider, opts Options) *Model {
 		mt = defaultMaxTokens
 	}
 	return &Model{
-		provider:     provider,
-		modelName:    opts.ModelName,
-		systemPrompt: opts.SystemPrompt,
-		maxTokens:    mt,
-		maxHistory:   mh,
-		stripThink:   opts.StripThink,
+		provider:       provider,
+		modelName:      opts.ModelName,
+		systemPrompt:   opts.SystemPrompt,
+		maxTokens:      mt,
+		maxHistory:     mh,
+		stripThink:     opts.StripThink,
+		thinkingMode:   opts.ThinkingMode,
+		thinkingBudget: opts.ThinkingBudget,
 	}
 }
 
@@ -207,9 +217,11 @@ func (m *Model) buildRequest(userText string) llm.Request {
 		Content: []llm.ContentBlock{{Type: llm.BlockText, Text: userText}},
 	})
 	return llm.Request{
-		System:    sys,
-		Messages:  msgs,
-		MaxTokens: m.maxTokens,
+		System:         sys,
+		Messages:       msgs,
+		MaxTokens:      m.maxTokens,
+		ThinkingMode:   m.thinkingMode,
+		ThinkingBudget: m.thinkingBudget,
 	}
 }
 

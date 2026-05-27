@@ -7,6 +7,8 @@ package anthropic
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"sort"
 	"sync"
 
@@ -176,6 +178,11 @@ func decodeToolInput(raw []byte) (map[string]any, error) {
 	if err := dec.Decode(&v); err != nil {
 		return nil, llm.ErrDecodeFailed
 	}
+	// T-10a MED: reject trailing data after the first JSON value — a single
+	// Decode accepts "{}<garbage>". The input must be exactly one object.
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, llm.ErrDecodeFailed
+	}
 	obj, ok := v.(map[string]any)
 	if !ok {
 		return nil, llm.ErrDecodeFailed // tool input must be a JSON object
@@ -209,8 +216,37 @@ func jsonDepth(v any, cur int) int {
 // Chunk returns the current chunk.
 func (s *stream) Chunk() llm.Chunk { return s.cur }
 
-// Err returns the terminal error (SDK stream error, incl. ctx err).
-func (s *stream) Err() error { return s.err }
+// Err returns the terminal error, mapped to a registered LLM.* errcode
+// (T-10a HIGH-3). A raw SDK transport/API error (e.g. 401 invalid key in
+// the stream phase) must not escape the adapter un-classified (原则 3 +
+// 规则 7 + 规则 16).
+func (s *stream) Err() error { return classifyStreamErr(s.err) }
+
+// classifyStreamErr maps a raw SDK / transport error to a registered LLM.*
+// errcode by HTTP status. Non-SDK errors (context cancel/deadline, our own
+// ErrDecodeFailed from the tool-input guard) pass through unchanged — ctx
+// errors are classified by the app-layer finishFromErr, and ErrDecodeFailed
+// is already a registered code.
+func classifyStreamErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	var apiErr *anthropicsdk.Error
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case 400, 422:
+			return llm.ErrRequestInvalid
+		case 401, 403:
+			return llm.ErrAuthFailed
+		case 408:
+			return llm.ErrTimeout
+		default:
+			// 429 rate-limit / 5xx / 529 overloaded / unknown → unavailable.
+			return llm.ErrUnavailable
+		}
+	}
+	return err
+}
 
 // Close releases the SDK stream. Idempotent via sync.Once — the SDK's
 // ssestream.Stream.Close (v1.45.0) is NOT itself idempotent (a second call

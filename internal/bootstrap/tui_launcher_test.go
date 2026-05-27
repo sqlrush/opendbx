@@ -13,6 +13,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 
 	tcellpkg "github.com/sqlrush/opendbx/internal/app/cli/tui"
+	"github.com/sqlrush/opendbx/internal/domain/llm"
 )
 
 // TestLaunchInteractiveTUI_NewScreenFailure exercises the init-failure
@@ -68,5 +69,21 @@ func TestLaunchInteractiveTUI_HappyPath(t *testing.T) {
 
 	if err := LaunchInteractiveTUI(ctx); err != nil {
 		t.Errorf("expected nil from Ctrl+C double-press quit; got %v", err)
+	}
+}
+
+// TestThinkingModeFromConfig covers the T-10a HIGH-2 config→domain mapping.
+func TestThinkingModeFromConfig(t *testing.T) {
+	t.Parallel()
+	cases := map[string]llm.ThinkingMode{
+		"enabled":  llm.ThinkingEnabled,
+		"disabled": llm.ThinkingDisabled,
+		"adaptive": llm.ThinkingDisabled, // factory rejects adaptive before this
+		"":         llm.ThinkingDisabled,
+	}
+	for in, want := range cases {
+		if got := thinkingModeFromConfig(in); got != want {
+			t.Errorf("thinkingModeFromConfig(%q) = %v; want %v", in, got, want)
+		}
 	}
 }
