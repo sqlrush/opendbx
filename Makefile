@@ -308,7 +308,7 @@ errcode-check: ## Verify exported public API errors use errcode (D-2)
 	@$(GO) run ./tools/errcode-lint ./...
 
 # spec-0.11.5 D-5: UI Review 5-layer gate targets.
-.PHONY: ui-invariant ui-visual-golden ui-ai-review ui-block-golden ui-block-ai-review ui-tooluse-golden ui-toolresult-golden ui-compact-golden ui-markdown-golden ui-code-golden ui-diff-golden ui-program-golden ui-input-golden ui-keybindings-golden
+.PHONY: ui-invariant ui-visual-golden ui-ai-review ui-block-golden ui-block-ai-review ui-tooluse-golden ui-toolresult-golden ui-compact-golden ui-markdown-golden ui-code-golden ui-diff-golden ui-program-golden ui-input-golden ui-keybindings-golden ui-llmchat-golden
 ui-invariant: ## Layer 1 static invariants (uiinvariant package tests)
 	$(GO) test -race -count=1 ./internal/testing/uiinvariant/...
 
@@ -350,6 +350,9 @@ ui-input-golden: ## Input mode (spec-1.16) visual golden harness
 
 ui-keybindings-golden: ## Keybindings cursor/history (spec-1.17) visual golden harness
 	KEYBINDINGS_VISUAL_REQUIRED=$${KEYBINDINGS_VISUAL_REQUIRED:-} $(GO) test -race -count=1 -run TestKeybindingsVisualGolden ./tests/integration/uitest/keybindings/...
+
+ui-llmchat-golden: ## LLM chat (spec-1.20) visual golden harness
+	LLMCHAT_VISUAL_REQUIRED=$${LLMCHAT_VISUAL_REQUIRED:-} $(GO) test -race -count=1 -run TestLLMChatVisualGolden ./tests/integration/uitest/llmchat/...
 
 ui-block-ai-review: ## Block Message AI visual review wrapper
 	$(MAKE) ui-ai-review
