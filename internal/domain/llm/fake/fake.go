@@ -85,11 +85,15 @@ func (s *stream) Next() bool {
 		return false
 	}
 	if s.delay > 0 {
+		// T-10a LOW-2: NewTimer + Stop so the timer goroutine does not
+		// outlive a ctx-cancel win (time.After leaks until it fires).
+		timer := time.NewTimer(s.delay)
 		select {
 		case <-s.ctx.Done():
+			timer.Stop()
 			s.err = s.ctx.Err()
 			return false
-		case <-time.After(s.delay):
+		case <-timer.C:
 		}
 	} else {
 		select {

@@ -74,7 +74,16 @@ func mapToRender(f llm.FinishReason) streaming.FinishReason {
 // iterates the llm.Stream, routing each chunk: renderable Token →
 // TokenStream; control → ctrl chan. It closes ctrl when the stream ends
 // so the reader-Cmd observes a done signal (spec-1.20 R2.2).
-func consumeStream(s llm.Stream, ts *streaming.TokenStream, ctrl chan<- streamControlMsg, stripThink bool) {
+//
+// ctx is the per-request cancel ctx (T-10a HIGH-1): it is the SAME ctx
+// passed to provider.Stream, so a user cancel tears down the HTTP stream
+// (s.Next returns false with ctx.Canceled). The ctrl sends also select on
+// ctx.Done so the goroutine never blocks forever if the reader stops
+// draining (T-10a MED-1) — on cancel we abandon the buffered control msg
+// and still close ctrl so the reader observes the done signal.
+func consumeStream(ctx context.Context, s llm.Stream, ts *streaming.TokenStream, ctrl chan<- streamControlMsg, stripThink bool) {
+	defer close(ctrl)
+	defer func() { _ = ts.Close() }()
 	defer func() { _ = s.Close() }() // best-effort release; terminal Err already surfaced via ctrl
 	for s.Next() {
 		c := s.Chunk()
@@ -82,18 +91,23 @@ func consumeStream(s llm.Stream, ts *streaming.TokenStream, ctrl chan<- streamCo
 		if visible || (c.Thinking && !stripThink) {
 			_ = ts.AppendChunk(streaming.Chunk{Token: c.Token, FinishReason: mapToRender(c.FinishReason), Err: c.Err})
 		}
-		ctrl <- streamControlMsg{
+		select {
+		case ctrl <- streamControlMsg{
 			VisibleContent: visible,
 			Thinking:       c.Thinking,
 			ToolUses:       c.ToolUses,
 			Finish:         c.FinishReason,
 			Err:            c.Err,
+		}:
+		case <-ctx.Done():
+			return
 		}
 	}
 	if err := s.Err(); err != nil {
 		fr, mapped := finishFromErr(err)
-		ctrl <- streamControlMsg{Finish: fr, Err: mapped}
+		select {
+		case ctrl <- streamControlMsg{Finish: fr, Err: mapped}:
+		case <-ctx.Done():
+		}
 	}
-	_ = ts.Close()
-	close(ctrl)
 }

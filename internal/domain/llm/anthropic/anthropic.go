@@ -86,7 +86,11 @@ func (p *Provider) toParams(req llm.Request) (anthropicsdk.MessageNewParams, err
 	}
 
 	// Messages (Role validated by ValidateRequest to user/assistant only).
-	params.Messages = toMessages(req.Messages)
+	msgs, err := toMessages(req.Messages)
+	if err != nil {
+		return anthropicsdk.MessageNewParams{}, err
+	}
+	params.Messages = msgs
 
 	// Temperature *float64 → param.Opt (0.0 is a valid value; R2 H-4).
 	if req.Temperature != nil {
@@ -107,8 +111,11 @@ func (p *Provider) toParams(req llm.Request) (anthropicsdk.MessageNewParams, err
 	return params, nil
 }
 
-// toMessages maps llm.Message slice to SDK MessageParam slice.
-func toMessages(msgs []llm.Message) []anthropicsdk.MessageParam {
+// toMessages maps llm.Message slice to SDK MessageParam slice. An unknown
+// BlockType returns LLM.REQUEST_INVALID rather than panicking (T-10a HIGH:
+// 规则 12 forbids panic on the IO path — a future BlockToolResult reaching
+// here before spec-1.21 must not crash the TUI).
+func toMessages(msgs []llm.Message) ([]anthropicsdk.MessageParam, error) {
 	out := make([]anthropicsdk.MessageParam, 0, len(msgs))
 	for _, m := range msgs {
 		blocks := make([]anthropicsdk.ContentBlockParamUnion, 0, len(m.Content))
@@ -121,7 +128,7 @@ func toMessages(msgs []llm.Message) []anthropicsdk.MessageParam {
 				// re-sent as request content in single-turn. spec-1.21
 				// multi-turn adds tool_result round-trip.
 			default:
-				panic("anthropic: unhandled llm.BlockType in toMessages (exhaustive switch contract)")
+				return nil, llm.RequestInvalidf("unhandled content BlockType (multi-turn tool_result is spec-1.21)")
 			}
 		}
 		if m.Role == llm.RoleAssistant {
@@ -130,7 +137,7 @@ func toMessages(msgs []llm.Message) []anthropicsdk.MessageParam {
 			out = append(out, anthropicsdk.NewUserMessage(blocks...))
 		}
 	}
-	return out
+	return out, nil
 }
 
 // toTools maps llm.ToolSchema slice to SDK tool union params (D-4 / R2 MED-1).

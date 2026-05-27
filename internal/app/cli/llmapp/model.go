@@ -27,6 +27,10 @@ const ctrlBufSize = 64
 // leaves MaxHistory ≤ 0 (R2 MED-4).
 const defaultMaxHistory = 50
 
+// defaultMaxTokens is the fallback response cap when Options.MaxTokens ≤ 0
+// (T-10a LOW-1; Anthropic requires max_tokens > 0).
+const defaultMaxTokens = 4096
+
 // Options configures a chat Model (spec-1.20 D-6).
 type Options struct {
 	ModelName    string
@@ -73,7 +77,7 @@ func New(provider llm.Provider, opts Options) *Model {
 	}
 	mt := opts.MaxTokens
 	if mt <= 0 {
-		mt = 4096
+		mt = defaultMaxTokens
 	}
 	return &Model{
 		provider:     provider,
@@ -113,6 +117,18 @@ func (m *Model) Update(msg scheduler.Msg) (program.Model, scheduler.Cmd) {
 		return m.handleControl(v)
 	case streamDoneMsg:
 		next := *m
+		// T-10a HIGH-3: the TokenStream contract requires a Drain AFTER Close
+		// to collect final blocks (Close flushes the last partial into
+		// emitted but does not consume it). consumeStream closes the stream
+		// before closing ctrl, so by now the final blocks are flushed — drain
+		// them once more before discarding the stream, else the last tokens
+		// are dropped. Update/View share the scheduler goroutine, so this
+		// Drain is race-free (same single-owner as the View Drain).
+		if next.stream != nil {
+			if nodes := next.stream.Drain(); len(nodes) > 0 {
+				next.scrollback = appendNodes(m.scrollback, nodes)
+			}
+		}
 		next.stream = nil
 		next.control = nil
 		next.cancel = nil
@@ -174,7 +190,7 @@ func (m *Model) submit() (program.Model, scheduler.Cmd) {
 	}, m.maxHistory)
 	next.scrollback = appendNode(m.scrollback, block.Message{Text: "> " + userText})
 
-	return &next, streamStartCmd(m.provider, req, ts, ctrl, m.stripThink)
+	return &next, streamStartCmd(ctx, m.provider, req, ts, ctrl, m.stripThink)
 }
 
 // buildRequest assembles the model-agnostic Request from history + the new
@@ -197,12 +213,15 @@ func (m *Model) buildRequest(userText string) llm.Request {
 	}
 }
 
-// streamStartCmd starts the provider stream on the worker pool. On an
-// immediate error it classifies via finishFromErr (R2.2 MED — connect-time
-// Ctrl+C → FinishCancelled) and does NOT consume a nil stream (R2 HIGH-2).
-func streamStartCmd(p llm.Provider, req llm.Request, ts *streaming.TokenStream, ctrl chan streamControlMsg, stripThink bool) scheduler.Cmd {
+// streamStartCmd starts the provider stream on the worker pool. ctx is the
+// per-request cancel ctx from submit() (T-10a HIGH-1: passed to p.Stream so
+// a user cancel / Cleanup actually tears down the HTTP stream, not just the
+// TokenStream). On an immediate error it classifies via finishFromErr
+// (R2.2 MED — connect-time Ctrl+C → FinishCancelled) and does NOT consume a
+// nil stream (R2 HIGH-2).
+func streamStartCmd(ctx context.Context, p llm.Provider, req llm.Request, ts *streaming.TokenStream, ctrl chan streamControlMsg, stripThink bool) scheduler.Cmd {
 	return func() scheduler.Msg {
-		s, err := p.Stream(context.Background(), req)
+		s, err := p.Stream(ctx, req)
 		if err != nil {
 			fr, mapped := finishFromErr(err)
 			ctrl <- streamControlMsg{Finish: fr, Err: mapped}
@@ -210,7 +229,7 @@ func streamStartCmd(p llm.Provider, req llm.Request, ts *streaming.TokenStream, 
 			_ = ts.Close()
 			return readControlMsg{}
 		}
-		go consumeStream(s, ts, ctrl, stripThink)
+		go consumeStream(ctx, s, ts, ctrl, stripThink)
 		return readControlMsg{}
 	}
 }
@@ -244,7 +263,17 @@ func (m *Model) appendFinishNode(msg streamControlMsg) []block.RenderNode {
 	switch {
 	case msg.Finish == llm.FinishToolUse:
 		return appendNode(m.scrollback, block.Message{Text: toolUsePlaceholder(msg.ToolUses)})
-	case msg.Finish == llm.FinishError && msg.Err != nil && !errors.Is(msg.Err, context.Canceled):
+	case msg.Finish == llm.FinishCancelled || (msg.Finish == llm.FinishError && errors.Is(msg.Err, context.Canceled)):
+		// T-10a MED: a deliberate user cancel gets its own marker so it is
+		// not silently blank nor mislabeled STREAM_EMPTY (checked before the
+		// !sawContent fallback). msg.Err.Error() is NOT rendered here — the
+		// cancel is expected, not an error to surface.
+		return appendNode(m.scrollback, block.Message{Text: "[已取消]"})
+	case msg.Finish == llm.FinishError && msg.Err != nil:
+		// NB: the SDK's apierror.Error() formats METHOD/URL/STATUS/body only —
+		// it does NOT dump request headers, so the API key (X-Api-Key) never
+		// leaks here. Do not pass SDK errors to httputil.DumpRequest (T-10a
+		// security MED-3).
 		return appendNode(m.scrollback, block.Message{Text: "[错误: " + msg.Err.Error() + "]"})
 	case msg.Finish == llm.FinishRefusal:
 		return appendNode(m.scrollback, block.Message{Text: "[LLM.PROVIDER_REFUSAL: 模型拒绝生成]"})
@@ -353,6 +382,15 @@ func appendNode(sb []block.RenderNode, n block.RenderNode) []block.RenderNode {
 	next := make([]block.RenderNode, 0, len(sb)+1)
 	next = append(next, sb...)
 	next = append(next, n)
+	return next
+}
+
+// appendNodes returns a new slice with nodes appended (immutable; T-10a
+// HIGH-3 final-drain path).
+func appendNodes(sb []block.RenderNode, nodes []block.RenderNode) []block.RenderNode {
+	next := make([]block.RenderNode, 0, len(sb)+len(nodes))
+	next = append(next, sb...)
+	next = append(next, nodes...)
 	return next
 }
 

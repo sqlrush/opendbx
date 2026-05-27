@@ -5,8 +5,10 @@
 package llmapp
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sqlrush/opendbx/internal/app/cli/keybindings"
 	"github.com/sqlrush/opendbx/internal/app/cli/program"
@@ -182,6 +184,76 @@ func TestModel_HistoryBounded(t *testing.T) {
 	}
 }
 
+// TestModel_AssistantTextDrained is the T-10a HIGH-3 regression: the
+// assistant text must reach scrollback even though the final Drain happens
+// only after the stream is Closed. runStream never calls View, so this
+// fails if the streamDoneMsg handler does not Drain before nil-ing stream.
+func TestModel_AssistantTextDrained(t *testing.T) {
+	t.Parallel()
+	m := typeAndModel(t, newFakeModel(fake.Scripted("hello world", llm.FinishStop)), "q")
+	final := runStream(t, m)
+	if !hasNode(final, "hello world") {
+		t.Errorf("assistant text not drained into scrollback (HIGH-3); got %v", nodeTexts(final))
+	}
+}
+
+// captureProvider records the ctx passed to Stream and returns a stream
+// that blocks until that ctx is cancelled — used to assert that submit
+// threads the cancel ctx through to the provider (T-10a HIGH-1).
+type captureProvider struct{ gotCtx chan context.Context }
+
+func (p *captureProvider) Name() string { return "capture" }
+func (p *captureProvider) Stream(ctx context.Context, _ llm.Request) (llm.Stream, error) {
+	p.gotCtx <- ctx
+	return &blockingStream{ctx: ctx}, nil
+}
+
+type blockingStream struct {
+	ctx context.Context
+	err error
+}
+
+func (s *blockingStream) Next() bool {
+	<-s.ctx.Done()
+	s.err = s.ctx.Err()
+	return false
+}
+func (s *blockingStream) Chunk() llm.Chunk { return llm.Chunk{} }
+func (s *blockingStream) Err() error       { return s.err }
+func (s *blockingStream) Close() error     { return nil }
+
+// TestModel_CancelPropagatesToProvider is the T-10a HIGH-1 regression: the
+// ctx passed to provider.Stream must be the SAME cancel ctx wired into the
+// Model, so a user cancel tears down the HTTP stream — not just the
+// TokenStream. Previously streamStartCmd passed context.Background().
+func TestModel_CancelPropagatesToProvider(t *testing.T) {
+	t.Parallel()
+	cp := &captureProvider{gotCtx: make(chan context.Context, 1)}
+	m := typeAndModel(t, newFakeModel(cp), "q")
+	mm, startCmd := m.Update(keyAction(terminal.KeyEnter, 0))
+	if startCmd == nil {
+		t.Fatal("submit returned nil startCmd")
+	}
+	startCmd() // launches consumeStream goroutine; provider captures ctx
+	var gotCtx context.Context
+	select {
+	case gotCtx = <-cp.gotCtx:
+	case <-time.After(2 * time.Second):
+		t.Fatal("provider.Stream was never called")
+	}
+	// Trigger cancel through the Model and run the returned Cmd.
+	_, cancelCmd := mm.Update(program.CancelCmdMsg{})
+	if cancelCmd == nil {
+		t.Fatal("cancel returned nil cmd")
+	}
+	cancelCmd()
+	select {
+	case <-gotCtx.Done(): // success — provider ctx observed the cancel
+	case <-time.After(2 * time.Second):
+		t.Fatal("provider ctx not cancelled (HIGH-1: stream not torn down on cancel)")
+	}
+}
+
 func TestModel_BuildRequest_SystemCacheBreak(t *testing.T) {
 	t.Parallel()
 	m := New(fake.New(), Options{SystemPrompt: "base", MaxTokens: 100})
@@ -196,7 +268,7 @@ func TestModel_BuildRequest_SystemCacheBreak(t *testing.T) {
 
 // --- helpers ---
 
-func (m *Model) withStripThink(v bool) *Model { m.stripThink = v; return m }
+func (m *Model) withStripThink(v bool) *Model { next := *m; next.stripThink = v; return &next }
 
 func nodeTexts(m *Model) []string {
 	out := make([]string, 0, len(m.scrollback))

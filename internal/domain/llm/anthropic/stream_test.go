@@ -6,6 +6,8 @@ package anthropic
 
 import (
 	"errors"
+	"strconv"
+	"strings"
 	"testing"
 
 	anthropicsdk "github.com/anthropics/anthropic-sdk-go"
@@ -42,25 +44,16 @@ func (d *fakeDecoder) Err() error             { return d.err }
 func eventType(s string) string {
 	// crude but sufficient for test fixtures of the form {"type":"X",...}
 	const key = `"type":"`
-	i := indexOf(s, key)
+	i := strings.Index(s, key)
 	if i < 0 {
 		return ""
 	}
 	rest := s[i+len(key):]
-	j := indexOf(rest, `"`)
+	j := strings.Index(rest, `"`)
 	if j < 0 {
 		return ""
 	}
 	return rest[:j]
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
 }
 
 func newTestStream(events []string, decErr error) *stream {
@@ -132,5 +125,63 @@ func TestStreamIterator_DecoderError(t *testing.T) {
 	// decErr is set on the decoder; ssestream surfaces it after events drain.
 	if s.Err() == nil {
 		t.Errorf("expected terminal Err from decoder; got nil")
+	}
+}
+
+// TestStreamIterator_OversizeToolInputBuffer is the T-10a HIGH-2 regression:
+// a single huge input_json_delta must be rejected DURING accumulation
+// (before the buffer grows unbounded), surfacing ErrDecodeFailed and
+// stopping the stream — not only at message_delta decode time.
+func TestStreamIterator_OversizeToolInputBuffer(t *testing.T) {
+	t.Parallel()
+	huge := strings.Repeat("a", maxToolInputBytes+10)
+	s := newTestStream([]string{
+		`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"topsql","input":{}}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"` + huge + `"}}`,
+		`{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{}}`,
+	}, nil)
+	_ = drainStream(t, s)
+	if !errors.Is(s.Err(), llm.ErrDecodeFailed) {
+		t.Errorf("oversize accumulation should set ErrDecodeFailed; got %v", s.Err())
+	}
+}
+
+// TestStreamIterator_TooManyToolBlocks is the T-10a HIGH-2 cap on concurrent
+// tool blocks.
+func TestStreamIterator_TooManyToolBlocks(t *testing.T) {
+	t.Parallel()
+	events := make([]string, 0, maxToolBlocks+2)
+	for i := 0; i <= maxToolBlocks; i++ { // maxToolBlocks+1 starts → over the cap
+		events = append(events,
+			`{"type":"content_block_start","index":`+strconv.Itoa(i)+`,"content_block":{"type":"tool_use","id":"t","name":"n","input":{}}}`)
+	}
+	s := newTestStream(events, nil)
+	_ = drainStream(t, s)
+	if !errors.Is(s.Err(), llm.ErrDecodeFailed) {
+		t.Errorf("exceeding maxToolBlocks should set ErrDecodeFailed; got %v", s.Err())
+	}
+}
+
+// TestStreamIterator_ToolOrderDeterministic is the T-10a MED-3 regression:
+// tool blocks started out of index order must decode in ascending index
+// order (map iteration is random).
+func TestStreamIterator_ToolOrderDeterministic(t *testing.T) {
+	t.Parallel()
+	// Start blocks in reverse index order 2,1,0 with names t2,t1,t0.
+	s := newTestStream([]string{
+		`{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"i2","name":"t2","input":{}}}`,
+		`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"i1","name":"t1","input":{}}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"i0","name":"t0","input":{}}}`,
+		`{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{}}`,
+	}, nil)
+	chunks := drainStream(t, s)
+	last := chunks[len(chunks)-1]
+	if len(last.ToolUses) != 3 {
+		t.Fatalf("want 3 tools; got %+v", last.ToolUses)
+	}
+	for i, want := range []string{"t0", "t1", "t2"} {
+		if last.ToolUses[i].Name != want {
+			t.Errorf("ToolUses[%d].Name = %q; want %q (ascending index order)", i, last.ToolUses[i].Name, want)
+		}
 	}
 }
