@@ -171,7 +171,7 @@ func TestClassifyStreamErr(t *testing.T) {
 // stopping the stream — not only at message_delta decode time.
 func TestStreamIterator_OversizeToolInputBuffer(t *testing.T) {
 	t.Parallel()
-	huge := strings.Repeat("a", maxToolInputBytes+10)
+	huge := strings.Repeat("a", llm.MaxToolInputBytes+10)
 	s := newTestStream([]string{
 		`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"topsql","input":{}}}`,
 		`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"` + huge + `"}}`,
@@ -187,15 +187,15 @@ func TestStreamIterator_OversizeToolInputBuffer(t *testing.T) {
 // tool blocks.
 func TestStreamIterator_TooManyToolBlocks(t *testing.T) {
 	t.Parallel()
-	events := make([]string, 0, maxToolBlocks+2)
-	for i := 0; i <= maxToolBlocks; i++ { // maxToolBlocks+1 starts → over the cap
+	events := make([]string, 0, llm.MaxToolBlocks+2)
+	for i := 0; i <= llm.MaxToolBlocks; i++ { // llm.MaxToolBlocks+1 starts → over the cap
 		events = append(events,
 			`{"type":"content_block_start","index":`+strconv.Itoa(i)+`,"content_block":{"type":"tool_use","id":"t","name":"n","input":{}}}`)
 	}
 	s := newTestStream(events, nil)
 	_ = drainStream(t, s)
 	if !errors.Is(s.Err(), llm.ErrDecodeFailed) {
-		t.Errorf("exceeding maxToolBlocks should set ErrDecodeFailed; got %v", s.Err())
+		t.Errorf("exceeding llm.MaxToolBlocks should set ErrDecodeFailed; got %v", s.Err())
 	}
 }
 

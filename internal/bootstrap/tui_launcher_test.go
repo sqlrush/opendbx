@@ -5,8 +5,11 @@
 package bootstrap
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,6 +72,44 @@ func TestLaunchInteractiveTUI_HappyPath(t *testing.T) {
 
 	if err := LaunchInteractiveTUI(ctx); err != nil {
 		t.Errorf("expected nil from Ctrl+C double-press quit; got %v", err)
+	}
+}
+
+// TestRedirectSlogToFileForTUI_RestoresPrev guards the spec-1.20.1 R-fix
+// follow-up: scheduler emits slog.Warn that, on the stdlib default text
+// handler, lands on os.Stderr (==TUI surface) and shreds the frame. The
+// launcher swap must take effect and the cleanup closure must restore.
+func TestRedirectSlogToFileForTUI_RestoresPrev(t *testing.T) {
+	// NOT t.Parallel: mutates slog default.
+	prev := slog.Default()
+	restore := redirectSlogToFileForTUI()
+	if slog.Default() == prev {
+		t.Fatal("slog default not swapped by redirectSlogToFileForTUI")
+	}
+	restore()
+	if slog.Default() != prev {
+		t.Fatal("slog default not restored after cleanup")
+	}
+}
+
+// TestRedirectSlogToFileForTUI_SilencesStderr verifies the swapped handler
+// does not write to os.Stderr (TUI surface). We can't directly observe the
+// file write here, but we can confirm that emitting a Warn through the
+// active handler does NOT go to a stderr-shaped buffer.
+func TestRedirectSlogToFileForTUI_SilencesStderr(t *testing.T) {
+	// NOT t.Parallel: mutates slog default.
+	var buf bytes.Buffer
+	stderrHandler := slog.New(slog.NewTextHandler(&buf, nil))
+	prev := slog.Default()
+	slog.SetDefault(stderrHandler)
+	defer slog.SetDefault(prev)
+
+	restore := redirectSlogToFileForTUI()
+	slog.Warn("frame budget overshoot test marker")
+	restore()
+
+	if strings.Contains(buf.String(), "frame budget overshoot test marker") {
+		t.Errorf("redirected slog still wrote to the prior stderr-shaped sink: %q", buf.String())
 	}
 }
 

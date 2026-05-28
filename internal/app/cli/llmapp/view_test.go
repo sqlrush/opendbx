@@ -5,6 +5,7 @@
 package llmapp
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/sqlrush/opendbx/internal/app/cli/program"
@@ -31,6 +32,16 @@ func TestModel_View_RendersScrollback(t *testing.T) {
 	txt := gridText(buf)
 	if txt == "" {
 		t.Errorf("View produced empty grid; want rendered scrollback")
+	}
+}
+
+func TestModel_View_PreservesWideRunes(t *testing.T) {
+	t.Parallel()
+	m := typeAndModel(t, newFakeModel(fake.Scripted("中文 PostgreSQL MVCC", llm.FinishStop)), "ask")
+	final := runStream(t, m)
+	txt := gridText(final.View(120, 10))
+	if !strings.Contains(txt, "中文 PostgreSQL MVCC") {
+		t.Fatalf("View text = %q; want CJK + ASCII preserved", txt)
 	}
 }
 

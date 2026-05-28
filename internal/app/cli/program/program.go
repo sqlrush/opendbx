@@ -485,7 +485,11 @@ func paintBufferAt(dst *buffer.Grid, src buffer.Buffer, xOff, yOff int) {
 			if dx < 0 || dx >= dstCols {
 				continue
 			}
-			dst.SetCell(dx, dy, src.Cell(x, y))
+			c := src.Cell(x, y)
+			if buffer.IsContinuation(c) {
+				continue
+			}
+			dst.SetCell(dx, dy, c)
 		}
 	}
 }

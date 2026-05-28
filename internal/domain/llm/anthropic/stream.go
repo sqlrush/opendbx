@@ -6,27 +6,14 @@ package anthropic
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
-	"io"
-	"sort"
+	"slices"
 	"sync"
 
 	anthropicsdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 
 	"github.com/sqlrush/opendbx/internal/domain/llm"
-)
-
-// JSON guard bounds for tool_use input decode (D-4 / R2 MED-1).
-const (
-	maxToolInputBytes = 256 * 1024 // 256 KB per tool input
-	maxToolInputDepth = 32
-	// maxToolBlocks caps concurrent tool_use blocks per turn (T-10a security
-	// HIGH-2): an unbounded toolAcc map lets a hostile/confused model
-	// allocate N × maxToolInputBytes of accumulation buffers. Anthropic's
-	// practical per-turn tool count is well under this.
-	maxToolBlocks = 64
 )
 
 // stream wraps the SDK SSE stream as an llm.Stream iterator. Next loops
@@ -88,7 +75,7 @@ func (s *stream) mapEvent(ev anthropicsdk.MessageStreamEventUnion) (llm.Chunk, b
 		// Record tool_use blocks so input_json_delta can accumulate.
 		cb := ev.ContentBlock
 		if cb.Type == "tool_use" {
-			if len(s.toolAcc) >= maxToolBlocks {
+			if len(s.toolAcc) >= llm.MaxToolBlocks {
 				s.err = llm.ErrDecodeFailed // T-10a HIGH-2: cap concurrent tool blocks
 				return llm.Chunk{}, false
 			}
@@ -106,9 +93,9 @@ func (s *stream) mapEvent(ev anthropicsdk.MessageStreamEventUnion) (llm.Chunk, b
 			if tb := s.toolAcc[ev.Index]; tb != nil {
 				// T-10a HIGH-2: bound accumulation BEFORE the write so a
 				// single huge input_json_delta cannot allocate unboundedly
-				// (the 256 KB guard in decodeToolInput fires too late — only
+				// (the 256 KB guard in llm.DecodeToolInput fires too late — only
 				// at message_delta, after the buffer already grew).
-				if tb.buf.Len()+len(ev.Delta.PartialJSON) > maxToolInputBytes {
+				if tb.buf.Len()+len(ev.Delta.PartialJSON) > llm.MaxToolInputBytes {
 					s.err = llm.ErrDecodeFailed
 					return llm.Chunk{}, false
 				}
@@ -151,66 +138,17 @@ func (s *stream) decodeTools() ([]llm.ToolUse, error) {
 	for k := range s.toolAcc {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	slices.Sort(keys)
 	out := make([]llm.ToolUse, 0, len(keys))
 	for _, k := range keys {
 		tb := s.toolAcc[k]
-		input, err := decodeToolInput(tb.buf.Bytes())
+		input, err := llm.DecodeToolInput(tb.buf.Bytes())
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, llm.ToolUse{ID: tb.id, Name: tb.name, Input: input})
 	}
 	return out, nil
-}
-
-// decodeToolInput decodes tool input JSON with object/size/depth guard.
-func decodeToolInput(raw []byte) (map[string]any, error) {
-	if len(raw) == 0 {
-		return map[string]any{}, nil // empty input → empty object
-	}
-	if len(raw) > maxToolInputBytes {
-		return nil, llm.ErrDecodeFailed
-	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	var v any
-	if err := dec.Decode(&v); err != nil {
-		return nil, llm.ErrDecodeFailed
-	}
-	// T-10a MED: reject trailing data after the first JSON value — a single
-	// Decode accepts "{}<garbage>". The input must be exactly one object.
-	if _, err := dec.Token(); err != io.EOF {
-		return nil, llm.ErrDecodeFailed
-	}
-	obj, ok := v.(map[string]any)
-	if !ok {
-		return nil, llm.ErrDecodeFailed // tool input must be a JSON object
-	}
-	if jsonDepth(v, 1) > maxToolInputDepth {
-		return nil, llm.ErrDecodeFailed
-	}
-	return obj, nil
-}
-
-// jsonDepth returns the maximum nesting depth of a decoded JSON value.
-func jsonDepth(v any, cur int) int {
-	max := cur
-	switch t := v.(type) {
-	case map[string]any:
-		for _, child := range t {
-			if d := jsonDepth(child, cur+1); d > max {
-				max = d
-			}
-		}
-	case []any:
-		for _, child := range t {
-			if d := jsonDepth(child, cur+1); d > max {
-				max = d
-			}
-		}
-	}
-	return max
 }
 
 // Chunk returns the current chunk.

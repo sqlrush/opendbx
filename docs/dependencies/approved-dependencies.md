@@ -70,3 +70,16 @@ card's `spec_ref` field.
 - **go_directive**: SDK requires `go 1.22+`; opendbx is at `go 1.24` so compatible.
 - **pkgsite**: https://pkg.go.dev/github.com/anthropics/anthropic-sdk-go@v1.45.0
 - **spec_ref**: spec-1.20-llm-client.md § 5 (dep decision) + R-fix option-A (transitive lock)
+
+## `github.com/openai/openai-go` v1.12.0
+
+- **license**: Apache-2.0 (module LICENSE; codex T-2 verified)
+- **maintenance**: active (OpenAI first-party, stainless-generated like anthropic-go; v1.x GA line)
+- **alternatives considered**:
+  - hand-rolled OpenAI `/v1/chat/completions` HTTP/SSE — 痛点 1.1 (hand-rolled SSE) root-cause; rejected spec-1.20.1 Q2 (re-weighed after the Azure closure surfaced in T-2; user path-3/3 kept the official SDK)
+  - `sashabaranov/go-openai` — community SDK; diverges from the stainless `ssestream` shape the anthropic adapter already uses
+- **risk**: **transitive-closure (accepted module-graph-only)** — openai-go v1.12.0 directly requires Azure SDK (azcore/azidentity/internal) + tidwall; the full graph adds 8 modules (Azure×3 + AzureAD/MSAL + golang-jwt/v5 + google/uuid + kylelemons/godebug + pkg/browser), **DISJOINT from anthropic-go (AWS/GCP)** — no shared stainless runtime as first assumed. **`go mod why -m` confirms Azure/MSAL/pkg-browser are NOT needed for the non-Azure OpenAI-compat path** (deepseek/qwen/glm via api_key+base_url) — module-graph / go.sum surface only, not compiled into that code path. All pinned in `allowlist.json:transitive_lock`.
+- **isolation**: IMP-7 (llm-sdk-isolation) — only `internal/domain/llm/openai` may import the SDK (pre-wired in spec-1.20; verified spec-1.20.1); app layer SDK-free via `llm.Provider` (规则 16).
+- **go_directive**: requires `go 1.22+`; opendbx at `go 1.24` compatible.
+- **pkgsite**: https://pkg.go.dev/github.com/openai/openai-go@v1.12.0
+- **spec_ref**: spec-1.20.1-openai-compat.md § 5 + § 1.4 (B-64/65/66 codex VERIFIED) + allowlist transitive_lock

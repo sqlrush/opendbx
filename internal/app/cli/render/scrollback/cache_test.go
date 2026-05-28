@@ -214,6 +214,40 @@ func TestCache_InvalidateAll_ReleasesEntries(t *testing.T) {
 	}
 }
 
+// TestCopyCells_PreservesWideRunes guards against the spec-1.7 T-9 HIGH-2
+// continuation-blit pattern in cache.copyCells (spec-1.20.1 R-fix follow-up).
+// putFromBuffer copies the block's render output through copyCells into the
+// pool-owned grid; if it leaked the continuation cell back to dst.SetCell,
+// the wide-main at (x-1) would be erased.
+func TestCopyCells_PreservesWideRunes(t *testing.T) {
+	t.Parallel()
+	src, err := buffer.NewGrid(6, 1)
+	if err != nil {
+		t.Fatalf("NewGrid: %v", err)
+	}
+	src.SetCell(0, 0, buffer.Cell{Ch: '你'})
+	src.SetCell(2, 0, buffer.Cell{Ch: '好'})
+
+	p := newCountingPool()
+	c := newLRURing(2, p)
+	stored := c.putFromBuffer(0, 6, 1, src)
+	if stored == nil {
+		t.Fatal("putFromBuffer returned nil")
+	}
+	if got := stored.Cell(0, 0).Ch; got != '你' {
+		t.Fatalf("stored(0,0) = %q; want 你", got)
+	}
+	if !buffer.IsContinuation(stored.Cell(1, 0)) {
+		t.Fatalf("stored(1,0) should be wide continuation; got %+v", stored.Cell(1, 0))
+	}
+	if got := stored.Cell(2, 0).Ch; got != '好' {
+		t.Fatalf("stored(2,0) = %q; want 好", got)
+	}
+	if !buffer.IsContinuation(stored.Cell(3, 0)) {
+		t.Fatalf("stored(3,0) should be wide continuation; got %+v", stored.Cell(3, 0))
+	}
+}
+
 // TestCache_PutFromBuffer_ReplaceSameKey verifies putFromBuffer with an
 // already-cached blockIdx releases the old grid and stores the new one
 // (Render after content change scenario; though MVP rarely hits this).

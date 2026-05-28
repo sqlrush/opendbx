@@ -61,17 +61,46 @@ func TestNew_Fake(t *testing.T) {
 	}
 }
 
-func TestNew_OpenAICompat_NotImplemented(t *testing.T) {
+func TestNew_OpenAICompat(t *testing.T) {
 	t.Parallel()
-	for _, prov := range []string{"openai-compat", "ollama"} {
-		cfg := config.Config{
-			LLM:    config.LLMConfig{ActiveModel: "m"},
-			Models: []config.ModelConfig{{Name: "m", Provider: prov}},
-		}
-		_, err := New(cfg)
-		if !errors.Is(err, llm.ErrNotImplemented) {
-			t.Errorf("provider %q → %v; want ErrNotImplemented", prov, err)
-		}
+	// spec-1.20.1: openai-compat with key + base_url constructs (was NOT_IMPLEMENTED).
+	cfg := config.Config{
+		LLM:    config.LLMConfig{ActiveModel: "m"},
+		Models: []config.ModelConfig{{Name: "m", Provider: "openai-compat", APIKey: "sk", BaseURL: "https://api.deepseek.com/v1"}},
+	}
+	p, err := New(cfg)
+	if err != nil || p == nil {
+		t.Fatalf("openai-compat → %v; want provider", err)
+	}
+	if p.Name() != "openai-compat" {
+		t.Errorf("Name = %q; want openai-compat", p.Name())
+	}
+}
+
+func TestNew_OpenAICompat_NoKey(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{
+		LLM:    config.LLMConfig{ActiveModel: "m"},
+		Models: []config.ModelConfig{{Name: "m", Provider: "openai-compat", BaseURL: "https://x/v1"}},
+	}
+	if _, err := New(cfg); !errors.Is(err, llm.ErrAuthFailed) {
+		t.Errorf("openai-compat no key → %v; want ErrAuthFailed", err)
+	}
+}
+
+func TestNew_Ollama_Keyless(t *testing.T) {
+	t.Parallel()
+	// ollama is keyless (local OpenAI-compat endpoint); Name() distinguishes it.
+	cfg := config.Config{
+		LLM:    config.LLMConfig{ActiveModel: "qwen"},
+		Models: []config.ModelConfig{{Name: "qwen", Provider: "ollama", BaseURL: "http://localhost:11434/v1"}},
+	}
+	p, err := New(cfg)
+	if err != nil || p == nil {
+		t.Fatalf("ollama keyless → %v; want provider", err)
+	}
+	if p.Name() != "ollama" {
+		t.Errorf("Name = %q; want ollama", p.Name())
 	}
 }
 
