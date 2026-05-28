@@ -7,6 +7,11 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"runtime"
 	"sync"
 
 	"github.com/gdamore/tcell/v2"
@@ -74,6 +79,17 @@ func setNewScreenFn(fn func() (tcell.Screen, error)) {
 // a provider that surfaces the LLM.* errcode on the first message, so the
 // user sees an explicit, actionable error.
 func LaunchInteractiveTUI(ctx context.Context) error {
+	// Redirect stdlib slog away from os.Stderr — in TUI mode stderr IS the
+	// terminal, so any slog.Warn/Error (render/scheduler emits these on
+	// frame budget overshoot, channel saturation, BufferPool failures, etc.)
+	// would write raw text into our cell grid and shred the frame
+	// (spec-1.20.1 R-fix follow-up: user reported "frame budget overshoot"
+	// log line burning the screen). 真正接入 platform/logger 是 spec-1.20.2
+	// 的事; 这里先把 default sink 切到 ~/.opendbx/debug/tui-slog.log (无法
+	// 写则 io.Discard), 避免静默丢失同时不撕屏.
+	restoreSlog := redirectSlogToFileForTUI()
+	defer restoreSlog()
+
 	screen, err := getNewScreenFn()()
 	if err != nil {
 		// errcode-lint:exempt -- spec-0.12 D-3: err is already wrapped as TERMINAL.INIT_FAILED by tui.NewScreenNoInit; pass-through.
@@ -101,6 +117,61 @@ func LaunchInteractiveTUI(ctx context.Context) error {
 		return nil
 	}
 	return runErr
+}
+
+// redirectSlogToFileForTUI swaps the stdlib slog default handler so that
+// scheduler/worker/etc. slog.Warn/Error events go to a file rather than
+// os.Stderr (== the TUI's drawing surface). Returns a cleanup closure
+// that restores the previous default and closes the file.
+//
+// Path: $HOME/.opendbx/debug/tui-slog.log (append, 0600). If the file
+// cannot be opened, falls back to io.Discard — the WARNs are dropped but
+// the frame stays intact (deferred-observability tradeoff documented in
+// spec-1.20.2 backlog: real platform/logger ↔ slog bridge).
+func redirectSlogToFileForTUI() func() {
+	prev := slog.Default()
+	restore := func() { slog.SetDefault(prev) }
+
+	var sink io.Writer = io.Discard
+	var closer io.Closer
+	if path, ok := tuiSlogPath(); ok {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err == nil {
+			if f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+				sink = f
+				closer = f
+			}
+		}
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(sink, &slog.HandlerOptions{
+		Level: slog.LevelInfo, // INFO+; tightens default Verbose floor.
+	})))
+	return func() {
+		restore()
+		if closer != nil {
+			_ = closer.Close()
+		}
+	}
+}
+
+// tuiSlogPath returns the canonical TUI slog file location, matching the
+// platform/logger debug-dir convention ($HOME/.opendbx/debug on unix,
+// %APPDATA%/opendbx/debug on Windows). Empty bool=false on resolution
+// failure → caller uses io.Discard.
+func tuiSlogPath() (string, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", false
+	}
+	switch runtime.GOOS {
+	case "windows":
+		appdata := os.Getenv("APPDATA")
+		if appdata == "" {
+			appdata = filepath.Join(home, "AppData", "Roaming")
+		}
+		return filepath.Join(appdata, "opendbx", "debug", "tui-slog.log"), true
+	default:
+		return filepath.Join(home, ".opendbx", "debug", "tui-slog.log"), true
+	}
 }
 
 // newChatModel loads config, builds the LLM provider via the factory, and
