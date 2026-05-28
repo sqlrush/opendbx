@@ -425,6 +425,69 @@ func TestScrollBy_ZeroIsNoop(t *testing.T) {
 	}
 }
 
+// wideRuneBlock writes one row containing two wide CJK runes at columns 0
+// and 2 (each occupies 2 cells via Grid.SetCell auto-continuation).
+type wideRuneBlock struct{}
+
+func (wideRuneBlock) Render(ctx block.Context) (buffer.Buffer, error) {
+	cols := ctx.Cols
+	if cols < 4 {
+		cols = 4
+	}
+	g, err := buffer.NewGrid(cols, 1)
+	if err != nil {
+		return nil, err
+	}
+	g.SetCell(0, 0, buffer.Cell{Ch: '你'})
+	g.SetCell(2, 0, buffer.Cell{Ch: '好'})
+	return g, nil
+}
+
+// TestRender_PreservesWideRunes guards against the spec-1.7 T-9 HIGH-2
+// continuation-blit pattern re-introducing itself in virtualScrollback
+// composeInto (spec-1.20.1 R-fix follow-up). Without the continuation skip,
+// next.SetCell on the continuation cell would clear the wide-main at (x-1).
+func TestRender_PreservesWideRunes(t *testing.T) {
+	t.Parallel()
+	sb := NewVirtualScrollback()
+	sb.Push(wideRuneBlock{})
+
+	next := mustGrid(t, 10, 3)
+	sb.Render(next, layout.Box{Width: 10, Height: 3})
+
+	// Sticky-follows-bottom places the single block at the last row. Scan
+	// all rows defensively to insulate from sticky-anchor changes.
+	var row = -1
+	for y := 0; y < 3; y++ {
+		if next.Cell(0, y).Ch == '你' {
+			row = y
+			break
+		}
+	}
+	if row < 0 {
+		t.Fatalf("wide-main 你 not found in any row; grid: %+v", dumpRow(next, 0))
+	}
+	if !buffer.IsContinuation(next.Cell(1, row)) {
+		t.Fatalf("next(1,%d) should be wide continuation; got %+v", row, next.Cell(1, row))
+	}
+	if got := next.Cell(2, row).Ch; got != '好' {
+		t.Fatalf("next(2,%d) = %q; want 好 (wide main)", row, got)
+	}
+	if !buffer.IsContinuation(next.Cell(3, row)) {
+		t.Fatalf("next(3,%d) should be wide continuation; got %+v", row, next.Cell(3, row))
+	}
+}
+
+// dumpRow returns a debug-friendly summary of the first row's runes.
+func dumpRow(g *buffer.Grid, y int) string {
+	cols, _ := g.Size()
+	out := ""
+	for x := 0; x < cols; x++ {
+		out += string(g.Cell(x, y).Ch) + "|"
+	}
+	return out
+}
+
 // TestRange_BoundsClampingAndEmpty — bounds-safety on Range.
 func TestRange_BoundsClampingAndEmpty(t *testing.T) {
 	sb := NewVirtualScrollback()

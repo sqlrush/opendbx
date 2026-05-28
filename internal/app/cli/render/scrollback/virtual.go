@@ -328,7 +328,16 @@ func (s *VirtualScrollback) Render(next *buffer.Grid, viewport layout.Box) {
 				continue
 			}
 			for bx := 0; bx < cols; bx++ {
-				next.SetCell(bx, destY, bufGrid.Cell(bx, by))
+				c := bufGrid.Cell(bx, by)
+				// Skip continuation cells; next.SetCell on a wide-main
+				// auto-writes its continuation. Calling SetCell with the
+				// continuation Ch would trigger clearWideOverlap and erase
+				// the wide-main at bx-1 (spec-1.7 T-9 HIGH-2 pattern; also
+				// fixed in llmapp + program paintBufferAt under spec-1.20.1).
+				if buffer.IsContinuation(c) {
+					continue
+				}
+				next.SetCell(bx, destY, c)
 			}
 		}
 	}
