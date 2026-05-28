@@ -132,10 +132,13 @@ func redirectSlogToFileForTUI() func() {
 	prev := slog.Default()
 	restore := func() { slog.SetDefault(prev) }
 
-	var sink io.Writer = io.Discard
+	sink := io.Writer(io.Discard)
 	var closer io.Closer
 	if path, ok := tuiSlogPath(); ok {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err == nil {
+			// path is composed from os.UserHomeDir + a fixed suffix
+			// ("/.opendbx/debug/tui-slog.log") — not user input.
+			//nolint:gosec // spec-1.20.1 R-fix: G304 path is internal-derived (UserHomeDir + fixed suffix), not attacker-influenced.
 			if f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
 				sink = f
 				closer = f
