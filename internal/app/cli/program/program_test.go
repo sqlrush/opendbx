@@ -211,6 +211,13 @@ func (m *testModel) Cleanup() scheduler.Cmd {
 	}
 }
 
+type wideViewModel struct {
+	testModel
+	view buffer.Buffer
+}
+
+func (m *wideViewModel) View(_, _ int) buffer.Buffer { return m.view }
+
 // --- T1-1..T1-5 Program lifecycle ---
 
 func TestProgram_New_NilDriver_Panics(t *testing.T) {
@@ -696,6 +703,31 @@ func TestProgram_StatusLine_Default(t *testing.T) {
 	got := rowToString(grid, 4) // StatusLine row
 	if !strings.Contains(got, "opendbx") {
 		t.Errorf("status row = %q; want contains 'opendbx'", got)
+	}
+}
+
+func TestProgram_RenderFn_PreservesWideRunesFromModelView(t *testing.T) {
+	src, _ := buffer.NewGrid(20, 2)
+	src.SetCell(0, 0, buffer.Cell{Ch: '你'})
+	src.SetCell(2, 0, buffer.Cell{Ch: '好'})
+
+	drv := newFakeDriver(20, 5)
+	m := &wideViewModel{view: src}
+	p := New(drv, m)
+	grid, _ := buffer.NewGrid(20, 5)
+	p.renderFn(grid)
+
+	if got := grid.Cell(0, 0).Ch; got != '你' {
+		t.Fatalf("cell(0,0) = %q; want 你", got)
+	}
+	if !buffer.IsContinuation(grid.Cell(1, 0)) {
+		t.Fatalf("cell(1,0) should be wide continuation; got %+v", grid.Cell(1, 0))
+	}
+	if got := grid.Cell(2, 0).Ch; got != '好' {
+		t.Fatalf("cell(2,0) = %q; want 好", got)
+	}
+	if !buffer.IsContinuation(grid.Cell(3, 0)) {
+		t.Fatalf("cell(3,0) should be wide continuation; got %+v", grid.Cell(3, 0))
 	}
 }
 
