@@ -40,14 +40,57 @@ type BlockType int
 const (
 	BlockText BlockType = iota
 	BlockToolUse
-	// BlockToolResult — spec-1.21 (multi-turn tool execution). Reserved.
+	BlockToolResult // spec-1.21 (multi-turn tool execution; user turn carries tool_result).
 )
 
 // ContentBlock is a tagged union of message content (model-agnostic).
+//
+// nil-guard contract (spec-1.21 D-1):
+//   - Type == BlockText        → ToolUse == nil && ToolResult == nil
+//   - Type == BlockToolUse     → ToolUse != nil && ToolResult == nil
+//   - Type == BlockToolResult  → ToolResult != nil && ToolUse == nil
+//
+// The contract is enforced by the constructor helpers in this package
+// (NewToolUseBlock / NewToolResultBlock); callers MUST NOT hand-build a
+// mis-tagged ContentBlock. Adapter switches on Type are exhaustive with a
+// default → LLM.REQUEST_INVALID so any future BlockType also gets a clean
+// reject rather than silent drop.
 type ContentBlock struct {
-	Type    BlockType
-	Text    string   // Type == BlockText
-	ToolUse *ToolUse // Type == BlockToolUse (decoded from assistant; D-4)
+	Type       BlockType
+	Text       string      // Type == BlockText
+	ToolUse    *ToolUse    // Type == BlockToolUse (decoded from assistant; D-4)
+	ToolResult *ToolResult // Type == BlockToolResult (Loop reply; spec-1.21 D-1)
+}
+
+// ToolResult is one tool execution's wire payload (provider-agnostic; NOT
+// the render-layer block.ToolResult, which is the visual component in
+// spec-1.9b with Content any + ToolName + 4-state). The two are bridged
+// by the llmapp adapter (spec-1.21 D-6) and MUST NOT import each other.
+//
+// ToolUseID MUST match a preceding assistant ToolUse.ID; the diagnose
+// Loop owns the pairing — executors do NOT manufacture IDs.
+//
+// Content is the textual tool output (MVP); structured content (image /
+// JSON) lands in spec-2.1. IsError=true signals a recoverable failure the
+// model should self-correct on (e.g. argument validation, tool timeout);
+// fatal / infrastructure failures travel out-of-band via the executor's
+// Go error and terminate the loop instead.
+type ToolResult struct {
+	ToolUseID string
+	Content   string
+	IsError   bool
+}
+
+// NewToolUseBlock constructs a ContentBlock asserting the spec-1.21 D-1
+// nil-guard for BlockToolUse. Use this rather than hand-tagging.
+func NewToolUseBlock(tu *ToolUse) ContentBlock {
+	return ContentBlock{Type: BlockToolUse, ToolUse: tu}
+}
+
+// NewToolResultBlock constructs a ContentBlock asserting the spec-1.21
+// D-1 nil-guard for BlockToolResult. Use this rather than hand-tagging.
+func NewToolResultBlock(tr *ToolResult) ContentBlock {
+	return ContentBlock{Type: BlockToolResult, ToolResult: tr}
 }
 
 // Message is one conversation turn.

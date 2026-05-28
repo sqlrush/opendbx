@@ -114,3 +114,82 @@ func TestRequestInvalidf_CarriesCode(t *testing.T) {
 		t.Errorf("RequestInvalidf code = %v; want LLM.REQUEST_INVALID", err)
 	}
 }
+
+// TestBlockType_AppendOnlyOrdinals guards spec-1.20 R2 H-6 + spec-1.21
+// D-1: BlockType ordinals MUST stay stable across appends so adapters
+// switching on the integer value don't silently mis-map old serialized
+// data when a new tag is added.
+func TestBlockType_AppendOnlyOrdinals(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		got  BlockType
+		want int
+		name string
+	}{
+		{BlockText, 0, "BlockText"},
+		{BlockToolUse, 1, "BlockToolUse"},
+		{BlockToolResult, 2, "BlockToolResult"},
+	}
+	for _, c := range cases {
+		if int(c.got) != c.want {
+			t.Errorf("%s ordinal = %d; want %d (append-only contract)", c.name, c.got, c.want)
+		}
+	}
+}
+
+// TestNewToolUseBlock_NilGuardContract asserts the spec-1.21 D-1 nil-guard
+// contract for the BlockToolUse constructor: ToolUse non-nil and
+// ToolResult nil. Direct hand-tagging is discouraged; the helper is the
+// single point that enforces the contract.
+func TestNewToolUseBlock_NilGuardContract(t *testing.T) {
+	t.Parallel()
+	tu := &ToolUse{ID: "call_1", Name: "clock"}
+	blk := NewToolUseBlock(tu)
+	if blk.Type != BlockToolUse {
+		t.Errorf("Type = %v; want BlockToolUse", blk.Type)
+	}
+	if blk.ToolUse != tu {
+		t.Errorf("ToolUse pointer not preserved")
+	}
+	if blk.ToolResult != nil {
+		t.Errorf("ToolResult should be nil for BlockToolUse; got %+v", blk.ToolResult)
+	}
+	if blk.Text != "" {
+		t.Errorf("Text should be empty for BlockToolUse; got %q", blk.Text)
+	}
+}
+
+// TestNewToolResultBlock_NilGuardContract is the BlockToolResult mirror
+// (ToolResult non-nil, ToolUse nil).
+func TestNewToolResultBlock_NilGuardContract(t *testing.T) {
+	t.Parallel()
+	tr := &ToolResult{ToolUseID: "call_1", Content: "ok"}
+	blk := NewToolResultBlock(tr)
+	if blk.Type != BlockToolResult {
+		t.Errorf("Type = %v; want BlockToolResult", blk.Type)
+	}
+	if blk.ToolResult != tr {
+		t.Errorf("ToolResult pointer not preserved")
+	}
+	if blk.ToolUse != nil {
+		t.Errorf("ToolUse should be nil for BlockToolResult; got %+v", blk.ToolUse)
+	}
+	if blk.Text != "" {
+		t.Errorf("Text should be empty for BlockToolResult; got %q", blk.Text)
+	}
+}
+
+// TestToolResult_IsErrorFlag is a structural sanity check that ToolResult
+// carries the IsError flag so the LLM can distinguish self-correctable
+// failures from regular outputs (spec-1.21 D-1).
+func TestToolResult_IsErrorFlag(t *testing.T) {
+	t.Parallel()
+	ok := ToolResult{ToolUseID: "x", Content: "1700000000"}
+	bad := ToolResult{ToolUseID: "y", Content: "invalid arg", IsError: true}
+	if ok.IsError {
+		t.Errorf("default IsError should be false")
+	}
+	if !bad.IsError {
+		t.Errorf("explicit IsError true should round-trip")
+	}
+}
