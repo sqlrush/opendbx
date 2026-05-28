@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"sort"
+	"slices"
 	"sync"
 
 	openaisdk "github.com/openai/openai-go"
@@ -119,6 +119,13 @@ func (s *stream) mapChunk(c openaisdk.ChatCompletionChunk) (llm.Chunk, bool) {
 	if rc := reasoningContent(delta); rc != "" {
 		return llm.Chunk{Token: rc, Thinking: true}, true
 	}
+	if delta.Refusal != "" {
+		// Model explicitly refused to produce output (o1/o3 + some vendors).
+		// Distinct from content_filter (platform filter) → FinishRefusal +
+		// ErrProviderRefusal so the app renders an explicit code
+		// (codex R-fix MED: delta.refusal was silently ignored).
+		return llm.Chunk{FinishReason: llm.FinishRefusal, Err: llm.ErrProviderRefusal}, true
+	}
 	if delta.Content != "" {
 		return llm.Chunk{Token: delta.Content}, true
 	}
@@ -171,12 +178,24 @@ func (s *stream) mapFinish(fr string) (llm.Chunk, bool) {
 		return llm.Chunk{FinishReason: llm.FinishStop}, true
 	case "length":
 		return llm.Chunk{FinishReason: llm.FinishLength}, true
-	case "tool_calls", "function_call":
+	case "tool_calls":
 		tools, err := s.decodeTools()
 		if err != nil {
 			return llm.Chunk{FinishReason: llm.FinishError, Err: err}, true
 		}
+		if len(tools) == 0 {
+			// finish=tool_calls but no accumulated tool deltas — protocol
+			// anomaly; emit explicit error rather than silent FinishToolUse
+			// with nil ToolUses (codex R-fix HIGH-3 / claude MED-1).
+			return llm.Chunk{FinishReason: llm.FinishError, Err: llm.ErrDecodeFailed}, true
+		}
 		return llm.Chunk{FinishReason: llm.FinishToolUse, ToolUses: tools}, true
+	case "function_call":
+		// Legacy OpenAI Functions API (pre-tool_calls): arguments arrive on
+		// delta.FunctionCall — opendbx 1.20.1 does not accumulate this path.
+		// Reject explicitly with FinishError to surface mis-config rather
+		// than silently emit an empty ToolUse list (codex R-fix HIGH-3).
+		return llm.Chunk{FinishReason: llm.FinishError, Err: llm.ErrDecodeFailed}, true
 	case "content_filter":
 		return llm.Chunk{FinishReason: llm.FinishError, Err: llm.ErrContentFiltered}, true
 	default:
@@ -194,7 +213,7 @@ func (s *stream) decodeTools() ([]llm.ToolUse, error) {
 	for k := range s.toolAcc {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	slices.Sort(keys)
 	out := make([]llm.ToolUse, 0, len(keys))
 	for _, k := range keys {
 		tb := s.toolAcc[k]
@@ -207,16 +226,22 @@ func (s *stream) decodeTools() ([]llm.ToolUse, error) {
 	return out, nil
 }
 
+// maxReasoningChunkBytes bounds the raw reasoning_content JSON before
+// json.Unmarshal (codex R-fix LOW / claude security MED). The SSE scanner
+// ceiling (~32MB per line) would otherwise let a malicious/buggy vendor
+// chunk allocate huge strings per delta.
+const maxReasoningChunkBytes = 64 * 1024
+
 // reasoningContent reads vendor reasoning_content from the delta's raw extra
 // fields (B-64: openai-go has no typed ReasoningContent field; deepseek-reasoner
-// / o1 风格). Empty if absent / null / non-string.
+// / o1 style). Empty if absent / null / oversized / non-string.
 func reasoningContent(delta openaisdk.ChatCompletionChunkChoiceDelta) string {
 	f, ok := delta.JSON.ExtraFields["reasoning_content"]
 	if !ok {
 		return ""
 	}
 	raw := f.Raw()
-	if raw == "" || raw == "null" {
+	if raw == "" || raw == "null" || len(raw) > maxReasoningChunkBytes {
 		return ""
 	}
 	var rc string

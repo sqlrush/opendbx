@@ -7,7 +7,7 @@ package anthropic
 import (
 	"bytes"
 	"errors"
-	"sort"
+	"slices"
 	"sync"
 
 	anthropicsdk "github.com/anthropics/anthropic-sdk-go"
@@ -93,7 +93,7 @@ func (s *stream) mapEvent(ev anthropicsdk.MessageStreamEventUnion) (llm.Chunk, b
 			if tb := s.toolAcc[ev.Index]; tb != nil {
 				// T-10a HIGH-2: bound accumulation BEFORE the write so a
 				// single huge input_json_delta cannot allocate unboundedly
-				// (the 256 KB guard in decodeToolInput fires too late — only
+				// (the 256 KB guard in llm.DecodeToolInput fires too late — only
 				// at message_delta, after the buffer already grew).
 				if tb.buf.Len()+len(ev.Delta.PartialJSON) > llm.MaxToolInputBytes {
 					s.err = llm.ErrDecodeFailed
@@ -138,7 +138,7 @@ func (s *stream) decodeTools() ([]llm.ToolUse, error) {
 	for k := range s.toolAcc {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	slices.Sort(keys)
 	out := make([]llm.ToolUse, 0, len(keys))
 	for _, k := range keys {
 		tb := s.toolAcc[k]

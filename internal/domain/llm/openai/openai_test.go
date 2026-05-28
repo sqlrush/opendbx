@@ -77,8 +77,11 @@ func TestMapFinish(t *testing.T) {
 	}{
 		{"stop", llm.FinishStop, nil},
 		{"length", llm.FinishLength, nil},
-		{"tool_calls", llm.FinishToolUse, nil},
-		{"function_call", llm.FinishToolUse, nil}, // legacy Functions API
+		// tool_calls with no accumulated tool deltas → Error (R-fix codex HIGH-3:
+		// protocol anomaly, do not emit silent FinishToolUse{ToolUses:nil}).
+		{"tool_calls", llm.FinishError, llm.ErrDecodeFailed},
+		// function_call (legacy Functions API) is rejected explicitly (R-fix).
+		{"function_call", llm.FinishError, llm.ErrDecodeFailed},
 		{"content_filter", llm.FinishError, llm.ErrContentFiltered},
 		{"weird_future", llm.FinishError, llm.ErrDecodeFailed}, // unknown → Error (原则 3)
 	}
@@ -219,6 +222,83 @@ func TestClassifyOpenAIErr(t *testing.T) {
 	}
 }
 
+// TestNew_MissingBaseURL: cloud config without BaseURL must NOT fall back to
+// the SDK default api.openai.com — would silently mis-route deepseek/qwen
+// (R-fix claude HIGH-1 / codex MED-1).
+func TestNew_MissingBaseURL(t *testing.T) {
+	t.Parallel()
+	_, err := New(Config{APIKey: "sk", Model: "m"})
+	if !errors.Is(err, llm.ErrRequestInvalid) {
+		t.Errorf("missing BaseURL → %v; want ErrRequestInvalid", err)
+	}
+}
+
+// TestNew_KeylessNonLoopback: AllowKeyless on a non-loopback BaseURL must be
+// rejected — otherwise a cloud endpoint could bypass the API-key requirement
+// by setting AllowKeyless=true (R-fix codex MED-2).
+func TestNew_KeylessNonLoopback(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		"https://api.deepseek.com/v1",
+		"http://10.0.0.5:11434/v1",
+		"http://example.com/v1",
+	}
+	for _, u := range cases {
+		_, err := New(Config{Model: "m", BaseURL: u, AllowKeyless: true})
+		if !errors.Is(err, llm.ErrRequestInvalid) {
+			t.Errorf("keyless+%s → %v; want ErrRequestInvalid", u, err)
+		}
+	}
+}
+
+// TestNew_KeylessLoopbackVariants: each accepted loopback host MUST construct.
+func TestNew_KeylessLoopbackVariants(t *testing.T) {
+	t.Parallel()
+	for _, u := range []string{
+		"http://localhost:11434/v1",
+		"http://127.0.0.1:11434/v1",
+		"http://[::1]:11434/v1",
+	} {
+		if _, err := New(Config{Model: "m", BaseURL: u, AllowKeyless: true}); err != nil {
+			t.Errorf("keyless loopback %s → %v; want ok", u, err)
+		}
+	}
+}
+
+// TestMapChunk_Refusal: delta.refusal must surface as FinishRefusal +
+// ErrProviderRefusal (distinct from content_filter platform-side block).
+func TestMapChunk_Refusal(t *testing.T) {
+	t.Parallel()
+	c := openaisdk.ChatCompletionChunk{Choices: []openaisdk.ChatCompletionChunkChoice{
+		{Delta: openaisdk.ChatCompletionChunkChoiceDelta{Refusal: "I cannot help with that."}},
+	}}
+	chunk, emit := newStream(nil).mapChunk(c)
+	if !emit || chunk.FinishReason != llm.FinishRefusal || !errors.Is(chunk.Err, llm.ErrProviderRefusal) {
+		t.Errorf("refusal → %+v emit=%v; want FinishRefusal+ErrProviderRefusal", chunk, emit)
+	}
+}
+
+// TestMapChunk_ReasoningOversize: raw reasoning_content payload exceeding the
+// 64 KB bound must be dropped to "" (prevents per-delta huge allocation).
+func TestMapChunk_ReasoningOversize(t *testing.T) {
+	t.Parallel()
+	// Build a JSON-encoded string of len > 64 KB.
+	huge := make([]byte, maxReasoningChunkBytes+10)
+	for i := range huge {
+		huge[i] = 'x'
+	}
+	payload, _ := json.Marshal(string(huge))
+	chunkJSON := []byte(`{"choices":[{"delta":{"reasoning_content":` + string(payload) + `}}]}`)
+	var c openaisdk.ChatCompletionChunk
+	if err := json.Unmarshal(chunkJSON, &c); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	_, emit := newStream(nil).mapChunk(c)
+	if emit {
+		t.Errorf("oversize reasoning_content should be dropped (no emit)")
+	}
+}
+
 func TestToParams_Tools(t *testing.T) {
 	t.Parallel()
 	p, _ := New(Config{APIKey: "sk", Model: "m", BaseURL: "http://x/v1"})
@@ -230,5 +310,25 @@ func TestToParams_Tools(t *testing.T) {
 	params := p.toParams(req)
 	if len(params.Tools) != 1 || params.Tools[0].Function.Name != "topsql" {
 		t.Errorf("Tools = %+v; want 1 topsql", params.Tools)
+	}
+}
+
+// TestToParams_MaxTokensLegacy guards the R-fix codex HIGH-1 decision:
+// emit `max_tokens` (legacy) rather than `max_completion_tokens` so
+// DeepSeek / Qwen / Ollama and other openai-compat endpoints (which often
+// implement only the legacy parameter) work without manual override.
+func TestToParams_MaxTokensLegacy(t *testing.T) {
+	t.Parallel()
+	p, _ := New(Config{APIKey: "sk", Model: "m", BaseURL: "http://x/v1"})
+	req := llm.Request{
+		Messages:  []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{{Type: llm.BlockText, Text: "hi"}}}},
+		MaxTokens: 256,
+	}
+	params := p.toParams(req)
+	if params.MaxTokens.Or(-1) != 256 {
+		t.Errorf("MaxTokens = %v; want 256 (legacy max_tokens, R-fix HIGH-1)", params.MaxTokens)
+	}
+	if params.MaxCompletionTokens.Or(-1) != -1 {
+		t.Errorf("MaxCompletionTokens MUST stay unset for openai-compat breadth (R-fix HIGH-1); got %v", params.MaxCompletionTokens)
 	}
 }

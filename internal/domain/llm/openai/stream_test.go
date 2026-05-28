@@ -5,6 +5,7 @@
 package openai
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -99,5 +100,88 @@ func TestStreamIterator_DecoderError(t *testing.T) {
 	_ = drain(t, s)
 	if s.Err() == nil {
 		t.Errorf("expected terminal Err from decoder; got nil")
+	}
+}
+
+// TestStreamIterator_ContentFilter (R-fix claude MED): platform-side content
+// filter at the stream level → terminal FinishError + ErrContentFiltered, not
+// FinishRefusal (the latter is reserved for explicit model refusal).
+func TestStreamIterator_ContentFilter(t *testing.T) {
+	t.Parallel()
+	s := newTestStream([]string{
+		`{"choices":[{"delta":{"content":"Sure, here is"}}]}`,
+		`{"choices":[{"delta":{},"finish_reason":"content_filter"}]}`,
+	}, nil)
+	chunks := drain(t, s)
+	last := chunks[len(chunks)-1]
+	if last.FinishReason != llm.FinishError || !errors.Is(last.Err, llm.ErrContentFiltered) {
+		t.Errorf("content_filter final = %+v; want FinishError+ErrContentFiltered", last)
+	}
+}
+
+// TestStreamIterator_Refusal (R-fix codex MED): delta.refusal mid-stream →
+// FinishRefusal + ErrProviderRefusal (distinct from content_filter).
+func TestStreamIterator_Refusal(t *testing.T) {
+	t.Parallel()
+	s := newTestStream([]string{
+		`{"choices":[{"delta":{"refusal":"I cannot help with that."}}]}`,
+	}, nil)
+	chunks := drain(t, s)
+	if len(chunks) == 0 {
+		t.Fatal("expected at least one chunk for refusal")
+	}
+	got := chunks[0]
+	if got.FinishReason != llm.FinishRefusal || !errors.Is(got.Err, llm.ErrProviderRefusal) {
+		t.Errorf("refusal chunk = %+v; want FinishRefusal+ErrProviderRefusal", got)
+	}
+}
+
+// TestStreamIterator_FunctionCallRejected (R-fix codex HIGH-3): legacy
+// finish_reason=function_call is rejected with explicit FinishError, not
+// silently treated as an empty tool_calls list.
+func TestStreamIterator_FunctionCallRejected(t *testing.T) {
+	t.Parallel()
+	s := newTestStream([]string{
+		`{"choices":[{"delta":{},"finish_reason":"function_call"}]}`,
+	}, nil)
+	chunks := drain(t, s)
+	last := chunks[len(chunks)-1]
+	if last.FinishReason != llm.FinishError || !errors.Is(last.Err, llm.ErrDecodeFailed) {
+		t.Errorf("function_call final = %+v; want FinishError+ErrDecodeFailed", last)
+	}
+}
+
+// TestStreamIterator_ToolCallsFinishEmpty (R-fix codex HIGH-3): finish=tool_calls
+// without any accumulated tool deltas → explicit FinishError, not silent empty.
+func TestStreamIterator_ToolCallsFinishEmpty(t *testing.T) {
+	t.Parallel()
+	s := newTestStream([]string{
+		`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+	}, nil)
+	chunks := drain(t, s)
+	last := chunks[len(chunks)-1]
+	if last.FinishReason != llm.FinishError || !errors.Is(last.Err, llm.ErrDecodeFailed) {
+		t.Errorf("tool_calls empty final = %+v; want FinishError+ErrDecodeFailed", last)
+	}
+}
+
+// TestStreamIterator_OversizeToolBuffer (R-fix claude HIGH-2 stream-level
+// regression): a single huge tool_call delta exceeding MaxToolInputBytes
+// surfaces a terminal Err and halts iteration BEFORE the buffer grows
+// unbounded (mirror anthropic stream-level test).
+func TestStreamIterator_OversizeToolBuffer(t *testing.T) {
+	t.Parallel()
+	// Build arguments of >MaxToolInputBytes within a single JSON event so the
+	// pre-write bound trips. Using a JSON string literal big enough to bust.
+	big := make([]byte, llm.MaxToolInputBytes+10)
+	for i := range big {
+		big[i] = 'a'
+	}
+	args, _ := json.Marshal(string(big))
+	evt := `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"x","function":{"name":"n","arguments":` + string(args) + `}}]}}]}`
+	s := newTestStream([]string{evt}, nil)
+	_ = drain(t, s)
+	if !errors.Is(s.Err(), llm.ErrDecodeFailed) {
+		t.Errorf("oversize tool buffer Err = %v; want ErrDecodeFailed", s.Err())
 	}
 }
