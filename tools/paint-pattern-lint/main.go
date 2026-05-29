@@ -32,7 +32,6 @@
 //   - any violation line with a // paint-pattern-lint:exempt --
 //     spec-X.Y D-N: <reason> directive on the same line or up to two
 //     lines above (mirrors errcode-lint's hasExemptComment proximity).
-
 package main
 
 import (
