@@ -5,8 +5,6 @@
 package llmapp
 
 import (
-	"context"
-	"errors"
 	"testing"
 
 	"github.com/sqlrush/opendbx/internal/app/cli/render/streaming"
@@ -36,47 +34,15 @@ func TestMapToRender_AllNine(t *testing.T) {
 	}
 }
 
-func TestFinishFromErr(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name    string
-		err     error
-		wantFR  llm.FinishReason
-		wantErr error
-	}{
-		{"nil", nil, llm.FinishStop, nil},
-		{"canceled", context.Canceled, llm.FinishCancelled, nil},
-		{"deadline", context.DeadlineExceeded, llm.FinishError, llm.ErrTimeout},
-		{"generic", errors.New("boom"), llm.FinishError, errors.New("boom")},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			fr, err := finishFromErr(tc.err)
-			if fr != tc.wantFR {
-				t.Errorf("finishFromErr(%v) fr = %v; want %v", tc.err, fr, tc.wantFR)
-			}
-			if tc.name == "deadline" && !errors.Is(err, llm.ErrTimeout) {
-				t.Errorf("deadline err = %v; want ErrTimeout", err)
-			}
-			if (tc.wantErr == nil) != (err == nil) && tc.name != "generic" {
-				t.Errorf("finishFromErr(%v) err = %v; want nil=%v", tc.err, err, tc.wantErr == nil)
-			}
-		})
-	}
-}
+// finishFromErr was retired in spec-1.21 T-8: the diagnose.Loop owns
+// terminal classification end-to-end (classifyTerminal / classifyEmitErr
+// / classifyToolErr) and surfaces the already-classified
+// FinishReason+Err on EventFinish. The llmapp adapter never re-classifies
+// — it just renders. So no TestFinishFromErr / BenchmarkFinishFromErr.
 
 // BenchmarkMapToRender targets spec-1.20 § 4.4 (pure map; well under 500 ns/op).
 func BenchmarkMapToRender(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = mapToRender(llm.FinishLength)
-	}
-}
-
-// BenchmarkFinishFromErr targets the terminal-error classifier.
-func BenchmarkFinishFromErr(b *testing.B) {
-	err := context.Canceled
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = finishFromErr(err)
 	}
 }

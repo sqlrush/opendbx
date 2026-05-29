@@ -8,6 +8,7 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"strings"
 
@@ -109,7 +110,11 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (llm.Stream, err
 	if err := llm.ValidateRequest(req); err != nil {
 		return nil, err
 	}
-	sdkStream := p.client.Chat.Completions.NewStreaming(ctx, p.toParams(req))
+	params, err := p.toParams(req)
+	if err != nil {
+		return nil, err
+	}
+	sdkStream := p.client.Chat.Completions.NewStreaming(ctx, params)
 	return newStream(sdkStream), nil
 }
 
@@ -118,20 +123,24 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (llm.Stream, err
 // OpenAI-compat endpoint support: DeepSeek/Qwen/Ollama and other community
 // endpoints implement the legacy parameter; max_completion_tokens is OpenAI's
 // newer name and not universally supported (codex R-fix HIGH-1).
-func (p *Provider) toParams(req llm.Request) openaisdk.ChatCompletionNewParams {
+//
+// Multi-turn round-trip (spec-1.21 D-2): assistant BlockToolUse → SDK
+// ToolCalls on the AssistantMessage; user BlockToolResult → distinct
+// role=tool ChatCompletionMessageParamUnion entries (OpenAI protocol
+// surfaces tool_result as its own message role, NOT as a content block
+// inside the user turn — this is a fundamental shape difference from
+// Anthropic that the adapter normalises here).
+func (p *Provider) toParams(req llm.Request) (openaisdk.ChatCompletionNewParams, error) {
 	msgs := make([]openaisdk.ChatCompletionMessageParamUnion, 0, len(req.Messages)+1)
 	if sys := joinSystem(req.System); sys != "" {
 		msgs = append(msgs, openaisdk.SystemMessage(sys))
 	}
 	for _, m := range req.Messages {
-		// 1.20.1 single-turn: text-only content. Multi-block (BlockToolUse /
-		// BlockToolResult) round-trip is spec-1.21.
-		text := firstText(m.Content)
-		if m.Role == llm.RoleAssistant {
-			msgs = append(msgs, openaisdk.AssistantMessage(text))
-		} else {
-			msgs = append(msgs, openaisdk.UserMessage(text))
+		expanded, err := messageToSDK(m)
+		if err != nil {
+			return openaisdk.ChatCompletionNewParams{}, err
 		}
+		msgs = append(msgs, expanded...)
 	}
 	params := openaisdk.ChatCompletionNewParams{
 		Model:     openaisdk.ChatModel(p.model),
@@ -161,7 +170,127 @@ func (p *Provider) toParams(req llm.Request) openaisdk.ChatCompletionNewParams {
 	// ThinkingBudget is dropped on the request side for openai (no OpenAI
 	// equivalent; spec-1.20.1 Q3 keeps the provider-agnostic ValidateRequest
 	// budget check, adapter ignores the value).
-	return params
+	return params, nil
+}
+
+// messageToSDK expands one llm.Message into 1..N SDK message-param entries.
+//
+// Shape rules (spec-1.21 D-2):
+//
+//   - assistant turn — exactly one AssistantMessage carrying concatenated
+//     BlockText content and BlockToolUse entries collected as
+//     ChatCompletionMessageToolCallParam{ID, Function:{Name, Arguments}}.
+//     Arguments must be a JSON string (SDK contract); we marshal
+//     ToolUse.Input map[string]any here (nil map → "{}" — OpenAI's required
+//     no-arg shape, distinct from Anthropic's nil/absent input).
+//   - user turn — each BlockToolResult becomes ONE distinct role=tool
+//     ChatCompletionMessageParamUnion (OpenAI does not nest tool_result
+//     inside a user content block). Any BlockText payload in the same
+//     user turn is appended afterwards as a separate UserMessage so the
+//     adapter never silently merges user prose into a tool message.
+//   - both turns reject BlockToolResult on assistant role and BlockToolUse
+//     on user role with LLM.REQUEST_INVALID (defensive: well-formed Loop
+//     output never mixes these, but a misuse must not silently round-trip).
+//   - nil-guard per spec-1.21 D-1: missing ToolUse / ToolResult pointer
+//     surfaces as LLM.REQUEST_INVALID rather than a nil-deref later.
+func messageToSDK(m llm.Message) ([]openaisdk.ChatCompletionMessageParamUnion, error) {
+	switch m.Role {
+	case llm.RoleAssistant:
+		return assistantToSDK(m.Content)
+	default:
+		return userToSDK(m.Content)
+	}
+}
+
+func assistantToSDK(blocks []llm.ContentBlock) ([]openaisdk.ChatCompletionMessageParamUnion, error) {
+	var text strings.Builder
+	var toolCalls []openaisdk.ChatCompletionMessageToolCallParam
+	for _, c := range blocks {
+		switch c.Type {
+		case llm.BlockText:
+			text.WriteString(c.Text)
+		case llm.BlockToolUse:
+			if c.ToolUse == nil {
+				return nil, llm.RequestInvalidf("BlockToolUse with nil ToolUse (spec-1.21 D-1 nil-guard)")
+			}
+			args, err := marshalToolInput(c.ToolUse.Input)
+			if err != nil {
+				return nil, llm.RequestInvalidf("ToolUse.Input not JSON-encodable: " + err.Error())
+			}
+			toolCalls = append(toolCalls, openaisdk.ChatCompletionMessageToolCallParam{
+				ID: c.ToolUse.ID,
+				Function: openaisdk.ChatCompletionMessageToolCallFunctionParam{
+					Name:      c.ToolUse.Name,
+					Arguments: args,
+				},
+			})
+		case llm.BlockToolResult:
+			return nil, llm.RequestInvalidf("BlockToolResult forbidden on assistant turn (tool_result is a user/tool-role payload)")
+		default:
+			return nil, llm.RequestInvalidf("unhandled content BlockType on assistant turn (append-only contract)")
+		}
+	}
+	assistant := openaisdk.ChatCompletionAssistantMessageParam{}
+	if text.Len() > 0 {
+		assistant.Content.OfString = openaisdk.String(text.String())
+	}
+	if len(toolCalls) > 0 {
+		assistant.ToolCalls = toolCalls
+	}
+	return []openaisdk.ChatCompletionMessageParamUnion{{OfAssistant: &assistant}}, nil
+}
+
+func userToSDK(blocks []llm.ContentBlock) ([]openaisdk.ChatCompletionMessageParamUnion, error) {
+	out := make([]openaisdk.ChatCompletionMessageParamUnion, 0, len(blocks))
+	var text strings.Builder
+	for _, c := range blocks {
+		switch c.Type {
+		case llm.BlockText:
+			text.WriteString(c.Text)
+		case llm.BlockToolResult:
+			if c.ToolResult == nil {
+				return nil, llm.RequestInvalidf("BlockToolResult with nil ToolResult (spec-1.21 D-1 nil-guard)")
+			}
+			content := c.ToolResult.Content
+			if c.ToolResult.IsError {
+				// OpenAI has no is_error field on tool messages; prefix the
+				// content so the model still sees the self-correctable
+				// failure signal (spec-1.21 D-1 IsError contract preserved
+				// across providers, not silently dropped).
+				content = "[tool error] " + content
+			}
+			out = append(out, openaisdk.ToolMessage(content, c.ToolResult.ToolUseID))
+		case llm.BlockToolUse:
+			return nil, llm.RequestInvalidf("BlockToolUse forbidden on user turn (tool_use is an assistant-role payload)")
+		default:
+			return nil, llm.RequestInvalidf("unhandled content BlockType on user turn (append-only contract)")
+		}
+	}
+	if text.Len() > 0 {
+		out = append(out, openaisdk.UserMessage(text.String()))
+	}
+	if len(out) == 0 {
+		// Empty user turn — still emit one UserMessage with empty content
+		// so the conversation alternates and SDK does not reject an empty
+		// messages slot. ValidateRequest already rejects an empty Messages
+		// slice upstream.
+		out = append(out, openaisdk.UserMessage(""))
+	}
+	return out, nil
+}
+
+// marshalToolInput renders ToolUse.Input as the JSON argument string
+// expected by ChatCompletionMessageToolCallFunctionParam.Arguments.
+// A nil map round-trips as "{}" (OpenAI's required empty-args shape).
+func marshalToolInput(input map[string]any) (string, error) {
+	if input == nil {
+		return "{}", nil
+	}
+	b, err := json.Marshal(input)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // joinSystem concatenates non-empty SystemBlock texts with "\n\n"
@@ -177,13 +306,8 @@ func joinSystem(blocks []llm.SystemBlock) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// firstText returns the first BlockText text. Multi-block / BlockToolUse /
-// BlockToolResult round-trip mapping is spec-1.21 (two adapters together).
-func firstText(blocks []llm.ContentBlock) string {
-	for _, c := range blocks {
-		if c.Type == llm.BlockText {
-			return c.Text
-		}
-	}
-	return ""
-}
+// (spec-1.20.1's `firstText` single-turn helper was retired in spec-1.21:
+// messageToSDK now collects ALL BlockText blocks of a turn into a single
+// concatenated content payload, alongside ToolCalls/ToolMessage expansion.
+// Single-turn behaviour is preserved because a 1-block llm.Message round-
+// trips the same way through assistantToSDK / userToSDK.)

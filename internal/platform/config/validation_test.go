@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidate_DefaultsPass(t *testing.T) {
@@ -109,5 +110,50 @@ func TestValidate_RequiredOnConnectionAlias(t *testing.T) {
 	err := Validate(cfg)
 	if err == nil {
 		t.Fatal("expected error on missing Alias")
+	}
+}
+
+// TestValidate_Diagnose_MaxTurnsBounds — the per-field MaxTurns rule
+// (min=1, max=100). Spec-1.21 D-6 caps the practical upper bound to
+// keep runaway loops costing the user explicit configuration intent.
+func TestValidate_Diagnose_MaxTurnsBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		val     int
+		wantErr bool
+	}{
+		{"zero rejected", 0, true},
+		{"one accepted", 1, false},
+		{"hundred accepted", 100, false},
+		{"hundredOne rejected", 101, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Diagnose.MaxTurns = tc.val
+			err := Validate(cfg)
+			if (err == nil) == tc.wantErr {
+				t.Errorf("Validate(MaxTurns=%d) err=%v; wantErr=%v", tc.val, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestValidate_Diagnose_CrossFieldTimeouts — spec-1.21 D-6 invariant:
+// ToolTimeout MUST be ≤ TotalTimeout (a per-tool deadline exceeding the
+// loop budget is non-sensical because the loop would terminate before
+// the tool could complete).
+func TestValidate_Diagnose_CrossFieldTimeouts(t *testing.T) {
+	cfg := Default()
+	cfg.Diagnose.ToolTimeout = 11 * time.Minute // > TotalTimeout=10min
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected cross-field error when ToolTimeout > TotalTimeout")
+	}
+	// And a config with ToolTimeout = TotalTimeout exactly is accepted
+	// (≤ is the spec-1.21 D-6 contract, not strict <).
+	cfg2 := Default()
+	cfg2.Diagnose.ToolTimeout = cfg2.Diagnose.TotalTimeout
+	if err := Validate(cfg2); err != nil {
+		t.Errorf("ToolTimeout == TotalTimeout should be accepted; got %v", err)
 	}
 }

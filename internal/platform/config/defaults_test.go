@@ -61,3 +61,19 @@ func TestDefault_ConnectionsAndModels_AreNil(t *testing.T) {
 		t.Error("Default Models should be nil (user must add)")
 	}
 }
+
+// TestDefault_DiagnoseValues pins the spec-1.21 D-6 defaults (16 turns /
+// 30s per tool / 10min total) so a future change is a deliberate edit
+// rather than a silent drift.
+func TestDefault_DiagnoseValues(t *testing.T) {
+	d := Default()
+	if d.Diagnose.MaxTurns != 16 {
+		t.Errorf("Diagnose.MaxTurns = %d, want 16", d.Diagnose.MaxTurns)
+	}
+	if d.Diagnose.ToolTimeout != 30*time.Second {
+		t.Errorf("Diagnose.ToolTimeout = %v, want 30s", d.Diagnose.ToolTimeout)
+	}
+	if d.Diagnose.TotalTimeout != 10*time.Minute {
+		t.Errorf("Diagnose.TotalTimeout = %v, want 10min", d.Diagnose.TotalTimeout)
+	}
+}

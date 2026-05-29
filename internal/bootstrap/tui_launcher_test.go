@@ -113,6 +113,68 @@ func TestRedirectSlogToFileForTUI_SilencesStderr(t *testing.T) {
 	}
 }
 
+// TestDefaultDiagnoseRegistry_HasClockAndEcho guards the spec-1.21 T-9
+// boundary: bootstrap MUST inject a Registry containing the minimal
+// read-only tools so real interact sessions can execute clock/echo
+// round-trips. A future spec adding production skills should NOT
+// silently drop these; updates are additive only.
+func TestDefaultDiagnoseRegistry_HasClockAndEcho(t *testing.T) {
+	t.Parallel()
+	reg := defaultDiagnoseRegistry()
+	if reg == nil {
+		t.Fatal("defaultDiagnoseRegistry returned nil")
+	}
+	names := reg.Names()
+	want := map[string]bool{"clock": true, "echo": true}
+	for _, n := range names {
+		delete(want, n)
+	}
+	if len(want) > 0 {
+		t.Errorf("registry missing tools: %v (got %v)", want, names)
+	}
+}
+
+// TestNewChatModel_PropagatesDiagnoseConfig is the user T-10a Path 3/3
+// HIGH-1 absorb: spec-1.21 D-6 mandates that DiagnoseConfig values
+// (MaxTurns / ToolTimeout / TotalTimeout) AND the per-turn
+// LLMConfig.RequestTimeout reach the diagnose.Loop via llmapp.Options.
+// We can't introspect the Loop's internal timers from here, so the
+// test asserts the bootstrap path resolves the config knobs without
+// panicking under non-default values + non-default cross-field-valid
+// combos. The unit tests in internal/app/diagnose cover Loop's actual
+// timeout behavior; this test guards against the wiring breaking.
+func TestNewChatModel_PropagatesDiagnoseConfig(t *testing.T) {
+	// NOT t.Parallel: env Setenv must not race other tests.
+	t.Setenv("OPENDBX_DIAGNOSE_MAX_TURNS", "8")
+	t.Setenv("OPENDBX_DIAGNOSE_TOOL_TIMEOUT", "45s")
+	t.Setenv("OPENDBX_DIAGNOSE_TOTAL_TIMEOUT", "5m")
+	t.Setenv("OPENDBX_LLM_REQUEST_TIMEOUT", "90s")
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("newChatModel panicked under env-overridden Diagnose+RequestTimeout: %v", r)
+		}
+	}()
+	if m := newChatModel(); m == nil {
+		t.Error("newChatModel returned nil under env-overridden Diagnose config")
+	}
+}
+
+// TestNewChatModel_BuildsWithoutPanic exercises the production wiring
+// path end-to-end at the bootstrap level so a future regression that
+// breaks the Registry → Options → diagnose.NewLoop chain surfaces here
+// (rather than at first user keystroke).
+func TestNewChatModel_BuildsWithoutPanic(t *testing.T) {
+	t.Parallel()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("newChatModel panicked: %v", r)
+		}
+	}()
+	if m := newChatModel(); m == nil {
+		t.Error("newChatModel returned nil")
+	}
+}
+
 // TestThinkingModeFromConfig covers the T-10a HIGH-2 config→domain mapping.
 func TestThinkingModeFromConfig(t *testing.T) {
 	t.Parallel()

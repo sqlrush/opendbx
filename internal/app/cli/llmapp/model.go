@@ -7,6 +7,7 @@ package llmapp
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/sqlrush/opendbx/internal/app/cli/input"
 	"github.com/sqlrush/opendbx/internal/app/cli/keybindings"
@@ -16,11 +17,13 @@ import (
 	"github.com/sqlrush/opendbx/internal/app/cli/render/scheduler"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/streaming"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/style"
+	"github.com/sqlrush/opendbx/internal/app/diagnose"
 	"github.com/sqlrush/opendbx/internal/domain/llm"
 )
 
-// ctrlBufSize bounds the control channel (R2.2). Generous so consumeStream
-// rarely blocks; the reader-Cmd drains one per Update tick.
+// ctrlBufSize bounds the control channel (R2.2). Generous so the
+// loopStartCmd emit goroutine rarely blocks; the reader-Cmd drains one
+// per Update tick.
 const ctrlBufSize = 64
 
 // defaultMaxHistory is the fallback message-history cap when Options
@@ -31,7 +34,7 @@ const defaultMaxHistory = 50
 // (T-10a LOW-1; Anthropic requires max_tokens > 0).
 const defaultMaxTokens = 4096
 
-// Options configures a chat Model (spec-1.20 D-6).
+// Options configures a chat Model (spec-1.20 D-6 + spec-1.21 D-6).
 type Options struct {
 	ModelName    string
 	SystemPrompt string // single base SystemBlock (multi-block → spec-2.10/2.11)
@@ -44,11 +47,24 @@ type Options struct {
 	// validated (≥1024, < MaxTokens) by llm.ValidateRequest when enabled.
 	ThinkingMode   llm.ThinkingMode
 	ThinkingBudget int
+
+	// Diagnose-loop knobs (spec-1.21 D-6). Registry=nil → single-turn
+	// chat mode (FinishToolUse from provider surfaces as DIAGNOSE.
+	// TOOL_UNKNOWN); supplying a Registry enables multi-turn function
+	// calling. The four timeouts default via diagnose.NewLoop when ≤0.
+	Registry     *diagnose.Registry
+	MaxTurns     int
+	ToolTimeout  time.Duration
+	TotalTimeout time.Duration
+	ReqTimeout   time.Duration
 }
 
-// Model is the spec-1.20 production chat Model (replaces demoapp).
+// Model is the spec-1.20 production chat Model (replaces demoapp); under
+// spec-1.21 D-6 every submit() runs through diagnose.Loop so multi-turn
+// tool round-trips are first-class.
 type Model struct {
 	provider       llm.Provider
+	loop           *diagnose.Loop // spec-1.21 D-6 — constructed once in New
 	modelName      string
 	systemPrompt   string
 	maxTokens      int
@@ -62,10 +78,16 @@ type Model struct {
 
 	history    []llm.Message          // bounded FIFO (R2 MED-4)
 	stream     *streaming.TokenStream // in-flight render stream (nil = idle)
-	control    chan streamControlMsg  // consumeStream → Update (R2.2)
+	control    chan streamControlMsg  // Loop emit → Update (spec-1.21 D-6; legacy R2.2 shape preserved)
 	cancel     context.CancelFunc     // cancels in-flight stream (Cmd/Cleanup)
 	streaming  bool
 	sawContent bool // any visible content this turn (R2 H-5 / R2.2 HIGH-2)
+
+	// toolUseNames joins ToolResult.ToolUseID → ToolUse.Name within a
+	// single submit (spec-1.21 D-6 / spec-1.9b R3 HIGH-3: rendering a
+	// ToolResult requires the peer ToolUse.Name; empty → skip render
+	// per CC null-return). Reset on every submit.
+	toolUseNames map[string]string
 
 	scrollback []block.RenderNode
 }
@@ -77,7 +99,9 @@ var (
 	_ program.Cleanup         = (*Model)(nil)
 )
 
-// New constructs a chat Model bound to a provider.
+// New constructs a chat Model bound to a provider. The diagnose.Loop is
+// built once and reused across submits (spec-1.21 D-6). A nil provider
+// panics (programmer error — production wiring always supplies one).
 func New(provider llm.Provider, opts Options) *Model {
 	mh := opts.MaxHistory
 	if mh <= 0 {
@@ -87,8 +111,22 @@ func New(provider llm.Provider, opts Options) *Model {
 	if mt <= 0 {
 		mt = defaultMaxTokens
 	}
+	loop, err := diagnose.NewLoop(diagnose.Options{
+		Provider:     provider,
+		Registry:     opts.Registry,
+		MaxTurns:     opts.MaxTurns,
+		ToolTimeout:  opts.ToolTimeout,
+		TotalTimeout: opts.TotalTimeout,
+		ReqTimeout:   opts.ReqTimeout,
+	})
+	if err != nil {
+		// diagnose.NewLoop only fails on nil Provider — programmer error
+		// at wiring time; tests would catch this immediately.
+		panic("llmapp.New: " + err.Error())
+	}
 	return &Model{
 		provider:       provider,
+		loop:           loop,
 		modelName:      opts.ModelName,
 		systemPrompt:   opts.SystemPrompt,
 		maxTokens:      mt,
@@ -129,9 +167,10 @@ func (m *Model) Update(msg scheduler.Msg) (program.Model, scheduler.Cmd) {
 		next := *m
 		// T-10a HIGH-3: the TokenStream contract requires a Drain AFTER Close
 		// to collect final blocks (Close flushes the last partial into
-		// emitted but does not consume it). consumeStream closes the stream
-		// before closing ctrl, so by now the final blocks are flushed — drain
-		// them once more before discarding the stream, else the last tokens
+		// emitted but does not consume it). loopStartCmd closes the
+		// TokenStream before closing ctrl, so by now the final blocks are
+		// flushed — drain them once more before discarding the stream,
+		// else the last tokens
 		// are dropped. Update/View share the scheduler goroutine, so this
 		// Drain is race-free (same single-owner as the View Drain).
 		if next.stream != nil {
@@ -176,8 +215,9 @@ func (m *Model) handleAction(msg program.KeyActionMsg) (program.Model, scheduler
 }
 
 // submit builds the Request, allocates the stream plumbing (PURE — only
-// allocation: WithCancel / make(chan) / NewTokenStream), and returns the
-// streamStartCmd. The user message is appended to scrollback + history.
+// allocation: WithCancel / make(chan) / NewTokenStream), and returns
+// loopStartCmd (spec-1.21 D-6; replaced 1.20's streamStartCmd in T-8).
+// The user message is appended to scrollback + history.
 func (m *Model) submit() (program.Model, scheduler.Cmd) {
 	userText := m.buffer
 	req := m.buildRequest(userText)
@@ -199,8 +239,9 @@ func (m *Model) submit() (program.Model, scheduler.Cmd) {
 		Content: []llm.ContentBlock{{Type: llm.BlockText, Text: userText}},
 	}, m.maxHistory)
 	next.scrollback = appendNode(m.scrollback, block.Message{Text: "> " + userText})
+	next.toolUseNames = map[string]string{} // reset per submit (spec-1.21 D-6)
 
-	return &next, streamStartCmd(ctx, m.provider, req, ts, ctrl, m.stripThink)
+	return &next, loopStartCmd(ctx, m.loop, req, ts, ctrl, m.stripThink)
 }
 
 // buildRequest assembles the model-agnostic Request from history + the new
@@ -225,38 +266,58 @@ func (m *Model) buildRequest(userText string) llm.Request {
 	}
 }
 
-// streamStartCmd starts the provider stream on the worker pool. ctx is the
-// per-request cancel ctx from submit() (T-10a HIGH-1: passed to p.Stream so
-// a user cancel / Cleanup actually tears down the HTTP stream, not just the
-// TokenStream). On an immediate error it classifies via finishFromErr
-// (R2.2 MED — connect-time Ctrl+C → FinishCancelled) and does NOT consume a
-// nil stream (R2 HIGH-2).
-func streamStartCmd(ctx context.Context, p llm.Provider, req llm.Request, ts *streaming.TokenStream, ctrl chan streamControlMsg, stripThink bool) scheduler.Cmd {
-	return func() scheduler.Msg {
-		s, err := p.Stream(ctx, req)
-		if err != nil {
-			fr, mapped := finishFromErr(err)
-			ctrl <- streamControlMsg{Finish: fr, Err: mapped}
-			close(ctrl)
-			_ = ts.Close()
-			return readControlMsg{}
-		}
-		go consumeStream(ctx, s, ts, ctrl, stripThink)
-		return readControlMsg{}
-	}
-}
-
-// handleControl applies one streamControlMsg (PURE). sawContent is
-// accumulated from VisibleContent (R2.2 HIGH-2 — not from the TokenStream).
+// handleControl applies one streamControlMsg (PURE; spec-1.20 R2 CRIT-1
+// + spec-1.21 D-6 extension). Dispatch order:
+//   - ToolUse != nil   → append block.ToolUse (StateRunning) + record
+//     name in next.toolUseNames for the matching ToolResult.
+//   - ToolResult != nil → append block.ToolResult (joined name lookup;
+//     empty name → skip render per CC null-return / spec-1.9b R3 HIGH-3).
+//   - Finish terminal  → appendFinishNode (TermCode-aware DIAGNOSE.*).
+//   - otherwise        → text variant; accumulate sawContent only.
+//
+// Every branch re-arms the reader so the next ctrl msg (or done signal)
+// is pulled — including the terminal finish, which depends on the close
+// signal to trigger streamDoneMsg state cleanup.
 func (m *Model) handleControl(msg streamControlMsg) (program.Model, scheduler.Cmd) {
 	next := *m
-	next.sawContent = m.sawContent || msg.VisibleContent
-	if msg.Finish.Terminal() {
+	switch {
+	case msg.ToolUse != nil:
+		// Mutate the per-submit map in place — next is already a shallow
+		// copy and toolUseNames is owned by this in-flight submit.
+		if next.toolUseNames == nil {
+			next.toolUseNames = map[string]string{}
+		}
+		next.toolUseNames[msg.ToolUse.ID] = msg.ToolUse.Name
+		tu := block.NewToolUse(msg.ToolUse.ID, msg.ToolUse.Name, msg.ToolUse.Input)
+		tu.State = block.StateRunning // caller owns transition per spec-1.9 toolcall.go:62-64
+		next.scrollback = appendNode(m.scrollback, tu)
+	case msg.ToolResult != nil:
+		name := next.toolUseNames[msg.ToolResult.ToolUseID]
+		if name == "" {
+			// Peer ToolUse name unknown → CC null-return contract: skip
+			// render entirely rather than emit a degenerate ToolResult
+			// (spec-1.9b R3 HIGH-3).
+			break
+		}
+		// codex T-10a P2-1 absorb: transition the matching block.ToolUse
+		// from StateRunning to StateResolved/StateError so the UI does
+		// not show the tool as "Running" forever once its result has
+		// arrived. Spec-1.9 toolcall.go:62-64 contract: caller owns the
+		// transition. spec-1.21 D-6 specifies this exact hand-off:
+		// "EventToolResult → 转 Resolved/Error".
+		targetState := block.StateResolved
+		if msg.ToolResult.IsError {
+			targetState = block.StateError
+		}
+		sb := transitionToolUseState(m.scrollback, msg.ToolResult.ToolUseID, targetState)
+		tr := block.NewToolResult(msg.ToolResult.ToolUseID, name, msg.ToolResult.Content, msg.ToolResult.IsError)
+		next.scrollback = appendNode(sb, tr)
+	case msg.Finish.Terminal():
+		next.sawContent = m.sawContent || msg.VisibleContent
 		next.scrollback = next.appendFinishNode(msg)
-		// Do not re-arm; wait for streamDoneMsg (ctrl close) to clear state.
-		return &next, m.armReader()
+	default:
+		next.sawContent = m.sawContent || msg.VisibleContent
 	}
-	// Not terminal: re-arm the reader to pull the next control msg.
 	return &next, m.armReader()
 }
 
@@ -266,15 +327,30 @@ func (m *Model) armReader() scheduler.Cmd {
 }
 
 // appendFinishNode appends a terminal status/marker node for the finish
-// reason (R2 H-5 thinking-only handling uses sawContent which is already
-// accumulated on next before this is called).
+// reason. sawContent is already accumulated on next before this is
+// called (R2 H-5). spec-1.21 D-6 extension: DIAGNOSE.* TermCodes
+// (MAX_TURNS / TOTAL_TIMEOUT / TOOL_UNKNOWN / UNEXPECTED_PAUSE) get
+// their own markers so users see the precise terminal cause, not a
+// generic "[错误]". 1.21 also retires the FinishToolUse placeholder:
+// the Loop now executes the tool internally and emits block.ToolUse /
+// block.ToolResult render nodes directly (spec-1.9 / 1.9b consumers).
 func (m *Model) appendFinishNode(msg streamControlMsg) []block.RenderNode {
-	// Specific finish reasons first; STREAM_EMPTY is the last-resort case
+	// DIAGNOSE.* terminal codes first — explicit so a generic FinishError
+	// branch does not swallow the precise cause.
+	switch msg.TermCode {
+	case "DIAGNOSE.MAX_TURNS":
+		return appendNode(m.scrollback, block.Message{Text: "[DIAGNOSE.MAX_TURNS: 诊断轮数达上限]"})
+	case "DIAGNOSE.TOTAL_TIMEOUT":
+		return appendNode(m.scrollback, block.Message{Text: "[DIAGNOSE.TOTAL_TIMEOUT: 诊断总时长超限]"})
+	case "DIAGNOSE.TOOL_UNKNOWN":
+		return appendNode(m.scrollback, block.Message{Text: "[DIAGNOSE.TOOL_UNKNOWN: 模型请求未注册的工具]"})
+	case "DIAGNOSE.UNEXPECTED_PAUSE":
+		return appendNode(m.scrollback, block.Message{Text: "[DIAGNOSE.UNEXPECTED_PAUSE: 非预期 pause_turn]"})
+	}
+	// Specific finish reasons next; STREAM_EMPTY is the last-resort case
 	// for a genuinely empty (thinking-only) non-Stop end (R2.2 case-order
-	// fix — the !sawContent fallback must not shadow ToolUse/Error/Length).
+	// fix — the !sawContent fallback must not shadow Error/Length).
 	switch {
-	case msg.Finish == llm.FinishToolUse:
-		return appendNode(m.scrollback, block.Message{Text: toolUsePlaceholder(msg.ToolUses)})
 	case msg.Finish == llm.FinishCancelled || (msg.Finish == llm.FinishError && errors.Is(msg.Err, context.Canceled)):
 		// T-10a MED: a deliberate user cancel gets its own marker so it is
 		// not silently blank nor mislabeled STREAM_EMPTY (checked before the
@@ -366,7 +442,7 @@ func (m *Model) StatusSegments() []program.StatusSegment {
 }
 
 // Cleanup cancels any in-flight stream on program shutdown so the
-// consumeStream goroutine exits (R2.1 leak defense).
+// loopStartCmd emit goroutine exits (R2.1 leak defense).
 func (m *Model) Cleanup() scheduler.Cmd {
 	if m.cancel == nil {
 		return nil
@@ -406,11 +482,59 @@ func appendNodes(sb []block.RenderNode, nodes []block.RenderNode) []block.Render
 	return next
 }
 
-func toolUsePlaceholder(tools []llm.ToolUse) string {
-	if len(tools) == 0 {
-		return "[模型请求工具 — 执行待 spec-1.21]"
+// transitionToolUseState returns a new scrollback slice with the most
+// recent block.ToolUse matching id rewritten to the given state. Other
+// entries are preserved by identity (interface values are copied; the
+// underlying ToolUse value is replaced wholesale because block.ToolUse
+// is a value receiver type). If no matching ToolUse exists the original
+// slice is returned unmodified — this is the "Loop emitted ToolResult
+// without a peer ToolUse" path, which handleControl already guards
+// against via the name lookup (spec-1.9b R3 HIGH-3 null-return).
+//
+// Walks from the tail because within a single submit IDs are unique
+// per tool dispatch; the most recent matching ToolUse is the correct
+// peer for a result that just arrived (codex T-10a P2-1).
+func transitionToolUseState(sb []block.RenderNode, id string, state block.ToolUseState) []block.RenderNode {
+	for i := len(sb) - 1; i >= 0; i-- {
+		tu, ok := sb[i].(block.ToolUse)
+		if !ok || tu.ID != id {
+			continue
+		}
+		out := make([]block.RenderNode, len(sb))
+		copy(out, sb)
+		tu.State = state
+		out[i] = tu
+		return out
 	}
-	return "[模型请求工具 " + tools[0].Name + " — 执行待 spec-1.21]"
+	return sb
+}
+
+// ScrollbackTypesForTest returns the concrete render-node type names of
+// every scrollback entry. It exists solely so the spec-1.21 D-8
+// integration smoke (tests/integration/uitest/diagnoseloop) can assert
+// the Loop → block dispatch produced block.ToolUse / block.ToolResult
+// nodes rather than retired placeholders, without poking at unexported
+// fields via reflection. Production code MUST NOT call this.
+func (m *Model) ScrollbackTypesForTest() []string {
+	out := make([]string, len(m.scrollback))
+	for i, n := range m.scrollback {
+		out[i] = nodeTypeName(n)
+	}
+	return out
+}
+
+// nodeTypeName renders the runtime type name without pulling in fmt
+// just for one Sprintf — keeps the dependency surface minimal.
+func nodeTypeName(n block.RenderNode) string {
+	switch n.(type) {
+	case block.Message:
+		return "block.Message"
+	case block.ToolUse:
+		return "block.ToolUse"
+	case block.ToolResult:
+		return "block.ToolResult"
+	}
+	return "block.unknown"
 }
 
 // paintBufferAt copies src cells into dst at (xOff, yOff); OOB dropped.

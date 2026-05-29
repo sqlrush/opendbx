@@ -77,6 +77,14 @@ func Default() *Config {
 			FrameBudget:     16 * time.Millisecond, // 60fps target
 			MaxQueuedFrames: 64,
 		},
+		Diagnose: DiagnoseConfig{
+			// spec-1.21 D-6 defaults: 16 round-trips ceiling, 30s per
+			// tool, 10min total. Per-turn LLM timeout is not duplicated
+			// here — bootstrap reuses LLMConfig.RequestTimeout.
+			MaxTurns:     16,
+			ToolTimeout:  30 * time.Second,
+			TotalTimeout: 10 * time.Minute,
+		},
 		Connections: nil, // user must add via `opendbx db add` or yaml
 		Models:      nil, // user must add via yaml or `opendbx auth login`
 	}
