@@ -111,10 +111,16 @@ func (p *Provider) toParams(req llm.Request) (anthropicsdk.MessageNewParams, err
 	return params, nil
 }
 
-// toMessages maps llm.Message slice to SDK MessageParam slice. An unknown
-// BlockType returns LLM.REQUEST_INVALID rather than panicking (T-10a HIGH:
-// 规则 12 forbids panic on the IO path — a future BlockToolResult reaching
-// here before spec-1.21 must not crash the TUI).
+// toMessages maps llm.Message slice to SDK MessageParam slice (spec-1.21
+// D-2: multi-turn round-trip). Exhaustive switch on BlockType with default
+// → LLM.REQUEST_INVALID; an unknown BlockType MUST NOT panic on the IO
+// path (规则 12). Per-block nil-guard enforces the spec-1.21 D-1 contract
+// so a mis-tagged ContentBlock surfaces as a clean errcode rather than a
+// nil-deref crash deep in the SDK.
+//
+// CC baseline B-63 (codex VERIFIED, anthropic-sdk-go v1.45.0):
+//   - NewToolUseBlock(id string, input any, name string)
+//   - NewToolResultBlock(toolUseID string, content string, isError bool)
 func toMessages(msgs []llm.Message) ([]anthropicsdk.MessageParam, error) {
 	out := make([]anthropicsdk.MessageParam, 0, len(msgs))
 	for _, m := range msgs {
@@ -124,11 +130,20 @@ func toMessages(msgs []llm.Message) ([]anthropicsdk.MessageParam, error) {
 			case llm.BlockText:
 				blocks = append(blocks, anthropicsdk.NewTextBlock(c.Text))
 			case llm.BlockToolUse:
-				// spec-1.20 decode-only; assistant tool_use blocks are not
-				// re-sent as request content in single-turn. spec-1.21
-				// multi-turn adds tool_result round-trip.
+				if c.ToolUse == nil {
+					return nil, llm.RequestInvalidf("BlockToolUse with nil ToolUse (spec-1.21 D-1 nil-guard)")
+				}
+				// SDK accepts `Input any` directly; map[string]any from
+				// spec-1.20 DecodeToolInput is a valid value (codex T-2
+				// VERIFIED). Order id/input/name matches SDK signature.
+				blocks = append(blocks, anthropicsdk.NewToolUseBlock(c.ToolUse.ID, c.ToolUse.Input, c.ToolUse.Name))
+			case llm.BlockToolResult:
+				if c.ToolResult == nil {
+					return nil, llm.RequestInvalidf("BlockToolResult with nil ToolResult (spec-1.21 D-1 nil-guard)")
+				}
+				blocks = append(blocks, anthropicsdk.NewToolResultBlock(c.ToolResult.ToolUseID, c.ToolResult.Content, c.ToolResult.IsError))
 			default:
-				return nil, llm.RequestInvalidf("unhandled content BlockType (multi-turn tool_result is spec-1.21)")
+				return nil, llm.RequestInvalidf("unhandled content BlockType (append-only contract requires explicit case)")
 			}
 		}
 		if m.Role == llm.RoleAssistant {

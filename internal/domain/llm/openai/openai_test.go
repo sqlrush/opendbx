@@ -60,10 +60,20 @@ func TestJoinSystem(t *testing.T) {
 	}
 }
 
-func TestFirstText(t *testing.T) {
+// TestUserToSDK_SingleText verifies the spec-1.21 D-2 replacement for the
+// retired spec-1.20.1 firstText helper: a single-BlockText user turn round-
+// trips as one UserMessage, preserving the original spec-1.20.1 contract.
+func TestUserToSDK_SingleText(t *testing.T) {
 	t.Parallel()
-	if got := firstText([]llm.ContentBlock{{Type: llm.BlockText, Text: "hi"}}); got != "hi" {
-		t.Errorf("firstText = %q; want hi", got)
+	out, err := userToSDK([]llm.ContentBlock{{Type: llm.BlockText, Text: "hi"}})
+	if err != nil {
+		t.Fatalf("userToSDK err: %v", err)
+	}
+	if len(out) != 1 || out[0].OfUser == nil {
+		t.Fatalf("expected single UserMessage; got %+v", out)
+	}
+	if got := out[0].OfUser.Content.OfString.Or(""); got != "hi" {
+		t.Errorf("user content = %q; want hi", got)
 	}
 }
 
@@ -307,7 +317,10 @@ func TestToParams_Tools(t *testing.T) {
 		MaxTokens: 100,
 		Tools:     []llm.ToolSchema{{Name: "topsql", Description: "top sql", InputSchema: map[string]any{"type": "object"}}},
 	}
-	params := p.toParams(req)
+	params, err := p.toParams(req)
+	if err != nil {
+		t.Fatalf("toParams err: %v", err)
+	}
 	if len(params.Tools) != 1 || params.Tools[0].Function.Name != "topsql" {
 		t.Errorf("Tools = %+v; want 1 topsql", params.Tools)
 	}
@@ -317,6 +330,175 @@ func TestToParams_Tools(t *testing.T) {
 // emit `max_tokens` (legacy) rather than `max_completion_tokens` so
 // DeepSeek / Qwen / Ollama and other openai-compat endpoints (which often
 // implement only the legacy parameter) work without manual override.
+// TestMessageToSDK_AssistantTextPlusToolCall exercises spec-1.21 D-2:
+// assistant turn with BlockText + BlockToolUse collapses into ONE
+// AssistantMessage carrying concatenated Content and a single ToolCalls
+// entry whose Function.Arguments is JSON-encoded Input (nil-input → "{}").
+func TestMessageToSDK_AssistantTextPlusToolCall(t *testing.T) {
+	t.Parallel()
+	out, err := messageToSDK(llm.Message{
+		Role: llm.RoleAssistant,
+		Content: []llm.ContentBlock{
+			{Type: llm.BlockText, Text: "let me check"},
+			llm.NewToolUseBlock(&llm.ToolUse{ID: "call_x", Name: "clock", Input: nil}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("messageToSDK err: %v", err)
+	}
+	if len(out) != 1 || out[0].OfAssistant == nil {
+		t.Fatalf("expected 1 AssistantMessage; got %+v", out)
+	}
+	a := out[0].OfAssistant
+	if got := a.Content.OfString.Or(""); got != "let me check" {
+		t.Errorf("content = %q; want 'let me check'", got)
+	}
+	if len(a.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls len = %d; want 1", len(a.ToolCalls))
+	}
+	tc := a.ToolCalls[0]
+	if tc.ID != "call_x" || tc.Function.Name != "clock" {
+		t.Errorf("ToolCall = %+v; want call_x/clock", tc)
+	}
+	if tc.Function.Arguments != "{}" {
+		t.Errorf("nil Input must marshal to %q; got %q", "{}", tc.Function.Arguments)
+	}
+}
+
+// TestMessageToSDK_AssistantToolCallInputJSON verifies that ToolUse.Input
+// (map[string]any) is JSON-marshalled into Function.Arguments — the SDK
+// requires a JSON string here, not a Go map.
+func TestMessageToSDK_AssistantToolCallInputJSON(t *testing.T) {
+	t.Parallel()
+	out, err := messageToSDK(llm.Message{
+		Role: llm.RoleAssistant,
+		Content: []llm.ContentBlock{
+			llm.NewToolUseBlock(&llm.ToolUse{ID: "c1", Name: "topsql", Input: map[string]any{"n": 5}}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	args := out[0].OfAssistant.ToolCalls[0].Function.Arguments
+	// Decode and compare structurally so map ordering does not matter.
+	var got map[string]any
+	if e := json.Unmarshal([]byte(args), &got); e != nil {
+		t.Fatalf("Arguments not JSON: %q err=%v", args, e)
+	}
+	if got["n"] != float64(5) {
+		t.Errorf("Arguments[n] = %v; want 5", got["n"])
+	}
+}
+
+// TestMessageToSDK_UserToolResultAsToolMessage exercises spec-1.21 D-2:
+// user turn carrying ONE BlockToolResult expands to ONE role=tool message
+// (OfTool != nil); IsError prefixes the content; ToolUseID propagates.
+func TestMessageToSDK_UserToolResultAsToolMessage(t *testing.T) {
+	t.Parallel()
+	out, err := messageToSDK(llm.Message{
+		Role: llm.RoleUser,
+		Content: []llm.ContentBlock{
+			llm.NewToolResultBlock(&llm.ToolResult{ToolUseID: "c1", Content: "row1", IsError: false}),
+			llm.NewToolResultBlock(&llm.ToolResult{ToolUseID: "c2", Content: "bad arg", IsError: true}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("want 2 tool messages; got %d", len(out))
+	}
+	for i, expectedID := range []string{"c1", "c2"} {
+		if out[i].OfTool == nil {
+			t.Fatalf("msg %d should be OfTool", i)
+		}
+		if out[i].OfTool.ToolCallID != expectedID {
+			t.Errorf("msg %d ToolCallID = %q; want %q", i, out[i].OfTool.ToolCallID, expectedID)
+		}
+	}
+	// IsError prefix preserved (no native is_error field in OpenAI tool messages).
+	if got := out[1].OfTool.Content.OfString.Or(""); got != "[tool error] bad arg" {
+		t.Errorf("IsError content = %q; want '[tool error] bad arg'", got)
+	}
+}
+
+// TestMessageToSDK_UserMixedTextAndToolResult: user turn carrying both
+// BlockToolResult and BlockText expands to N tool messages PLUS a
+// trailing UserMessage with the text payload.
+func TestMessageToSDK_UserMixedTextAndToolResult(t *testing.T) {
+	t.Parallel()
+	out, err := messageToSDK(llm.Message{
+		Role: llm.RoleUser,
+		Content: []llm.ContentBlock{
+			llm.NewToolResultBlock(&llm.ToolResult{ToolUseID: "c1", Content: "ok"}),
+			{Type: llm.BlockText, Text: "继续分析"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("want 2 messages (tool + user); got %d", len(out))
+	}
+	if out[0].OfTool == nil || out[1].OfUser == nil {
+		t.Errorf("expected [OfTool, OfUser]; got %+v", out)
+	}
+	if got := out[1].OfUser.Content.OfString.Or(""); got != "继续分析" {
+		t.Errorf("user text = %q; want '继续分析'", got)
+	}
+}
+
+// TestMessageToSDK_RoleMismatchRejected guards both mis-role paths:
+// BlockToolResult on assistant role OR BlockToolUse on user role must
+// surface LLM.REQUEST_INVALID (defensive — well-formed Loop output never
+// mixes these, but a misuse must not silently round-trip to a broken SDK
+// call shape).
+func TestMessageToSDK_RoleMismatchRejected(t *testing.T) {
+	t.Parallel()
+	_, err := messageToSDK(llm.Message{
+		Role: llm.RoleAssistant,
+		Content: []llm.ContentBlock{
+			llm.NewToolResultBlock(&llm.ToolResult{ToolUseID: "x"}),
+		},
+	})
+	if !errors.Is(err, llm.ErrRequestInvalid) {
+		t.Errorf("assistant+ToolResult → %v; want ErrRequestInvalid", err)
+	}
+	_, err = messageToSDK(llm.Message{
+		Role: llm.RoleUser,
+		Content: []llm.ContentBlock{
+			llm.NewToolUseBlock(&llm.ToolUse{ID: "x", Name: "t"}),
+		},
+	})
+	if !errors.Is(err, llm.ErrRequestInvalid) {
+		t.Errorf("user+ToolUse → %v; want ErrRequestInvalid", err)
+	}
+}
+
+// TestMessageToSDK_NilGuards covers the spec-1.21 D-1 nil-guard for both
+// pointer fields.
+func TestMessageToSDK_NilGuards(t *testing.T) {
+	t.Parallel()
+	_, err := messageToSDK(llm.Message{
+		Role: llm.RoleAssistant,
+		Content: []llm.ContentBlock{
+			{Type: llm.BlockToolUse, ToolUse: nil},
+		},
+	})
+	if !errors.Is(err, llm.ErrRequestInvalid) {
+		t.Errorf("nil ToolUse → %v; want ErrRequestInvalid", err)
+	}
+	_, err = messageToSDK(llm.Message{
+		Role: llm.RoleUser,
+		Content: []llm.ContentBlock{
+			{Type: llm.BlockToolResult, ToolResult: nil},
+		},
+	})
+	if !errors.Is(err, llm.ErrRequestInvalid) {
+		t.Errorf("nil ToolResult → %v; want ErrRequestInvalid", err)
+	}
+}
+
 func TestToParams_MaxTokensLegacy(t *testing.T) {
 	t.Parallel()
 	p, _ := New(Config{APIKey: "sk", Model: "m", BaseURL: "http://x/v1"})
@@ -324,7 +506,10 @@ func TestToParams_MaxTokensLegacy(t *testing.T) {
 		Messages:  []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{{Type: llm.BlockText, Text: "hi"}}}},
 		MaxTokens: 256,
 	}
-	params := p.toParams(req)
+	params, err := p.toParams(req)
+	if err != nil {
+		t.Fatalf("toParams err: %v", err)
+	}
 	if params.MaxTokens.Or(-1) != 256 {
 		t.Errorf("MaxTokens = %v; want 256 (legacy max_tokens, R-fix HIGH-1)", params.MaxTokens)
 	}
