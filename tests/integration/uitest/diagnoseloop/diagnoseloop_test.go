@@ -11,7 +11,7 @@
 // production — so a regression in the bootstrap-equivalent wiring
 // (Registry → llmapp.Options → diagnose.NewLoop → makeEmit → handleControl)
 // surfaces here, not at first interact session.
-package diagnoseloop_test //nolint:revive // spec-1.21 D-8: standalone integration test package; no production package to mirror.
+package diagnoseloop_test
 
 import (
 	"bytes"
