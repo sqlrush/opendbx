@@ -129,3 +129,74 @@ func TestStream_FinishLength(t *testing.T) {
 		t.Errorf("final finish = %v; want FinishLength", chunks[len(chunks)-1].FinishReason)
 	}
 }
+
+// TestNewScriptedTurns_AdvancesPerCall guards the spec-1.21 D-7 cursor:
+// the Nth Stream call replays turns[N-1], NOT the same turn repeatedly
+// (which would silently mask multi-turn loop bugs).
+func TestNewScriptedTurns_AdvancesPerCall(t *testing.T) {
+	t.Parallel()
+	p := NewScriptedTurns(
+		Turn{Text: "first", Finish: llm.FinishToolUse, ToolUses: []llm.ToolUse{{ID: "c1", Name: "clock"}}},
+		Turn{Text: "second", Finish: llm.FinishStop},
+	)
+
+	// Turn 1
+	s1, err := p.Stream(context.Background(), validReq())
+	if err != nil {
+		t.Fatalf("Stream turn 1 err: %v", err)
+	}
+	c1 := drain(t, s1)
+	// One text chunk + one finish chunk.
+	if len(c1) != 2 || c1[0].Token != "first" || c1[1].FinishReason != llm.FinishToolUse ||
+		len(c1[1].ToolUses) != 1 || c1[1].ToolUses[0].Name != "clock" {
+		t.Errorf("turn 1 chunks = %+v; want text=first + tool_use=clock", c1)
+	}
+
+	// Turn 2 — cursor advances; we must NOT see "first" again.
+	s2, err := p.Stream(context.Background(), validReq())
+	if err != nil {
+		t.Fatalf("Stream turn 2 err: %v", err)
+	}
+	c2 := drain(t, s2)
+	if len(c2) != 2 || c2[0].Token != "second" || c2[1].FinishReason != llm.FinishStop {
+		t.Errorf("turn 2 chunks = %+v; want text=second + FinishStop", c2)
+	}
+
+	if got := p.CallCount(); got != 2 {
+		t.Errorf("CallCount = %d; want 2", got)
+	}
+}
+
+// TestNewScriptedTurns_OutOfTurns guards spec-1.21 D-7 explicit failure
+// on script exhaustion: silently re-running the last turn would mask
+// "test ran longer than scripted" bugs.
+func TestNewScriptedTurns_OutOfTurns(t *testing.T) {
+	t.Parallel()
+	p := NewScriptedTurns(Turn{Text: "only", Finish: llm.FinishStop})
+
+	// First call consumes the single turn.
+	if _, err := p.Stream(context.Background(), validReq()); err != nil {
+		t.Fatalf("turn 1: %v", err)
+	}
+	// Second call must surface REQUEST_INVALID.
+	_, err := p.Stream(context.Background(), validReq())
+	if !errors.Is(err, llm.ErrRequestInvalid) {
+		t.Errorf("out-of-turns → %v; want ErrRequestInvalid", err)
+	}
+}
+
+// TestNewScriptedTurns_EmptyText handles a Turn with no Text — only the
+// terminal chunk carrying Finish + ToolUses is emitted (the assistant
+// can request a tool without preamble text).
+func TestNewScriptedTurns_EmptyText(t *testing.T) {
+	t.Parallel()
+	p := NewScriptedTurns(Turn{
+		Finish:   llm.FinishToolUse,
+		ToolUses: []llm.ToolUse{{ID: "x", Name: "echo"}},
+	})
+	s, _ := p.Stream(context.Background(), validReq())
+	chunks := drain(t, s)
+	if len(chunks) != 1 || chunks[0].FinishReason != llm.FinishToolUse {
+		t.Errorf("empty-text turn = %+v; want 1 chunk with FinishToolUse", chunks)
+	}
+}
