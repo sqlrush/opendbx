@@ -20,6 +20,7 @@ import (
 	"github.com/sqlrush/opendbx/internal/app/cli/program"
 	tcelladapter "github.com/sqlrush/opendbx/internal/app/cli/render/terminal/tcell"
 	"github.com/sqlrush/opendbx/internal/app/cli/tui"
+	"github.com/sqlrush/opendbx/internal/app/diagnose"
 	"github.com/sqlrush/opendbx/internal/domain/llm"
 	"github.com/sqlrush/opendbx/internal/domain/llm/factory"
 	"github.com/sqlrush/opendbx/internal/domain/llm/fake"
@@ -187,7 +188,7 @@ func newChatModel() program.Model {
 	cfg, cfgErr := config.Load(config.LoadOptions{})
 	if cfgErr != nil || cfg == nil {
 		// Config load failed entirely — surface UNAVAILABLE on first message.
-		return llmapp.New(fake.New().WithStartErr(llm.ErrUnavailable), llmapp.Options{})
+		return llmapp.New(fake.New().WithStartErr(llm.ErrUnavailable), llmapp.Options{Registry: defaultDiagnoseRegistry()})
 	}
 	provider, perr := factory.New(*cfg)
 	opts := llmapp.Options{
@@ -196,12 +197,34 @@ func newChatModel() program.Model {
 		StripThink:     cfg.LLM.StripThink,
 		ThinkingMode:   thinkingModeFromConfig(cfg.LLM.ThinkingMode),
 		ThinkingBudget: cfg.LLM.ThinkingBudget,
+		Registry:       defaultDiagnoseRegistry(),
 	}
 	if perr != nil {
 		// 原则 3: explicit error, no demoapp fallback.
 		return llmapp.New(fake.New().WithStartErr(perr), opts)
 	}
 	return llmapp.New(provider, opts)
+}
+
+// defaultDiagnoseRegistry returns the production ToolExecutor registry
+// wired into every interact session (spec-1.21 D-3 / D-6 / T-9 user
+// boundary). Tools are intentionally minimal and read-only at this stage:
+//
+//   - clock — current time (RFC3339 UTC); no input, no side effects.
+//   - echo  — JSON-echoes input verbatim; no shell / SQL / filesystem.
+//
+// Real DB-touching skills (topsql / pg_settings_* / awr) land in
+// spec-2.1 skill-registry along with dynamic per-config loading. Until
+// then we keep the surface narrow so a misuse cannot leak an execution
+// path. Construction errors from diagnose.NewRegistry are programmer
+// errors (registry contract violations) and panic at startup so they
+// surface immediately rather than at first message.
+func defaultDiagnoseRegistry() *diagnose.Registry {
+	reg, err := diagnose.NewRegistry(diagnose.ClockTool{}, diagnose.EchoTool{})
+	if err != nil {
+		panic("bootstrap: defaultDiagnoseRegistry: " + err.Error())
+	}
+	return reg
 }
 
 // thinkingModeFromConfig maps the config thinking_mode string to the

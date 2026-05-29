@@ -31,7 +31,10 @@ import (
 //	LLMChatStreaming — assistant text streamed into scrollback + ● indicator
 //	LLMChatThinking  — thinking-only / empty → LLM.STREAM_EMPTY status (痛点 1.5)
 //	LLMChatTruncated — finish_reason=length → [截断] marker
-//	LLMChatToolUse   — FinishToolUse → [请求工具…spec-1.21] placeholder
+//	LLMChatToolUse   — FinishToolUse w/o Registry → DIAGNOSE.TOOL_UNKNOWN marker
+//	                   (spec-1.21 T-8 retired the "[请求工具…spec-1.21]" placeholder
+//	                   — Loop now emits block.ToolUse / ToolResult when a tool is
+//	                   registered; this case exercises the orphan-tool fallback)
 //	LLMChatError     — immediate provider error → error block
 //
 // 11th independent block-style visual env gate: LLMCHAT_VISUAL_REQUIRED=1

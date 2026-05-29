@@ -468,6 +468,34 @@ func appendNodes(sb []block.RenderNode, nodes []block.RenderNode) []block.Render
 	return next
 }
 
+// ScrollbackTypesForTest returns the concrete render-node type names of
+// every scrollback entry. It exists solely so the spec-1.21 D-8
+// integration smoke (tests/integration/uitest/diagnoseloop) can assert
+// the Loop → block dispatch produced block.ToolUse / block.ToolResult
+// nodes rather than retired placeholders, without poking at unexported
+// fields via reflection. Production code MUST NOT call this.
+func (m *Model) ScrollbackTypesForTest() []string {
+	out := make([]string, len(m.scrollback))
+	for i, n := range m.scrollback {
+		out[i] = nodeTypeName(n)
+	}
+	return out
+}
+
+// nodeTypeName renders the runtime type name without pulling in fmt
+// just for one Sprintf — keeps the dependency surface minimal.
+func nodeTypeName(n block.RenderNode) string {
+	switch n.(type) {
+	case block.Message:
+		return "block.Message"
+	case block.ToolUse:
+		return "block.ToolUse"
+	case block.ToolResult:
+		return "block.ToolResult"
+	}
+	return "block.unknown"
+}
+
 // paintBufferAt copies src cells into dst at (xOff, yOff); OOB dropped.
 func paintBufferAt(dst *buffer.Grid, src buffer.Buffer, xOff, yOff int) {
 	if src == nil {

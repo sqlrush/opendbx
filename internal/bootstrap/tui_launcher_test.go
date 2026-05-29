@@ -113,6 +113,43 @@ func TestRedirectSlogToFileForTUI_SilencesStderr(t *testing.T) {
 	}
 }
 
+// TestDefaultDiagnoseRegistry_HasClockAndEcho guards the spec-1.21 T-9
+// boundary: bootstrap MUST inject a Registry containing the minimal
+// read-only tools so real interact sessions can execute clock/echo
+// round-trips. A future spec adding production skills should NOT
+// silently drop these; updates are additive only.
+func TestDefaultDiagnoseRegistry_HasClockAndEcho(t *testing.T) {
+	t.Parallel()
+	reg := defaultDiagnoseRegistry()
+	if reg == nil {
+		t.Fatal("defaultDiagnoseRegistry returned nil")
+	}
+	names := reg.Names()
+	want := map[string]bool{"clock": true, "echo": true}
+	for _, n := range names {
+		delete(want, n)
+	}
+	if len(want) > 0 {
+		t.Errorf("registry missing tools: %v (got %v)", want, names)
+	}
+}
+
+// TestNewChatModel_BuildsWithoutPanic exercises the production wiring
+// path end-to-end at the bootstrap level so a future regression that
+// breaks the Registry → Options → diagnose.NewLoop chain surfaces here
+// (rather than at first user keystroke).
+func TestNewChatModel_BuildsWithoutPanic(t *testing.T) {
+	t.Parallel()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("newChatModel panicked: %v", r)
+		}
+	}()
+	if m := newChatModel(); m == nil {
+		t.Error("newChatModel returned nil")
+	}
+}
+
 // TestThinkingModeFromConfig covers the T-10a HIGH-2 config→domain mapping.
 func TestThinkingModeFromConfig(t *testing.T) {
 	t.Parallel()
