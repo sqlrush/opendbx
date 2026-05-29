@@ -5,11 +5,9 @@
 package bootstrap
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"log/slog"
-	"strings"
 	"testing"
 	"time"
 
@@ -75,41 +73,24 @@ func TestLaunchInteractiveTUI_HappyPath(t *testing.T) {
 	}
 }
 
-// TestRedirectSlogToFileForTUI_RestoresPrev guards the spec-1.20.1 R-fix
-// follow-up: scheduler emits slog.Warn that, on the stdlib default text
-// handler, lands on os.Stderr (==TUI surface) and shreds the frame. The
-// launcher swap must take effect and the cleanup closure must restore.
-func TestRedirectSlogToFileForTUI_RestoresPrev(t *testing.T) {
-	// NOT t.Parallel: mutates slog default.
+// TestLaunchInteractiveTUI_RestoresSlogDefaultOnFailure guards the TUI slog
+// bridge lifecycle: LaunchInteractiveTUI installs logger.NewSlogHandler while
+// it owns the terminal, then restores the previous stdlib slog default even on
+// early screen-construction failure.
+func TestLaunchInteractiveTUI_RestoresSlogDefaultOnFailure(t *testing.T) {
+	// NOT t.Parallel: mutates package-global factory state and slog default.
+	orig := getNewScreenFn()
+	setNewScreenFn(func() (tcell.Screen, error) {
+		return nil, tcellpkg.ErrInitFailed
+	})
+	t.Cleanup(func() { setNewScreenFn(orig) })
+
 	prev := slog.Default()
-	restore := redirectSlogToFileForTUI()
-	if slog.Default() == prev {
-		t.Fatal("slog default not swapped by redirectSlogToFileForTUI")
+	if err := LaunchInteractiveTUI(context.Background()); !errors.Is(err, tcellpkg.ErrInitFailed) {
+		t.Fatalf("LaunchInteractiveTUI err = %v, want ErrInitFailed", err)
 	}
-	restore()
 	if slog.Default() != prev {
-		t.Fatal("slog default not restored after cleanup")
-	}
-}
-
-// TestRedirectSlogToFileForTUI_SilencesStderr verifies the swapped handler
-// does not write to os.Stderr (TUI surface). We can't directly observe the
-// file write here, but we can confirm that emitting a Warn through the
-// active handler does NOT go to a stderr-shaped buffer.
-func TestRedirectSlogToFileForTUI_SilencesStderr(t *testing.T) {
-	// NOT t.Parallel: mutates slog default.
-	var buf bytes.Buffer
-	stderrHandler := slog.New(slog.NewTextHandler(&buf, nil))
-	prev := slog.Default()
-	slog.SetDefault(stderrHandler)
-	defer slog.SetDefault(prev)
-
-	restore := redirectSlogToFileForTUI()
-	slog.Warn("frame budget overshoot test marker")
-	restore()
-
-	if strings.Contains(buf.String(), "frame budget overshoot test marker") {
-		t.Errorf("redirected slog still wrote to the prior stderr-shaped sink: %q", buf.String())
+		t.Fatal("LaunchInteractiveTUI did not restore slog default after failure")
 	}
 }
 
