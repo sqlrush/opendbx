@@ -26,7 +26,7 @@
 .PHONY: hooks-install hooks-status import-check dep-check
 .PHONY: golden golden-update gen-docs cc-help-diff
 .PHONY: coverage-gate makefile-check tag-spec release registry-drift-check
-.PHONY: vuln-check ci-script-check sync-branch-protection suppression-check errcode-check lint-all
+.PHONY: vuln-check ci-script-check sync-branch-protection suppression-check errcode-check paint-pattern-check lint-all
 
 BIN_DIR := bin
 BIN_NAME := opendbx
@@ -197,6 +197,7 @@ gate: import-check dep-check golden ## Local layer-2 gate (must pass before push
 	$(MAKE) ci-script-check
 	$(MAKE) suppression-check
 	$(MAKE) errcode-check
+	$(MAKE) paint-pattern-check
 	$(MAKE) coverage-gate
 	$(MAKE) bench
 	@echo "=== Layer-2 Gate PASSED ==="
@@ -306,6 +307,15 @@ suppression-check: ## Verify all suppression comments carry spec_ref
 # bare errors.New / fmt.Errorf (lint-policy.md § 2).
 errcode-check: ## Verify exported public API errors use errcode (D-2)
 	@$(GO) run ./tools/errcode-lint ./...
+
+# spec-1.20.2 D-3: paint-pattern-lint enforces that cross-receiver
+# cell-to-cell copies go through render/paint.Blit/BlitAt, never the
+# bare dst.SetCell(x, y, src.Cell(...)) (or one-hop assign) pattern
+# that caused the 5/28 user-terminal CJK / markdown mojibake. Run via
+# `go run` (not pre-built binary): tooling source must be present, no
+# command -v silent skip.
+paint-pattern-check: ## Verify no bare cell-to-cell SetCell (D-3)
+	@$(GO) run ./tools/paint-pattern-lint ./...
 
 # spec-0.11.5 D-5: UI Review 5-layer gate targets.
 .PHONY: ui-invariant ui-visual-golden ui-ai-review ui-block-golden ui-block-ai-review ui-tooluse-golden ui-toolresult-golden ui-compact-golden ui-markdown-golden ui-code-golden ui-diff-golden ui-program-golden ui-input-golden ui-keybindings-golden ui-llmchat-golden
