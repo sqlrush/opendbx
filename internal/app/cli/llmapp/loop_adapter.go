@@ -6,8 +6,8 @@
 // llmapp control plumbing (streamControlMsg + readControlMsg + ctrl
 // channel), preserving the spec-1.20 R2 CRIT-2 token-vs-control split:
 //
-//   - EventText      → TokenStream.AppendChunk + streamControlMsg
-//     (sawContent / thinking flag flow unchanged)
+//   - EventText visible  → TokenStream.AppendChunk + streamControlMsg
+//   - EventText thinking → streamControlMsg{ThinkingToken}, never TokenStream
 //   - EventToolCall  → streamControlMsg carrying *llm.ToolUse
 //   - EventToolResult → streamControlMsg carrying *llm.ToolResult
 //   - EventFinish    → streamControlMsg carrying Finish + TermCode + Err
@@ -33,9 +33,9 @@ import (
 // llmapp plumbing. ts and ctrl are owned by submit() and closed by the
 // loopStartCmd goroutine after Run returns.
 //
-// stripThink suppresses thinking-channel tokens from the renderable
-// stream (control-side Thinking flag still surfaces, so the model
-// remains accurate for sawContent gating).
+// stripThink suppresses thinking-channel token payloads from the control
+// message. The Thinking flag still surfaces so the Model can distinguish a
+// thinking-only response from a genuinely empty stream.
 func makeEmit(ts *streaming.TokenStream, ctrl chan<- streamControlMsg, stripThink bool) diagnose.EmitFunc {
 	send := func(ctx context.Context, msg streamControlMsg) error {
 		select {
@@ -49,14 +49,18 @@ func makeEmit(ts *streaming.TokenStream, ctrl chan<- streamControlMsg, stripThin
 	return func(ctx context.Context, e diagnose.Event) error {
 		switch e.Kind {
 		case diagnose.EventText:
-			visible := e.Text != "" && !e.Thinking
-			if visible || (e.Thinking && !stripThink) {
+			if e.Thinking {
+				msg := streamControlMsg{Thinking: true}
+				if !stripThink {
+					msg.ThinkingToken = e.Text
+				}
+				return send(ctx, msg)
+			}
+			visible := e.Text != ""
+			if visible {
 				_ = ts.AppendChunk(streaming.Chunk{Token: e.Text})
 			}
-			return send(ctx, streamControlMsg{
-				VisibleContent: visible,
-				Thinking:       e.Thinking,
-			})
+			return send(ctx, streamControlMsg{VisibleContent: visible})
 		case diagnose.EventToolCall:
 			return send(ctx, streamControlMsg{ToolUse: e.ToolUse})
 		case diagnose.EventToolResult:

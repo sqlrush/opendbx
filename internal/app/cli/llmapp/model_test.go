@@ -140,6 +140,77 @@ func TestModel_SawContent_ThinkingOnlyLength(t *testing.T) {
 	}
 }
 
+func TestModel_ThinkingStripTrueDoesNotPolluteMainContent(t *testing.T) {
+	t.Parallel()
+	m := typeAndModel(t, newFakeModel(fake.New(
+		llm.Chunk{Token: "reasoning secret", Thinking: true},
+		llm.Chunk{Token: "visible answer"},
+		llm.Chunk{FinishReason: llm.FinishStop},
+	)).withStripThink(true), "q")
+	final := runStream(t, m)
+	if hasThinkingBlock(final) {
+		t.Fatalf("strip_think=true should not render block.Thinking; nodes=%v", final.ScrollbackTypesForTest())
+	}
+	if messageNodeContains(final, "reasoning secret") {
+		t.Fatalf("thinking token leaked into block.Message main content: %v", nodeTexts(final))
+	}
+	if !hasNode(final, "visible answer") {
+		t.Fatalf("visible answer missing: %v", nodeTexts(final))
+	}
+}
+
+func TestModel_ThinkingStripFalseRendersThinkingBlock(t *testing.T) {
+	t.Parallel()
+	m := typeAndModel(t, newFakeModel(fake.New(
+		llm.Chunk{Token: "reasoning secret", Thinking: true},
+		llm.Chunk{Token: "visible answer"},
+		llm.Chunk{FinishReason: llm.FinishStop},
+	)).withStripThink(false), "q")
+	final := runStream(t, m)
+	if !hasThinkingBlock(final) {
+		t.Fatalf("strip_think=false should render block.Thinking; nodes=%v", final.ScrollbackTypesForTest())
+	}
+	if !thinkingBlockContains(final, "reasoning secret") {
+		t.Fatalf("block.Thinking missing reasoning content")
+	}
+	if messageNodeContains(final, "reasoning secret") {
+		t.Fatalf("thinking token leaked into block.Message main content: %v", nodeTexts(final))
+	}
+	if !hasNode(final, "visible answer") {
+		t.Fatalf("visible answer missing: %v", nodeTexts(final))
+	}
+}
+
+func TestModel_ThinkingOnlyStopStripTrueMarker(t *testing.T) {
+	t.Parallel()
+	m := typeAndModel(t, newFakeModel(fake.New(
+		llm.Chunk{Token: "reasoning only", Thinking: true},
+		llm.Chunk{FinishReason: llm.FinishStop},
+	)).withStripThink(true), "q")
+	final := runStream(t, m)
+	if !hasNode(final, block.ThinkingOnlyStripMarker()) {
+		t.Fatalf("thinking-only strip=true marker missing: %v", nodeTexts(final))
+	}
+	if hasNode(final, "(no output)") {
+		t.Fatalf("thinking-only strip=true should not show generic empty placeholder: %v", nodeTexts(final))
+	}
+}
+
+func TestModel_ThinkingOnlyStopStripFalseThinkingBlock(t *testing.T) {
+	t.Parallel()
+	m := typeAndModel(t, newFakeModel(fake.New(
+		llm.Chunk{Token: "reasoning only", Thinking: true},
+		llm.Chunk{FinishReason: llm.FinishStop},
+	)).withStripThink(false), "q")
+	final := runStream(t, m)
+	if !hasThinkingBlock(final) || !thinkingBlockContains(final, "reasoning only") {
+		t.Fatalf("thinking-only strip=false should render block.Thinking; nodes=%v", final.ScrollbackTypesForTest())
+	}
+	if hasNode(final, "(no output)") {
+		t.Fatalf("thinking-only strip=false should not show generic empty placeholder: %v", nodeTexts(final))
+	}
+}
+
 func TestModel_ImmediateError(t *testing.T) {
 	t.Parallel()
 	m := typeAndModel(t, newFakeModel(fake.New().WithStartErr(llm.ErrAuthFailed)), "q")
@@ -426,6 +497,33 @@ func nodeTexts(m *Model) []string {
 func hasNode(m *Model, substr string) bool {
 	for _, txt := range nodeTexts(m) {
 		if strings.Contains(txt, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasThinkingBlock(m *Model) bool {
+	for _, n := range m.scrollback {
+		if _, ok := n.(block.Thinking); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func thinkingBlockContains(m *Model, substr string) bool {
+	for _, n := range m.scrollback {
+		if th, ok := n.(block.Thinking); ok && strings.Contains(th.Content, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func messageNodeContains(m *Model, substr string) bool {
+	for _, n := range m.scrollback {
+		if msg, ok := n.(block.Message); ok && strings.Contains(msg.Text, substr) {
 			return true
 		}
 	}
