@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	tcellpkg "github.com/sqlrush/opendbx/internal/app/cli/tui"
 	"github.com/sqlrush/opendbx/internal/domain/llm"
+	"github.com/sqlrush/opendbx/internal/platform/config"
 )
 
 // TestLaunchInteractiveTUI_NewScreenFailure exercises the init-failure
@@ -170,4 +172,109 @@ func TestThinkingModeFromConfig(t *testing.T) {
 			t.Errorf("thinkingModeFromConfig(%q) = %v; want %v", in, got, want)
 		}
 	}
+}
+
+// ============================================================
+// spec-1.20.2 D-5: StripThink BREAKING migration notice
+// ============================================================
+
+// captureMigrationEmit installs a stripThinkMigrationLogFn that records
+// every call; returns the slice + a restore func. Bypasses the platform
+// logger singleton's init/close ordering, which is shared across tests
+// in the same process and fights non-parallel test seams.
+func captureMigrationEmit(t *testing.T) (*[]string, func()) {
+	t.Helper()
+	prev := stripThinkMigrationLogFn
+	var calls []string
+	stripThinkMigrationLogFn = func(msg string, _ ...any) {
+		calls = append(calls, msg)
+	}
+	return &calls, func() { stripThinkMigrationLogFn = prev }
+}
+
+// TestEmitStripThinkMigrationNotice_DefaultTrue verifies the one-shot
+// migration log fires when StripThink got the new default and the
+// config Source is SourceDefault.
+func TestEmitStripThinkMigrationNotice_DefaultTrue(t *testing.T) {
+	// NOT t.Parallel: mutates once latch + log function pointer.
+	resetStripThinkMigrationNoticeForTest()
+	calls, restore := captureMigrationEmit(t)
+	defer restore()
+
+	cfg := config.Default() // StripThink=true, Source=SourceDefault
+	emitStripThinkMigrationNotice(cfg)
+
+	if len(*calls) != 1 {
+		t.Fatalf("emit count = %d; want 1", len(*calls))
+	}
+	msg := (*calls)[0]
+	if !strings.Contains(msg, "spec-1.20.2") || !strings.Contains(msg, "strip_think") {
+		t.Errorf("migration notice missing markers: %q", msg)
+	}
+}
+
+// TestEmitStripThinkMigrationNotice_ExplicitTrueSuppressed verifies
+// that an operator who explicitly set strip_think: true via yaml / env
+// does NOT see the migration notice (their setting is intentional, so
+// the notice would be noise).
+func TestEmitStripThinkMigrationNotice_ExplicitTrueSuppressed(t *testing.T) {
+	// NOT t.Parallel: mutates once latch + log function pointer.
+	resetStripThinkMigrationNoticeForTest()
+	calls, restore := captureMigrationEmit(t)
+	defer restore()
+
+	cfg := config.Default()
+	cfg.SetSource("LLM.StripThink", config.SourceUserSettings)
+	emitStripThinkMigrationNotice(cfg)
+
+	if len(*calls) != 0 {
+		t.Errorf("emit fired despite explicit user source: %v", *calls)
+	}
+}
+
+// TestEmitStripThinkMigrationNotice_FalseSuppressed verifies that when
+// StripThink is false (legacy behavior preserved by explicit opt-out),
+// no notice fires regardless of source.
+func TestEmitStripThinkMigrationNotice_FalseSuppressed(t *testing.T) {
+	// NOT t.Parallel: mutates once latch + log function pointer.
+	resetStripThinkMigrationNoticeForTest()
+	calls, restore := captureMigrationEmit(t)
+	defer restore()
+
+	cfg := config.Default()
+	cfg.LLM.StripThink = false
+	cfg.SetSource("LLM.StripThink", config.SourceUserSettings)
+	emitStripThinkMigrationNotice(cfg)
+
+	if len(*calls) != 0 {
+		t.Errorf("emit fired despite strip_think=false: %v", *calls)
+	}
+}
+
+// TestEmitStripThinkMigrationNotice_OnceLatch verifies that two calls
+// in the same process produce exactly one log record (the latch is
+// process-wide so newChatModel re-entry does not spam).
+func TestEmitStripThinkMigrationNotice_OnceLatch(t *testing.T) {
+	// NOT t.Parallel: mutates once latch + log function pointer.
+	resetStripThinkMigrationNoticeForTest()
+	calls, restore := captureMigrationEmit(t)
+	defer restore()
+
+	cfg := config.Default()
+	emitStripThinkMigrationNotice(cfg)
+	emitStripThinkMigrationNotice(cfg)
+
+	if len(*calls) != 1 {
+		t.Errorf("emit fired %d times; want exactly 1 (sync.Once)", len(*calls))
+	}
+}
+
+// TestEmitStripThinkMigrationNotice_NilConfigSafe guards against the
+// degenerate path where caller passes nil — must not panic.
+func TestEmitStripThinkMigrationNotice_NilConfigSafe(t *testing.T) {
+	// NOT t.Parallel: mutates once latch.
+	resetStripThinkMigrationNoticeForTest()
+	_, restore := captureMigrationEmit(t)
+	defer restore()
+	emitStripThinkMigrationNotice(nil) // must not panic
 }

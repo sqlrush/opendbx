@@ -44,7 +44,13 @@ func Default() *Config {
 			BaseURL:        "",
 			RequestTimeout: 30 * time.Second,
 			MaxRetries:     3,
-			StripThink:     false,
+			// spec-1.20.2 D-5 BREAKING: default flips false → true so
+			// reasoning/thinking tokens do not pollute the main answer
+			// out of the box (matches user expectation "show me the
+			// answer, hide the chain-of-thought"). Operators who want
+			// to see thinking content can opt in via strip_think:
+			// false in their config or OPENDBX_LLM_STRIP_THINK=false.
+			StripThink: true,
 			// T-10a HIGH-1: default to "disabled" so a freshly-configured
 			// install reaches the Anthropic provider for a real conversation.
 			// "adaptive" is spec-3.11 (factory → LLM.NOT_IMPLEMENTED), so it

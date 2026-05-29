@@ -126,6 +126,7 @@ func newChatModel() program.Model {
 		// Config load failed entirely — surface UNAVAILABLE on first message.
 		return llmapp.New(fake.New().WithStartErr(llm.ErrUnavailable), llmapp.Options{Registry: defaultDiagnoseRegistry()})
 	}
+	emitStripThinkMigrationNotice(cfg)
 	provider, perr := factory.New(*cfg)
 	opts := llmapp.Options{
 		ModelName:      cfg.LLM.ActiveModel,
@@ -149,6 +150,60 @@ func newChatModel() program.Model {
 		return llmapp.New(fake.New().WithStartErr(perr), opts)
 	}
 	return llmapp.New(provider, opts)
+}
+
+// stripThinkMigrationNoticeOnce is a per-process latch — the
+// once-emitted contract is process-wide so re-entering newChatModel
+// (tests, future hot-reload) does not spam the debug log.
+//
+//nolint:gochecknoglobals // spec-1.20.2 D-5 R-1: one-shot migration log; per-process state is the simplest correct shape.
+var stripThinkMigrationNoticeOnce sync.Once
+
+// stripThinkMigrationLogFn is the sink for emitStripThinkMigrationNotice.
+// Production wires it to logger.WarnForceFile (file-only, bypasses
+// debug gate, never stderr — spec-1.20.2 D-4 contract). Tests override
+// it to a capture closure so the assertion does not depend on the
+// platform logger singleton's init/close ordering.
+//
+//nolint:gochecknoglobals // spec-1.20.2 D-5 R-1: function-pointer test seam; cheaper than logger.ResetForTesting export.
+var stripThinkMigrationLogFn = func(msg string, kv ...any) {
+	logger.WarnForceFile(msg, kv...)
+}
+
+// resetStripThinkMigrationNoticeForTest is a test seam; production
+// code MUST NOT call this. spec-1.20.2 D-5 R-1: the once-latch is
+// per-process so unit tests that exercise the emission path need a
+// way to clear state between sub-cases.
+func resetStripThinkMigrationNoticeForTest() {
+	stripThinkMigrationNoticeOnce = sync.Once{}
+}
+
+// emitStripThinkMigrationNotice writes a one-time info record to the
+// platform logger when the user gets the new spec-1.20.2 D-5 BREAKING
+// default for LLMConfig.StripThink (false → true) without having opted
+// out via yaml or OPENDBX_LLM_STRIP_THINK. Caller MUST have already
+// installed the slog → logger bridge (see LaunchInteractiveTUI) so
+// the record reaches the debug file and not the user's terminal.
+//
+// The notice fires when StripThink came from SourceDefault AND is true.
+// An operator who explicitly set strip_think: true via yaml / env gets
+// the same value but a non-default source — we skip the log there to
+// avoid noise.
+func emitStripThinkMigrationNotice(cfg *config.Config) {
+	if cfg == nil || !cfg.LLM.StripThink {
+		return
+	}
+	if cfg.Source("LLM.StripThink") != config.SourceDefault {
+		return
+	}
+	stripThinkMigrationNoticeOnce.Do(func() {
+		stripThinkMigrationLogFn(
+			"spec-1.20.2 D-5: thinking content is hidden by default (llm.strip_think=true). "+
+				"To restore previous behavior, set llm.strip_think=false in your config "+
+				"or OPENDBX_LLM_STRIP_THINK=false.",
+			"spec", "1.20.2", "deliverable", "D-5", "breaking", true,
+		)
+	})
 }
 
 // defaultDiagnoseRegistry returns the production ToolExecutor registry

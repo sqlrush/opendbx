@@ -52,6 +52,18 @@ func TestDefault_ReasonableValues(t *testing.T) {
 	}
 }
 
+// TestDefault_StripThink_True pins the spec-1.20.2 D-5 BREAKING flip
+// (false → true). Reasoning / thinking tokens default to hidden so the
+// out-of-box `opendbx interact` shows the final answer rather than the
+// chain-of-thought (matches user expectation for 99% of sessions; opt
+// in via strip_think: false or OPENDBX_LLM_STRIP_THINK=false).
+func TestDefault_StripThink_True(t *testing.T) {
+	d := Default()
+	if !d.LLM.StripThink {
+		t.Errorf("Default LLM.StripThink = false; want true (spec-1.20.2 D-5 BREAKING)")
+	}
+}
+
 func TestDefault_ConnectionsAndModels_AreNil(t *testing.T) {
 	d := Default()
 	if d.Connections != nil {
