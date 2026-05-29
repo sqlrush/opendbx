@@ -621,6 +621,30 @@ func TestRun_CallerCtxCancelledMidStream(t *testing.T) {
 	}
 }
 
+// TestRun_FinishToolUse_EmptyToolUses_RejectsAsDecodeFailed is the T-10a
+// claude MED-1 absorb: a provider emitting FinishToolUse with no
+// accumulated ToolUses (Anthropic decodeTools returns (nil, nil) on
+// empty toolAcc) MUST surface as FinishError + ErrDecodeFailed, NOT
+// commit a degenerate assistant+user turn pair (which would 400 the
+// next Stream call with an empty Content user message).
+func TestRun_FinishToolUse_EmptyToolUses_RejectsAsDecodeFailed(t *testing.T) {
+	t.Parallel()
+	prov := &stubProv{turns: []stubTurn{
+		// Provider emits FinishToolUse with NO tool_use blocks — protocol anomaly.
+		{chunks: []llm.Chunk{{FinishReason: llm.FinishToolUse /* ToolUses: nil */}}},
+	}}
+	r := &recorder{}
+	res, err := mustNewLoop(t, Options{Provider: prov}).
+		Run(context.Background(), userReq("hi"), r.emit)
+	if !errors.Is(err, llm.ErrDecodeFailed) {
+		t.Errorf("empty FinishToolUse → %v; want LLM.DECODE_FAILED (claude MED-1 absorb)", err)
+	}
+	// Critical: NO degenerate assistant/user turn pair committed.
+	if len(res.Messages) != 1 {
+		t.Errorf("Messages = %d; want 1 (caller input only — degenerate pair must NOT commit)", len(res.Messages))
+	}
+}
+
 // TestRun_NilRegistry_ToolUseMapsToUnknown covers the lookup nil-Registry
 // branch: a provider that emits FinishToolUse against a Loop constructed
 // without a Registry must surface DIAGNOSE.TOOL_UNKNOWN rather than

@@ -242,7 +242,22 @@ func (l *Loop) Run(ctx context.Context, req llm.Request, emit EmitFunc) (Result,
 			return finalize(result, msgs, finish, ErrUnexpectedPause.Code(), ErrUnexpectedPause), ErrUnexpectedPause
 
 		case llm.FinishToolUse:
-			// Validate ALL tool names against the registry FIRST — any
+			// T-10a claude MED-1: defensive guard against a provider
+			// protocol anomaly — FinishToolUse with no accumulated
+			// tool_use blocks. The OpenAI adapter rejects this at the
+			// stream level (stream.go FinishToolUse → ErrDecodeFailed
+			// when len(tools)==0), but the Anthropic adapter's
+			// decodeTools returns (nil, nil) on an empty toolAcc rather
+			// than an error, so the Loop must defend itself: committing
+			// an assistant turn with zero BlockToolUse blocks AND a
+			// user turn with zero Content blocks would 400 the very
+			// next Stream call. Treat as FinishError → ErrDecodeFailed.
+			if len(toolUses) == 0 {
+				_ = emit(ctx, Event{Kind: EventFinish, Turn: turn, Finish: llm.FinishError, Err: llm.ErrDecodeFailed})
+				// errcode-lint:exempt -- spec-1.21 D-4: ErrDecodeFailed is a registered LLM.* sentinel (claude T-10a MED-1 absorb).
+				return finalize(result, msgs, llm.FinishError, "", llm.ErrDecodeFailed), llm.ErrDecodeFailed
+			}
+			// Validate ALL tool names against the registry — any
 			// unknown name → TOOL_UNKNOWN terminal without committing
 			// the assistant turn (spec-1.21 D-4 step 4 / T-2 HIGH-5
 			// 防 orphan tool_use → provider 400 on resume).

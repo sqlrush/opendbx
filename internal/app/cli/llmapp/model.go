@@ -21,8 +21,9 @@ import (
 	"github.com/sqlrush/opendbx/internal/domain/llm"
 )
 
-// ctrlBufSize bounds the control channel (R2.2). Generous so consumeStream
-// rarely blocks; the reader-Cmd drains one per Update tick.
+// ctrlBufSize bounds the control channel (R2.2). Generous so the
+// loopStartCmd emit goroutine rarely blocks; the reader-Cmd drains one
+// per Update tick.
 const ctrlBufSize = 64
 
 // defaultMaxHistory is the fallback message-history cap when Options
@@ -166,9 +167,10 @@ func (m *Model) Update(msg scheduler.Msg) (program.Model, scheduler.Cmd) {
 		next := *m
 		// T-10a HIGH-3: the TokenStream contract requires a Drain AFTER Close
 		// to collect final blocks (Close flushes the last partial into
-		// emitted but does not consume it). consumeStream closes the stream
-		// before closing ctrl, so by now the final blocks are flushed — drain
-		// them once more before discarding the stream, else the last tokens
+		// emitted but does not consume it). loopStartCmd closes the
+		// TokenStream before closing ctrl, so by now the final blocks are
+		// flushed — drain them once more before discarding the stream,
+		// else the last tokens
 		// are dropped. Update/View share the scheduler goroutine, so this
 		// Drain is race-free (same single-owner as the View Drain).
 		if next.stream != nil {
@@ -213,8 +215,9 @@ func (m *Model) handleAction(msg program.KeyActionMsg) (program.Model, scheduler
 }
 
 // submit builds the Request, allocates the stream plumbing (PURE — only
-// allocation: WithCancel / make(chan) / NewTokenStream), and returns the
-// streamStartCmd. The user message is appended to scrollback + history.
+// allocation: WithCancel / make(chan) / NewTokenStream), and returns
+// loopStartCmd (spec-1.21 D-6; replaced 1.20's streamStartCmd in T-8).
+// The user message is appended to scrollback + history.
 func (m *Model) submit() (program.Model, scheduler.Cmd) {
 	userText := m.buffer
 	req := m.buildRequest(userText)
@@ -428,7 +431,7 @@ func (m *Model) StatusSegments() []program.StatusSegment {
 }
 
 // Cleanup cancels any in-flight stream on program shutdown so the
-// consumeStream goroutine exits (R2.1 leak defense).
+// loopStartCmd emit goroutine exits (R2.1 leak defense).
 func (m *Model) Cleanup() scheduler.Cmd {
 	if m.cancel == nil {
 		return nil
