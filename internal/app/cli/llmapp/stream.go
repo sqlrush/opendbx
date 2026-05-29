@@ -5,23 +5,32 @@
 package llmapp
 
 import (
-	"context"
-	"errors"
-
 	"github.com/sqlrush/opendbx/internal/app/cli/render/streaming"
 	"github.com/sqlrush/opendbx/internal/domain/llm"
 )
 
-// streamControlMsg is the control-bypass Msg (spec-1.20 R2 CRIT-2: Token
-// flows to the TokenStream; control flows here). VisibleContent (R2.2
-// HIGH-2) marks whether this chunk carried visible text so Update can
-// accumulate sawContent without inspecting the TokenStream — otherwise
-// text + FinishLength would be misjudged !sawContent → false STREAM_EMPTY.
+// streamControlMsg is the control-bypass Msg (spec-1.20 R2 CRIT-2 base;
+// spec-1.21 D-6 extension). Routing is by which optional field is set:
+//
+//   - ToolUse != nil       → EventToolCall variant
+//   - ToolResult != nil    → EventToolResult variant
+//   - Finish.Terminal()    → EventFinish variant (TermCode optional DIAGNOSE.*)
+//   - default (all nil)    → EventText variant; VisibleContent / Thinking
+//     describe the chunk so Update can accumulate sawContent without
+//     inspecting the TokenStream (otherwise text + FinishLength would be
+//     misjudged !sawContent → false STREAM_EMPTY).
+//
+// At most one variant is populated per message; mixed shapes are not
+// produced by makeEmit. Update dispatches on the variants in priority
+// (ToolUse / ToolResult before Finish before text) so a future spec
+// adding fields keeps the routing explicit.
 type streamControlMsg struct {
 	VisibleContent bool
 	Thinking       bool
-	ToolUses       []llm.ToolUse
+	ToolUse        *llm.ToolUse    // EventToolCall (spec-1.21 D-6)
+	ToolResult     *llm.ToolResult // EventToolResult (spec-1.21 D-6)
 	Finish         llm.FinishReason
+	TermCode       string // EventFinish — DIAGNOSE.* code or "" on natural Stop
 	Err            error
 }
 
@@ -31,27 +40,9 @@ type readControlMsg struct{}
 // streamDoneMsg signals the ctrl channel was closed (all control drained).
 type streamDoneMsg struct{}
 
-// finishFromErr classifies a terminal error into (FinishReason, mapped
-// err). spec-1.20 R2.2 MED: SINGLE classifier reused by both the
-// streamStartCmd immediate-error path and consumeStream's s.Err() — so a
-// Ctrl+C during connect (provider.Stream returns context.Canceled) maps
-// to FinishCancelled, not a generic FinishError.
-func finishFromErr(err error) (llm.FinishReason, error) {
-	switch {
-	case err == nil:
-		return llm.FinishStop, nil
-	case errors.Is(err, context.Canceled):
-		return llm.FinishCancelled, nil
-	case errors.Is(err, context.DeadlineExceeded):
-		return llm.FinishError, llm.ErrTimeout
-	default:
-		return llm.FinishError, err
-	}
-}
-
 // mapToRender maps an llm.FinishReason to the renderable streaming subset
 // (spec-1.20 R2 H-2). Non-renderable terminal reasons (ToolUse / Pause /
-// Refusal / StopSequence) map to streaming.FinishStop; the real reason
+// Refusal / StopSequence) map to streaming.FinishStop; the precise reason
 // travels via the control channel. T1 exhaustive test covers all 9.
 func mapToRender(f llm.FinishReason) streaming.FinishReason {
 	switch f {
@@ -67,47 +58,5 @@ func mapToRender(f llm.FinishReason) streaming.FinishReason {
 		// Stop / ToolUse / StopSequence / Pause / Refusal → clean stop for
 		// the render stream; control channel carries the precise reason.
 		return streaming.FinishStop
-	}
-}
-
-// consumeStream runs in the streamStartCmd goroutine (NOT Update). It
-// iterates the llm.Stream, routing each chunk: renderable Token →
-// TokenStream; control → ctrl chan. It closes ctrl when the stream ends
-// so the reader-Cmd observes a done signal (spec-1.20 R2.2).
-//
-// ctx is the per-request cancel ctx (T-10a HIGH-1): it is the SAME ctx
-// passed to provider.Stream, so a user cancel tears down the HTTP stream
-// (s.Next returns false with ctx.Canceled). The ctrl sends also select on
-// ctx.Done so the goroutine never blocks forever if the reader stops
-// draining (T-10a MED-1) — on cancel we abandon the buffered control msg
-// and still close ctrl so the reader observes the done signal.
-func consumeStream(ctx context.Context, s llm.Stream, ts *streaming.TokenStream, ctrl chan<- streamControlMsg, stripThink bool) {
-	defer close(ctrl)
-	defer func() { _ = ts.Close() }()
-	defer func() { _ = s.Close() }() // best-effort release; terminal Err already surfaced via ctrl
-	for s.Next() {
-		c := s.Chunk()
-		visible := c.Token != "" && !c.Thinking
-		if visible || (c.Thinking && !stripThink) {
-			_ = ts.AppendChunk(streaming.Chunk{Token: c.Token, FinishReason: mapToRender(c.FinishReason), Err: c.Err})
-		}
-		select {
-		case ctrl <- streamControlMsg{
-			VisibleContent: visible,
-			Thinking:       c.Thinking,
-			ToolUses:       c.ToolUses,
-			Finish:         c.FinishReason,
-			Err:            c.Err,
-		}:
-		case <-ctx.Done():
-			return
-		}
-	}
-	if err := s.Err(); err != nil {
-		fr, mapped := finishFromErr(err)
-		select {
-		case ctrl <- streamControlMsg{Finish: fr, Err: mapped}:
-		case <-ctx.Done():
-		}
 	}
 }

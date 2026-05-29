@@ -142,9 +142,8 @@ func TestModel_StatusSegments_ProviderNameFallback(t *testing.T) {
 	}
 }
 
-func TestToolUsePlaceholder_Empty(t *testing.T) {
-	t.Parallel()
-	if got := toolUsePlaceholder(nil); got == "" {
-		t.Error("empty tool-use placeholder should still be non-empty")
-	}
-}
+// TestToolUsePlaceholder_Empty was retired in spec-1.21 T-8: the
+// toolUsePlaceholder helper no longer exists — Loop now executes the
+// tool and emits block.ToolUse / block.ToolResult render nodes directly
+// (spec-1.21 D-6). Coverage of the multi-turn tool-render path lives in
+// model_test.go TestModel_LoopAppendsToolBlocks.

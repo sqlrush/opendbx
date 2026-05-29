@@ -15,6 +15,7 @@ import (
 	"github.com/sqlrush/opendbx/internal/app/cli/render/block"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/terminal"
+	"github.com/sqlrush/opendbx/internal/app/diagnose"
 	"github.com/sqlrush/opendbx/internal/domain/llm"
 	"github.com/sqlrush/opendbx/internal/domain/llm/fake"
 )
@@ -151,14 +152,63 @@ func TestModel_ImmediateError(t *testing.T) {
 	}
 }
 
-func TestModel_ToolUsePlaceholder(t *testing.T) {
+// TestModel_LoopUnknownTool exercises the spec-1.21 D-6 TOOL_UNKNOWN
+// surface: a provider that emits FinishToolUse against a Model with no
+// Registry (or one missing the tool) renders the DIAGNOSE.TOOL_UNKNOWN
+// terminal marker — never the retired "spec-1.21" placeholder.
+func TestModel_LoopUnknownTool(t *testing.T) {
 	t.Parallel()
 	m := typeAndModel(t, newFakeModel(fake.New(
-		llm.Chunk{FinishReason: llm.FinishToolUse, ToolUses: []llm.ToolUse{{Name: "topsql"}}},
+		llm.Chunk{FinishReason: llm.FinishToolUse, ToolUses: []llm.ToolUse{{ID: "c1", Name: "topsql"}}},
 	)), "q")
 	final := runStream(t, m)
-	if !hasNode(final, "topsql") || !hasNode(final, "spec-1.21") {
-		t.Errorf("tool-use should render placeholder; got %v", nodeTexts(final))
+	if !hasNode(final, "DIAGNOSE.TOOL_UNKNOWN") {
+		t.Errorf("unknown tool should render DIAGNOSE.TOOL_UNKNOWN marker; got %v", nodeTexts(final))
+	}
+	// And the retired placeholder text must NOT leak.
+	if hasNode(final, "spec-1.21") {
+		t.Errorf("retired placeholder leaked into scrollback: %v", nodeTexts(final))
+	}
+}
+
+// TestModel_LoopAppendsToolBlocks is the headline T-8 case: a Loop with
+// a registered tool runs through user → tool_use → tool_result → final
+// text, and the scrollback ends up holding block.ToolUse + block.ToolResult
+// (NOT placeholders) plus the assistant prose. Asserts the spec-1.21 D-6
+// adapter wiring: makeEmit / handleControl / appendNode → render nodes
+// of the right types in the right order.
+func TestModel_LoopAppendsToolBlocks(t *testing.T) {
+	t.Parallel()
+	reg, err := diagnose.NewRegistry(diagnose.EchoTool{})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	prov := fake.NewScriptedTurns(
+		fake.Turn{
+			ToolUses: []llm.ToolUse{{ID: "c1", Name: "echo", Input: map[string]any{"msg": "ping"}}},
+			Finish:   llm.FinishToolUse,
+		},
+		fake.Turn{Text: "all done", Finish: llm.FinishStop},
+	)
+	m := New(prov, Options{ModelName: "loop", MaxTokens: 1024, Registry: reg})
+	m = typeAndModel(t, m, "go")
+	final := runStream(t, m)
+
+	if final.streaming {
+		t.Errorf("still streaming after drain")
+	}
+	// Walk scrollback nodes: expect [user msg, block.ToolUse, block.ToolResult, assistant text].
+	if len(final.scrollback) < 4 {
+		t.Fatalf("scrollback too short (%d nodes): %v", len(final.scrollback), final.scrollback)
+	}
+	if _, ok := final.scrollback[1].(block.ToolUse); !ok {
+		t.Errorf("scrollback[1] = %T; want block.ToolUse (spec-1.21 D-6 retire placeholder)", final.scrollback[1])
+	}
+	if _, ok := final.scrollback[2].(block.ToolResult); !ok {
+		t.Errorf("scrollback[2] = %T; want block.ToolResult", final.scrollback[2])
+	}
+	if !hasNode(final, "all done") {
+		t.Errorf("assistant final text not drained into scrollback: %v", nodeTexts(final))
 	}
 }
 
