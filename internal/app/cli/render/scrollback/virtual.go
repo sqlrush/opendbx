@@ -36,6 +36,7 @@ import (
 	"github.com/sqlrush/opendbx/internal/app/cli/render/block"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/layout"
+	"github.com/sqlrush/opendbx/internal/app/cli/render/paint"
 )
 
 const (
@@ -322,24 +323,7 @@ func (s *VirtualScrollback) Render(next *buffer.Grid, viewport layout.Box) {
 		}
 		// Blit bufGrid into next, offset by block's start y minus scrollY.
 		blockStartY := s.offsets[i]
-		for by := 0; by < s.heights[i]; by++ {
-			destY := blockStartY + by - s.scrollY
-			if destY < 0 || destY >= rows {
-				continue
-			}
-			for bx := 0; bx < cols; bx++ {
-				c := bufGrid.Cell(bx, by)
-				// Skip continuation cells; next.SetCell on a wide-main
-				// auto-writes its continuation. Calling SetCell with the
-				// continuation Ch would trigger clearWideOverlap and erase
-				// the wide-main at bx-1 (spec-1.7 T-9 HIGH-2 pattern; also
-				// fixed in llmapp + program paintBufferAt under spec-1.20.1).
-				if buffer.IsContinuation(c) {
-					continue
-				}
-				next.SetCell(bx, destY, c)
-			}
-		}
+		paint.BlitAt(next, bufGrid, 0, blockStartY-s.scrollY)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/sqlrush/opendbx/internal/app/cli/program"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/block"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
+	"github.com/sqlrush/opendbx/internal/app/cli/render/paint"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/scheduler"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/streaming"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/style"
@@ -417,7 +418,7 @@ func (m *Model) View(cols, rows int) buffer.Buffer {
 		}
 		_, nbRows := nb.Size()
 		top := y - nbRows + 1
-		paintBufferAt(g, nb, 0, top)
+		paint.BlitAt(g, nb, 0, top)
 		y = top - 1
 	}
 	return g
@@ -535,30 +536,4 @@ func nodeTypeName(n block.RenderNode) string {
 		return "block.ToolResult"
 	}
 	return "block.unknown"
-}
-
-// paintBufferAt copies src cells into dst at (xOff, yOff); OOB dropped.
-func paintBufferAt(dst *buffer.Grid, src buffer.Buffer, xOff, yOff int) {
-	if src == nil {
-		return
-	}
-	dstCols, dstRows := dst.Size()
-	srcCols, srcRows := src.Size()
-	for sy := 0; sy < srcRows; sy++ {
-		dy := yOff + sy
-		if dy < 0 || dy >= dstRows {
-			continue
-		}
-		for sx := 0; sx < srcCols; sx++ {
-			dx := xOff + sx
-			if dx < 0 || dx >= dstCols {
-				continue
-			}
-			c := src.Cell(sx, sy)
-			if buffer.IsContinuation(c) {
-				continue
-			}
-			dst.SetCell(dx, dy, c)
-		}
-	}
 }

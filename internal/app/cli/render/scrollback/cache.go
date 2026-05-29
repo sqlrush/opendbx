@@ -33,6 +33,7 @@ import (
 	"container/list"
 
 	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
+	"github.com/sqlrush/opendbx/internal/app/cli/render/paint"
 )
 
 // gridPool is the minimal subset of *buffer.BufferPool that lruRing
@@ -131,7 +132,7 @@ func (c *lruRing) putFromBuffer(blockIdx, cols, rows int, src buffer.Buffer) *bu
 	if err != nil {
 		return nil
 	}
-	copyCells(owned, src, cols, rows)
+	paint.Blit(owned, src, cols, rows)
 	entry := &cacheEntry{blockIdx: blockIdx, cols: cols, rows: rows, grid: owned}
 	el := c.lru.PushFront(entry)
 	c.index[blockIdx] = el
@@ -161,21 +162,4 @@ func (c *lruRing) evictOldest() {
 	c.pool.Release(e.grid)
 	c.lru.Remove(back)
 	delete(c.index, e.blockIdx)
-}
-
-// copyCells copies (cols × rows) cells from src into dst. Continuation
-// cells are skipped: dst.SetCell on a wide-main auto-writes the
-// continuation, so writing it again would trigger clearWideOverlap and
-// erase the wide-main at (x-1) (spec-1.7 T-9 HIGH-2 pattern; also fixed
-// in llmapp + program paintBufferAt + virtual.composeInto under spec-1.20.1).
-func copyCells(dst *buffer.Grid, src buffer.Buffer, cols, rows int) {
-	for y := 0; y < rows; y++ {
-		for x := 0; x < cols; x++ {
-			c := src.Cell(x, y)
-			if buffer.IsContinuation(c) {
-				continue
-			}
-			dst.SetCell(x, y, c)
-		}
-	}
 }

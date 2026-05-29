@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
+	"github.com/sqlrush/opendbx/internal/app/cli/render/paint"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/style"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/width"
 )
@@ -185,20 +186,7 @@ func renderMixed(ctx Context, m Message, fences []fenceRange) buffer.Buffer {
 			y += r.rows // measure-only segment in real path shouldn't happen, but tolerate
 			continue
 		}
-		_, srcRows := grid.Size()
-		for sy := 0; sy < srcRows && y+sy < totalRows; sy++ {
-			for sx := 0; sx < ctx.Cols; sx++ {
-				src := grid.Cell(sx, sy)
-				// Skip continuation cells; stitched.SetCell on a wide-main
-				// auto-writes its continuation. Calling SetCell with the
-				// continuation Ch would trigger clearWideOverlap and erase
-				// the wide-main at sx-1 (spec-1.7 T-9 HIGH-2 latent bug).
-				if buffer.IsContinuation(src) {
-					continue
-				}
-				stitched.SetCell(sx, y+sy, src)
-			}
-		}
+		paint.BlitAt(stitched, grid, 0, y)
 		y += r.rows
 	}
 	if m.Truncated {
