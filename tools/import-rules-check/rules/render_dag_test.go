@@ -135,7 +135,7 @@ func TestRenderDAG_NonRenderImports(t *testing.T) {
 func TestRenderOrder_Sequence(t *testing.T) {
 	t.Parallel()
 	want := []string{
-		"width", "style", "terminal", "terminal/tcell", "buffer", "layout",
+		"width", "style", "terminal", "terminal/tcell", "buffer", "paint", "layout",
 		"optimizer", "scheduler", "block/adapter", "block",
 		"scrollback", "streaming",
 	}

@@ -1,9 +1,30 @@
-# opendbx hook-local copy of opendbrb/specs/spec-registry.txt.
-# Authority remains opendbrb; this snapshot lets the pre-push hook validate
-# tag semantics when the sibling design repo is unavailable (for example in
-# GitHub Actions tag checkout).
+# opendbx spec-registry — global SSOT for spec id ↔ tag ordinal mapping.
 #
-# Regenerate via: cd opendbrb && make sync-registry
+# Authority: spec-0.7-version-numbering § 2.6 + CLAUDE.md 规则 15.
+# Format: 5 TSV columns (tab-separated, # = comment line, blank lines OK).
+#
+#   spec_id    — roadmap row first column (含子规格 / 字母后缀，原样)
+#   stage      — 整数 0~9，对应 tag 中的 stage<S> 段
+#   ordinal    — 全局单调递增整数，对应 tag 中的 MINOR == N 段
+#   role       — main / sub / survey / acceptance (描述性)
+#   tag_policy — tag / skip (动作性；survey 默认 skip)
+#
+# Manifest authoritative (spec-0.7 R2.1 Q13 ★B'):
+#   1. ordinal 单调递增、连续、无 gap
+#   2. sub / survey 也必须显式占 ordinal (即便 tag_policy=skip 也占位)
+#      —— 防未来 retroactive renumber 撞已 push 的 tag
+#   3. 新 spec 仅可在尾部追加；中间不得插入或重排
+#   4. spec_id 跳号 OK；ordinal 不跳号
+#
+# Existing tags (v0.1.0-stage0.1 ~ v0.6.0-stage0.6) co-incidence:
+#   ordinal=1..6 与 spec_id 第二段 1..6 同值 (前 6 spec 无 sub/survey)
+#   spec-0.7 起进入"非平凡"映射 (0.11.5 占 ordinal=12 而非 11)
+#
+# Update protocol:
+#   1. spec FROZEN PR 同 PR 在此追加一行 (新 spec_id 总在末尾)
+#   2. scripts/spec-registry-check/ lint 强制 ordinal 连续 + 与 roadmap 一致
+#   3. spec-0.7 T-7 tag-spec.sh 读本文件解析 spec_id → (stage, ordinal, tag_policy)
+
 # spec_id	stage	ordinal	role	tag_policy
 0.1	0	1	main	tag
 0.2	0	2	main	tag
@@ -45,3 +66,4 @@
 1.20	1	38	main	tag
 1.21	1	39	main	tag
 1.20.1	1	40	sub	tag
+1.20.2	1	41	sub	tag

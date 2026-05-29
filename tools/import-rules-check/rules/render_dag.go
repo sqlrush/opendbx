@@ -59,12 +59,13 @@ var RenderOrder = []string{
 	"terminal",       // 2 — depends on style
 	"terminal/tcell", // 2.5 — terminal sub-DAG (spec-1.17 D-6a): tcell-backed Driver; may import terminal(2) + style(1)
 	"buffer",         // 3 — depends on style + width
+	"paint",          // 3.5 — spec-1.20.2 D-1: cell-to-cell blit helper enforcing buffer.IsContinuation contract; depends only on buffer
 	"layout",         // 4 — depends on width
 	"optimizer",      // 5 — depends on buffer + terminal
 	"scheduler",      // 6 — depends on optimizer + terminal
 	"block/adapter",  // 7 — block sub-DAG leaf (spec-1.9 § 5): style/width only
-	"block",          // 8 — intermediate root: depends on layout + buffer + width + style + block/adapter
-	"scrollback",     // 9 — depends on buffer + layout + block
+	"block",          // 8 — intermediate root: depends on layout + buffer + width + style + block/adapter + paint
+	"scrollback",     // 9 — depends on buffer + layout + block + paint
 	"streaming",      // 10 — true root: depends on scrollback + block
 }
 
