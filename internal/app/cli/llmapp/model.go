@@ -299,8 +299,19 @@ func (m *Model) handleControl(msg streamControlMsg) (program.Model, scheduler.Cm
 			// (spec-1.9b R3 HIGH-3).
 			break
 		}
+		// codex T-10a P2-1 absorb: transition the matching block.ToolUse
+		// from StateRunning to StateResolved/StateError so the UI does
+		// not show the tool as "Running" forever once its result has
+		// arrived. Spec-1.9 toolcall.go:62-64 contract: caller owns the
+		// transition. spec-1.21 D-6 specifies this exact hand-off:
+		// "EventToolResult → 转 Resolved/Error".
+		targetState := block.StateResolved
+		if msg.ToolResult.IsError {
+			targetState = block.StateError
+		}
+		sb := transitionToolUseState(m.scrollback, msg.ToolResult.ToolUseID, targetState)
 		tr := block.NewToolResult(msg.ToolResult.ToolUseID, name, msg.ToolResult.Content, msg.ToolResult.IsError)
-		next.scrollback = appendNode(m.scrollback, tr)
+		next.scrollback = appendNode(sb, tr)
 	case msg.Finish.Terminal():
 		next.sawContent = m.sawContent || msg.VisibleContent
 		next.scrollback = next.appendFinishNode(msg)
@@ -469,6 +480,33 @@ func appendNodes(sb []block.RenderNode, nodes []block.RenderNode) []block.Render
 	next = append(next, sb...)
 	next = append(next, nodes...)
 	return next
+}
+
+// transitionToolUseState returns a new scrollback slice with the most
+// recent block.ToolUse matching id rewritten to the given state. Other
+// entries are preserved by identity (interface values are copied; the
+// underlying ToolUse value is replaced wholesale because block.ToolUse
+// is a value receiver type). If no matching ToolUse exists the original
+// slice is returned unmodified — this is the "Loop emitted ToolResult
+// without a peer ToolUse" path, which handleControl already guards
+// against via the name lookup (spec-1.9b R3 HIGH-3 null-return).
+//
+// Walks from the tail because within a single submit IDs are unique
+// per tool dispatch; the most recent matching ToolUse is the correct
+// peer for a result that just arrived (codex T-10a P2-1).
+func transitionToolUseState(sb []block.RenderNode, id string, state block.ToolUseState) []block.RenderNode {
+	for i := len(sb) - 1; i >= 0; i-- {
+		tu, ok := sb[i].(block.ToolUse)
+		if !ok || tu.ID != id {
+			continue
+		}
+		out := make([]block.RenderNode, len(sb))
+		copy(out, sb)
+		tu.State = state
+		out[i] = tu
+		return out
+	}
+	return sb
 }
 
 // ScrollbackTypesForTest returns the concrete render-node type names of

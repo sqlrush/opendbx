@@ -280,17 +280,34 @@ func (l *Loop) Run(ctx context.Context, req llm.Request, emit EmitFunc) (Result,
 				asstContent = append(asstContent, llm.NewToolUseBlock(&tu))
 			}
 
-			// Execute each tool. Collect ToolResults; terminate eagerly
-			// on cancel / total timeout (paired commit is skipped → no
-			// dangling tool_use in the transcript).
-			results := make([]llm.ToolResult, 0, len(toolUses))
+			// codex T-10a P2-2 absorb: emit phasing mirrors the wire
+			// protocol shape — assistant produces ALL tool_use blocks
+			// in one turn before any execution; user replies with ALL
+			// tool_result blocks in one turn after execution. The UI
+			// should see the same shape: all EventToolCall events fire
+			// up front (so every tool block appears in scrollback
+			// immediately, Running), THEN tools execute serially and
+			// each EventToolResult arrives in order. Previous code
+			// interleaved call→result→call→result, which made the UI
+			// look like the assistant ran tools one-at-a-time across
+			// multiple imaginary turns.
+
+			// Phase 1: emit all EventToolCall (mirror assistant turn).
 			for i := range toolUses {
-				tu := &toolUses[i]
-				if eerr := emit(ctx, Event{Kind: EventToolCall, Turn: turn, ToolUse: tu}); eerr != nil {
+				if eerr := emit(ctx, Event{Kind: EventToolCall, Turn: turn, ToolUse: &toolUses[i]}); eerr != nil {
 					fr, ferr := classifyEmitErr(eerr)
 					// errcode-lint:exempt -- spec-1.21 D-4: emit-error pass-through (EventToolCall variant).
 					return finalize(result, msgs, fr, "", ferr), ferr
 				}
+			}
+
+			// Phase 2: execute each tool serially, emit ToolResult in order
+			// (mirror user turn). A cancel / total-timeout mid-execution
+			// terminates eagerly; the paired commit is skipped so no
+			// dangling tool_use enters the transcript.
+			results := make([]llm.ToolResult, 0, len(toolUses))
+			for i := range toolUses {
+				tu := &toolUses[i]
 				exec, _ := lookup(l.registry, tu.Name)
 				toolCtx, cancelTool := context.WithTimeout(totalCtx, l.toolTimeout)
 				out, execErr := exec.Execute(toolCtx, tu.Input)

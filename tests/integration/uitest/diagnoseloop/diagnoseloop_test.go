@@ -129,6 +129,11 @@ func TestDiagnoseLoop_FullSmoke(t *testing.T) {
 			t.Errorf("retired placeholder leaked into view: %q in %q", banned, body)
 		}
 	}
+	// codex T-10a P2-1 — the direct ToolUse.State Resolved/Error
+	// assertion lives at the unit level in llmapp/model_test.go
+	// (TestModel_LoopTransitionsToolUseState / *_ToError) where the
+	// scrollback node is reachable. The integration seam exposes only
+	// node type names; surfacing state would widen the seam unnecessarily.
 }
 
 // ============================================================

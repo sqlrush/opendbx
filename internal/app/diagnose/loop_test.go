@@ -621,6 +621,53 @@ func TestRun_CallerCtxCancelledMidStream(t *testing.T) {
 	}
 }
 
+// TestRun_MultipleTools_EmitPhaseOrder is the codex T-10a P2-2 absorb:
+// a single FinishToolUse turn with N tool_uses MUST surface to the UI
+// as Phase 1 (all N EventToolCall first) → Phase 2 (sequential
+// EventToolResult), mirroring the wire-protocol shape (assistant turn
+// has all tool_use blocks; user turn has all tool_result blocks). The
+// previous interleaved call→result→call→result order made the UI look
+// like the assistant ran tools across multiple imaginary turns.
+func TestRun_MultipleTools_EmitPhaseOrder(t *testing.T) {
+	t.Parallel()
+	reg, _ := NewRegistry(ClockTool{Now: func() time.Time { return time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC) }}, EchoTool{})
+	prov := &stubProv{turns: []stubTurn{
+		{chunks: []llm.Chunk{{
+			FinishReason: llm.FinishToolUse,
+			ToolUses: []llm.ToolUse{
+				{ID: "c1", Name: "clock"},
+				{ID: "c2", Name: "echo", Input: map[string]any{"x": float64(1)}},
+			},
+		}}},
+		{chunks: []llm.Chunk{{FinishReason: llm.FinishStop}}},
+	}}
+	r := &recorder{}
+	if _, err := mustNewLoop(t, Options{Provider: prov, Registry: reg}).
+		Run(context.Background(), userReq("both"), r.emit); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// Extract the ordered EventKind + ToolUse/ToolResult IDs for the
+	// tool-execution segment of turn 1 (TurnStart at events[0]).
+	var toolPhase []string
+	for _, e := range r.events {
+		switch e.Kind {
+		case EventToolCall:
+			toolPhase = append(toolPhase, "call:"+e.ToolUse.ID)
+		case EventToolResult:
+			toolPhase = append(toolPhase, "result:"+e.ToolResult.ToolUseID)
+		}
+	}
+	want := []string{"call:c1", "call:c2", "result:c1", "result:c2"}
+	if len(toolPhase) != len(want) {
+		t.Fatalf("tool-phase events = %v; want %v (Phase 1 all-calls then Phase 2 all-results)", toolPhase, want)
+	}
+	for i, w := range want {
+		if toolPhase[i] != w {
+			t.Errorf("tool-phase[%d] = %s; want %s", i, toolPhase[i], w)
+		}
+	}
+}
+
 // TestRun_FinishToolUse_EmptyToolUses_RejectsAsDecodeFailed is the T-10a
 // claude MED-1 absorb: a provider emitting FinishToolUse with no
 // accumulated ToolUses (Anthropic decodeTools returns (nil, nil) on

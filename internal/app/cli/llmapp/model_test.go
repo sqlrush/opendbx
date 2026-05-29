@@ -171,6 +171,80 @@ func TestModel_LoopUnknownTool(t *testing.T) {
 	}
 }
 
+// TestModel_LoopTransitionsToolUseState is the codex T-10a P2-1 absorb:
+// once a tool finishes, the UI MUST reflect Resolved/Error on the
+// matching block.ToolUse — otherwise a user sees the tool stuck on
+// "Running" even though its result is already rendered below.
+func TestModel_LoopTransitionsToolUseState(t *testing.T) {
+	t.Parallel()
+	reg, _ := diagnose.NewRegistry(diagnose.EchoTool{})
+	prov := fake.NewScriptedTurns(
+		fake.Turn{ToolUses: []llm.ToolUse{{ID: "c1", Name: "echo"}}, Finish: llm.FinishToolUse},
+		fake.Turn{Text: "done", Finish: llm.FinishStop},
+	)
+	m := New(prov, Options{ModelName: "fake", MaxTokens: 1024, Registry: reg})
+	m = typeAndModel(t, m, "x")
+	final := runStream(t, m)
+
+	// Find the (single) block.ToolUse in scrollback.
+	var found *block.ToolUse
+	for _, n := range final.scrollback {
+		if tu, ok := n.(block.ToolUse); ok {
+			tu := tu
+			found = &tu
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("no block.ToolUse in scrollback; nodes = %v", nodeTexts(final))
+	}
+	if found.State != block.StateResolved {
+		t.Errorf("ToolUse.State = %v; want StateResolved (codex P2-1 — tool finished, UI must not show Running)", found.State)
+	}
+}
+
+// TestModel_LoopTransitionsToolUseToError mirrors P2-1 for the IsError
+// path: a tool reporting recoverable failure (IsError=true) must mark
+// the matching ToolUse as StateError so the UI shows a failure marker
+// rather than "Running" or a success tick.
+func TestModel_LoopTransitionsToolUseToError(t *testing.T) {
+	t.Parallel()
+	reg, _ := diagnose.NewRegistry(errToolModel{})
+	prov := fake.NewScriptedTurns(
+		fake.Turn{ToolUses: []llm.ToolUse{{ID: "c1", Name: "fail-test"}}, Finish: llm.FinishToolUse},
+		fake.Turn{Text: "ok", Finish: llm.FinishStop},
+	)
+	m := New(prov, Options{ModelName: "fake", MaxTokens: 1024, Registry: reg})
+	m = typeAndModel(t, m, "x")
+	final := runStream(t, m)
+
+	var found *block.ToolUse
+	for _, n := range final.scrollback {
+		if tu, ok := n.(block.ToolUse); ok {
+			tu := tu
+			found = &tu
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("no block.ToolUse in scrollback")
+	}
+	if found.State != block.StateError {
+		t.Errorf("ToolUse.State = %v; want StateError (IsError result path)", found.State)
+	}
+}
+
+// errToolModel is a minimal ToolExecutor that always returns IsError=true.
+type errToolModel struct{}
+
+func (errToolModel) Name() string { return "fail-test" }
+func (errToolModel) Schema() llm.ToolSchema {
+	return llm.ToolSchema{Name: "fail-test", InputSchema: map[string]any{"type": "object"}}
+}
+func (errToolModel) Execute(context.Context, map[string]any) (diagnose.ToolOutput, error) {
+	return diagnose.ToolOutput{Content: "boom", IsError: true}, nil
+}
+
 // TestModel_LoopAppendsToolBlocks is the headline T-8 case: a Loop with
 // a registered tool runs through user → tool_use → tool_result → final
 // text, and the scrollback ends up holding block.ToolUse + block.ToolResult
