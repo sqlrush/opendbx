@@ -198,6 +198,15 @@ func newChatModel() program.Model {
 		ThinkingMode:   thinkingModeFromConfig(cfg.LLM.ThinkingMode),
 		ThinkingBudget: cfg.LLM.ThinkingBudget,
 		Registry:       defaultDiagnoseRegistry(),
+		// spec-1.21 D-6 user-config knobs reach the runtime here.
+		// Per-turn LLM timeout reuses LLMConfig.RequestTimeout per spec
+		// (NOT a duplicate Diagnose.* field) — the diagnose layer is
+		// the orchestrator, the provider layer owns the request-level
+		// timeout (cf. classifyTerminal's LLM.TIMEOUT mapping).
+		MaxTurns:     cfg.Diagnose.MaxTurns,
+		ToolTimeout:  cfg.Diagnose.ToolTimeout,
+		TotalTimeout: cfg.Diagnose.TotalTimeout,
+		ReqTimeout:   cfg.LLM.RequestTimeout,
 	}
 	if perr != nil {
 		// 原则 3: explicit error, no demoapp fallback.

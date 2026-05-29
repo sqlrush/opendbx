@@ -134,6 +134,31 @@ func TestDefaultDiagnoseRegistry_HasClockAndEcho(t *testing.T) {
 	}
 }
 
+// TestNewChatModel_PropagatesDiagnoseConfig is the user T-10a Path 3/3
+// HIGH-1 absorb: spec-1.21 D-6 mandates that DiagnoseConfig values
+// (MaxTurns / ToolTimeout / TotalTimeout) AND the per-turn
+// LLMConfig.RequestTimeout reach the diagnose.Loop via llmapp.Options.
+// We can't introspect the Loop's internal timers from here, so the
+// test asserts the bootstrap path resolves the config knobs without
+// panicking under non-default values + non-default cross-field-valid
+// combos. The unit tests in internal/app/diagnose cover Loop's actual
+// timeout behavior; this test guards against the wiring breaking.
+func TestNewChatModel_PropagatesDiagnoseConfig(t *testing.T) {
+	// NOT t.Parallel: env Setenv must not race other tests.
+	t.Setenv("OPENDBX_DIAGNOSE_MAX_TURNS", "8")
+	t.Setenv("OPENDBX_DIAGNOSE_TOOL_TIMEOUT", "45s")
+	t.Setenv("OPENDBX_DIAGNOSE_TOTAL_TIMEOUT", "5m")
+	t.Setenv("OPENDBX_LLM_REQUEST_TIMEOUT", "90s")
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("newChatModel panicked under env-overridden Diagnose+RequestTimeout: %v", r)
+		}
+	}()
+	if m := newChatModel(); m == nil {
+		t.Error("newChatModel returned nil under env-overridden Diagnose config")
+	}
+}
+
 // TestNewChatModel_BuildsWithoutPanic exercises the production wiring
 // path end-to-end at the bootstrap level so a future regression that
 // breaks the Registry → Options → diagnose.NewLoop chain surfaces here

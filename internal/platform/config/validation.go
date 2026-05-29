@@ -54,15 +54,42 @@ func (es ValidationErrors) Error() string {
 	return b.String()
 }
 
-// Validate walks cfg, applying all `validate:"..."` rules. Returns nil
-// when all pass; ValidationErrors otherwise (which is also error-typed).
+// Validate walks cfg, applying all `validate:"..."` rules + the small set
+// of cross-field invariants the per-field tag grammar (required / min /
+// max / oneof) cannot express. Returns nil when all pass;
+// ValidationErrors otherwise (which is also error-typed).
 func Validate(cfg *Config) error {
 	var errs ValidationErrors
 	walkValidate(reflect.ValueOf(cfg).Elem(), "", cfg, &errs)
+	validateCrossField(cfg, &errs)
 	if len(errs) > 0 {
 		return wrapValidationError(errs)
 	}
 	return nil
+}
+
+// validateCrossField checks the invariants that span multiple fields.
+// Keep the list small and explicit — adding a generic cross-field tag
+// grammar to walkValidate would balloon the validator surface.
+func validateCrossField(cfg *Config, errs *ValidationErrors) {
+	if cfg == nil {
+		return
+	}
+	// spec-1.21 D-6: a tool deadline exceeding the loop budget is
+	// non-sensical (the loop would terminate before any single tool
+	// could complete). Both fields are validated for min=1 individually
+	// upstream; here we only check the inequality.
+	if cfg.Diagnose.ToolTimeout > 0 && cfg.Diagnose.TotalTimeout > 0 &&
+		cfg.Diagnose.ToolTimeout > cfg.Diagnose.TotalTimeout {
+		src := cfg.Source("Diagnose.ToolTimeout")
+		*errs = append(*errs, ValidationError{
+			Path:     "Diagnose.ToolTimeout",
+			Rule:     "ltefield",
+			Expected: "Diagnose.ToolTimeout ≤ Diagnose.TotalTimeout (spec-1.21 D-6)",
+			Actual:   cfg.Diagnose.ToolTimeout.String() + " > " + cfg.Diagnose.TotalTimeout.String(),
+			Source:   src.String(),
+		})
+	}
 }
 
 func walkValidate(v reflect.Value, parentPath string, cfg *Config, errs *ValidationErrors) {

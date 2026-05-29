@@ -37,6 +37,7 @@ type Config struct {
 	Sentinel  SentinelConfig  `yaml:"sentinel" json:"sentinel"`
 	Trace     TraceConfig     `yaml:"trace" json:"trace"`
 	Scheduler SchedulerConfig `yaml:"scheduler" json:"scheduler"`
+	Diagnose  DiagnoseConfig  `yaml:"diagnose" json:"diagnose"`
 
 	// Inline collections — schema in spec-1.19 (Connections) / spec-1.20 (Models).
 	// Stage 0 contract is "field exists; full schema deferred".
@@ -111,6 +112,24 @@ type SchedulerConfig struct {
 	WorkerPoolSize  int           `yaml:"worker_pool_size" json:"worker_pool_size" env:"OPENDBX_SCHEDULER_WORKER_POOL_SIZE" validate:"min=1,max=128"`
 	FrameBudget     time.Duration `yaml:"frame_budget" json:"frame_budget" env:"OPENDBX_SCHEDULER_FRAME_BUDGET" validate:"min=1"`
 	MaxQueuedFrames int           `yaml:"max_queued_frames" json:"max_queued_frames" env:"OPENDBX_SCHEDULER_MAX_QUEUED_FRAMES" validate:"min=1,max=1024"`
+}
+
+// DiagnoseConfig — multi-turn diagnose-loop tuning (spec-1.21 D-6).
+//
+// MaxTurns caps the number of LLM round-trips before DIAGNOSE.MAX_TURNS
+// terminates the loop (default 16). ToolTimeout bounds a single
+// ToolExecutor.Execute call (default 30s). TotalTimeout bounds the whole
+// loop (default 10min). Per-turn LLM timeout reuses LLMConfig.RequestTimeout
+// (not duplicated here — spec-1.21 D-6: "per-turn LLM 超时复用
+// LLMConfig.RequestTimeout").
+//
+// Cross-field invariant (enforced in validation.go):
+// ToolTimeout ≤ TotalTimeout — a tool deadline exceeding the loop budget
+// is non-sensical (loop would terminate before the tool could complete).
+type DiagnoseConfig struct {
+	MaxTurns     int           `yaml:"max_turns" json:"max_turns" env:"OPENDBX_DIAGNOSE_MAX_TURNS" validate:"min=1,max=100"`
+	ToolTimeout  time.Duration `yaml:"tool_timeout" json:"tool_timeout" env:"OPENDBX_DIAGNOSE_TOOL_TIMEOUT" validate:"min=1"`
+	TotalTimeout time.Duration `yaml:"total_timeout" json:"total_timeout" env:"OPENDBX_DIAGNOSE_TOTAL_TIMEOUT" validate:"min=1"`
 }
 
 // ConnectionConfig — DB connection schema. Stage 0 keeps minimal fields;

@@ -19,6 +19,9 @@ func TestEnvMap_HasExpectedEntries(t *testing.T) {
 		"OPENDBX_OUTPUT_FORMAT":                "Output.Format",
 		"OPENDBX_SESSION_MAX_HISTORY_MESSAGES": "Session.MaxHistoryMessages",
 		"OPENDBX_TRACE_SAMPLE_RATE":            "Trace.SampleRate",
+		"OPENDBX_DIAGNOSE_MAX_TURNS":           "Diagnose.MaxTurns",
+		"OPENDBX_DIAGNOSE_TOOL_TIMEOUT":        "Diagnose.ToolTimeout",
+		"OPENDBX_DIAGNOSE_TOTAL_TIMEOUT":       "Diagnose.TotalTimeout",
 	}
 	for envName, path := range want {
 		if got := m[envName]; got != path {
@@ -35,6 +38,29 @@ func TestApplyENV_String(t *testing.T) {
 	}
 	if cfg.LLM.ActiveModel != "claude-sonnet-4-6" {
 		t.Errorf("got %q", cfg.LLM.ActiveModel)
+	}
+}
+
+// TestApplyENV_DiagnoseOverrides covers all three Diagnose fields' env
+// overrides — int (MaxTurns), duration (ToolTimeout), duration
+// (TotalTimeout) — proving that spec-1.21 D-6 user-config knobs reach
+// the runtime through the reflective env walker.
+func TestApplyENV_DiagnoseOverrides(t *testing.T) {
+	cfg := Default()
+	t.Setenv("OPENDBX_DIAGNOSE_MAX_TURNS", "8")
+	t.Setenv("OPENDBX_DIAGNOSE_TOOL_TIMEOUT", "45s")
+	t.Setenv("OPENDBX_DIAGNOSE_TOTAL_TIMEOUT", "5m")
+	if err := applyENV(cfg); err != nil {
+		t.Fatalf("applyENV: %v", err)
+	}
+	if cfg.Diagnose.MaxTurns != 8 {
+		t.Errorf("MaxTurns = %d; want 8", cfg.Diagnose.MaxTurns)
+	}
+	if cfg.Diagnose.ToolTimeout != 45*time.Second {
+		t.Errorf("ToolTimeout = %v; want 45s", cfg.Diagnose.ToolTimeout)
+	}
+	if cfg.Diagnose.TotalTimeout != 5*time.Minute {
+		t.Errorf("TotalTimeout = %v; want 5m", cfg.Diagnose.TotalTimeout)
 	}
 }
 
