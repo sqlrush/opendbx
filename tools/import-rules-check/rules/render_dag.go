@@ -12,10 +12,9 @@
 // are leaves and block/streaming are roots. R2 sequence reverses to
 // leaf→root + comparison operator flips from `fi >= ti` to `fi <= ti`.
 //
-// Render subpackage strict DAG (leaf→root, 10 layers):
+// Render subpackage strict DAG (leaf→root, 12 entries, including sub-DAG markers):
 //
-//	width → style → terminal → buffer → layout → optimizer → scheduler → block → scrollback → streaming
-//	(0)     (1)      (2)        (3)       (4)      (5)         (6)         (7)     (8)          (9)
+//	width → style → terminal → terminal/tcell → buffer → paint → layout → optimizer → scheduler → block/adapter → block → scrollback → streaming
 //
 // Direction semantics (依赖方向高 index → 低 index):
 //   - "X imports Y" allowed iff index(X) > index(Y).
@@ -59,12 +58,13 @@ var RenderOrder = []string{
 	"terminal",       // 2 — depends on style
 	"terminal/tcell", // 2.5 — terminal sub-DAG (spec-1.17 D-6a): tcell-backed Driver; may import terminal(2) + style(1)
 	"buffer",         // 3 — depends on style + width
+	"paint",          // 3.5 — spec-1.20.2 D-1: cell-to-cell blit helper enforcing buffer.IsContinuation contract; depends only on buffer
 	"layout",         // 4 — depends on width
 	"optimizer",      // 5 — depends on buffer + terminal
 	"scheduler",      // 6 — depends on optimizer + terminal
 	"block/adapter",  // 7 — block sub-DAG leaf (spec-1.9 § 5): style/width only
-	"block",          // 8 — intermediate root: depends on layout + buffer + width + style + block/adapter
-	"scrollback",     // 9 — depends on buffer + layout + block
+	"block",          // 8 — intermediate root: depends on layout + buffer + width + style + block/adapter + paint
+	"scrollback",     // 9 — depends on buffer + layout + block + paint
 	"streaming",      // 10 — true root: depends on scrollback + block
 }
 

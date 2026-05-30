@@ -265,6 +265,13 @@ func L() Logger {
 	return noopLogger{}
 }
 
+// IsInitialised reports whether Init has successfully installed the process
+// logger. TUI bootstrap uses this as a precondition before it takes ownership
+// of stderr and installs the slog bridge.
+func IsInitialised() bool {
+	return current.Load() != nil
+}
+
 // EnableDebugLogging flips the runtime debug toggle to true.
 //
 // Mirrors CC's enableDebugLogging: lets a `/debug` slash command (spec-1.16)

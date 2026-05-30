@@ -7,11 +7,7 @@ package bootstrap
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
-	"os"
-	"path/filepath"
-	"runtime"
 	"sync"
 
 	"github.com/gdamore/tcell/v2"
@@ -25,6 +21,7 @@ import (
 	"github.com/sqlrush/opendbx/internal/domain/llm/factory"
 	"github.com/sqlrush/opendbx/internal/domain/llm/fake"
 	"github.com/sqlrush/opendbx/internal/platform/config"
+	"github.com/sqlrush/opendbx/internal/platform/logger"
 )
 
 // newScreenFn is the screen factory for the program.Run production path
@@ -74,22 +71,23 @@ func setNewScreenFn(fn func() (tcell.Screen, error)) {
 // Returns nil on key-exit (Ctrl+C double-press / Ctrl+\), ctx.Err on
 // cancel, ErrInitFailed wrap on tcell screen construction failure.
 //
-// The Model is llmapp.New (spec-1.20 D-6 production chat). 原则 3: when
+// The Model is llmapp.New (spec-1.20 D-6 production chat). Principle 3: when
 // the LLM provider cannot be constructed (no API key / unknown provider),
 // we do NOT silently fall back to demoapp — instead llmapp is started with
 // a provider that surfaces the LLM.* errcode on the first message, so the
 // user sees an explicit, actionable error.
 func LaunchInteractiveTUI(ctx context.Context) error {
-	// Redirect stdlib slog away from os.Stderr — in TUI mode stderr IS the
-	// terminal, so any slog.Warn/Error (render/scheduler emits these on
-	// frame budget overshoot, channel saturation, BufferPool failures, etc.)
-	// would write raw text into our cell grid and shred the frame
-	// (spec-1.20.1 R-fix follow-up: user reported "frame budget overshoot"
-	// log line burning the screen). 真正接入 platform/logger 是 spec-1.20.2
-	// 的事; 这里先把 default sink 切到 ~/.opendbx/debug/tui-slog.log (无法
-	// 写则 io.Discard), 避免静默丢失同时不撕屏.
-	restoreSlog := redirectSlogToFileForTUI()
-	defer restoreSlog()
+	if !logger.IsInitialised() {
+		return logger.ErrNotInitialised
+	}
+
+	// Route stdlib slog into the platform logger while TUI owns stderr.
+	// scheduler/render packages use slog.Warn/Error for frame-budget and
+	// channel-saturation diagnostics; in an interactive terminal those records
+	// must be preserved in the debug file without tearing the cell grid.
+	prevSlog := slog.Default()
+	slog.SetDefault(slog.New(logger.NewSlogHandler()))
+	defer slog.SetDefault(prevSlog)
 
 	screen, err := getNewScreenFn()()
 	if err != nil {
@@ -120,66 +118,8 @@ func LaunchInteractiveTUI(ctx context.Context) error {
 	return runErr
 }
 
-// redirectSlogToFileForTUI swaps the stdlib slog default handler so that
-// scheduler/worker/etc. slog.Warn/Error events go to a file rather than
-// os.Stderr (== the TUI's drawing surface). Returns a cleanup closure
-// that restores the previous default and closes the file.
-//
-// Path: $HOME/.opendbx/debug/tui-slog.log (append, 0600). If the file
-// cannot be opened, falls back to io.Discard — the WARNs are dropped but
-// the frame stays intact (deferred-observability tradeoff documented in
-// spec-1.20.2 backlog: real platform/logger ↔ slog bridge).
-func redirectSlogToFileForTUI() func() {
-	prev := slog.Default()
-	restore := func() { slog.SetDefault(prev) }
-
-	sink := io.Writer(io.Discard)
-	var closer io.Closer
-	if path, ok := tuiSlogPath(); ok {
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err == nil {
-			// path is composed from os.UserHomeDir + a fixed suffix
-			// ("/.opendbx/debug/tui-slog.log") — not user input.
-			//nolint:gosec // spec-1.20.1 R-fix: G304 path is internal-derived (UserHomeDir + fixed suffix), not attacker-influenced.
-			if f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
-				sink = f
-				closer = f
-			}
-		}
-	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(sink, &slog.HandlerOptions{
-		Level: slog.LevelInfo, // INFO+; tightens default Verbose floor.
-	})))
-	return func() {
-		restore()
-		if closer != nil {
-			_ = closer.Close()
-		}
-	}
-}
-
-// tuiSlogPath returns the canonical TUI slog file location, matching the
-// platform/logger debug-dir convention ($HOME/.opendbx/debug on unix,
-// %APPDATA%/opendbx/debug on Windows). Empty bool=false on resolution
-// failure → caller uses io.Discard.
-func tuiSlogPath() (string, bool) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", false
-	}
-	switch runtime.GOOS {
-	case "windows":
-		appdata := os.Getenv("APPDATA")
-		if appdata == "" {
-			appdata = filepath.Join(home, "AppData", "Roaming")
-		}
-		return filepath.Join(appdata, "opendbx", "debug", "tui-slog.log"), true
-	default:
-		return filepath.Join(home, ".opendbx", "debug", "tui-slog.log"), true
-	}
-}
-
 // newChatModel loads config, builds the LLM provider via the factory, and
-// returns the spec-1.20 llmapp chat Model. 原则 3: a provider-construction
+// returns the spec-1.20 llmapp chat Model. Principle 3: a provider-construction
 // failure does NOT fall back to demoapp — it yields a provider whose
 // Stream returns the LLM.* errcode, so the user gets an explicit error
 // (with the actionable Hint) on their first message rather than a silent
@@ -190,6 +130,7 @@ func newChatModel() program.Model {
 		// Config load failed entirely — surface UNAVAILABLE on first message.
 		return llmapp.New(fake.New().WithStartErr(llm.ErrUnavailable), llmapp.Options{Registry: defaultDiagnoseRegistry()})
 	}
+	emitStripThinkMigrationNotice(cfg)
 	provider, perr := factory.New(*cfg)
 	opts := llmapp.Options{
 		ModelName:      cfg.LLM.ActiveModel,
@@ -209,10 +150,64 @@ func newChatModel() program.Model {
 		ReqTimeout:   cfg.LLM.RequestTimeout,
 	}
 	if perr != nil {
-		// 原则 3: explicit error, no demoapp fallback.
+		// Principle 3: explicit error, no demoapp fallback.
 		return llmapp.New(fake.New().WithStartErr(perr), opts)
 	}
 	return llmapp.New(provider, opts)
+}
+
+// stripThinkMigrationNoticeOnce is a per-process latch — the
+// once-emitted contract is process-wide so re-entering newChatModel
+// (tests, future hot-reload) does not spam the debug log.
+//
+//nolint:gochecknoglobals // spec-1.20.2 D-5 R-1: one-shot migration log; per-process state is the simplest correct shape.
+var stripThinkMigrationNoticeOnce sync.Once
+
+// stripThinkMigrationLogFn is a TEST SEAM sink for emitStripThinkMigrationNotice.
+// Production wires it to logger.WarnForceFile (file-only, bypasses
+// debug gate, never stderr — spec-1.20.2 D-4 contract). Tests override
+// it to a capture closure so the assertion does not depend on the
+// platform logger singleton's init/close ordering.
+//
+//nolint:gochecknoglobals // spec-1.20.2 D-5 R-1: function-pointer test seam; cheaper than logger.ResetForTesting export.
+var stripThinkMigrationLogFn = func(msg string, kv ...any) {
+	logger.WarnForceFile(msg, kv...)
+}
+
+// resetStripThinkMigrationNoticeForTest is a test seam; production
+// code MUST NOT call this. spec-1.20.2 D-5 R-1: the once-latch is
+// per-process so unit tests that exercise the emission path need a
+// way to clear state between sub-cases.
+func resetStripThinkMigrationNoticeForTest() {
+	stripThinkMigrationNoticeOnce = sync.Once{}
+}
+
+// emitStripThinkMigrationNotice writes a one-time info record to the
+// platform logger when the user gets the new spec-1.20.2 D-5 BREAKING
+// default for LLMConfig.StripThink (false → true) without having opted
+// out via yaml or OPENDBX_LLM_STRIP_THINK. Caller MUST have already
+// installed the slog → logger bridge (see LaunchInteractiveTUI) so
+// the record reaches the debug file and not the user's terminal.
+//
+// The notice fires when StripThink came from SourceDefault AND is true.
+// An operator who explicitly set strip_think: true via yaml / env gets
+// the same value but a non-default source — we skip the log there to
+// avoid noise.
+func emitStripThinkMigrationNotice(cfg *config.Config) {
+	if cfg == nil || !cfg.LLM.StripThink {
+		return
+	}
+	if cfg.Source("LLM.StripThink") != config.SourceDefault {
+		return
+	}
+	stripThinkMigrationNoticeOnce.Do(func() {
+		stripThinkMigrationLogFn(
+			"spec-1.20.2 D-5: thinking content is hidden by default (llm.strip_think=true). "+
+				"To restore previous behavior, set llm.strip_think=false in your config "+
+				"or OPENDBX_LLM_STRIP_THINK=false.",
+			"spec", "1.20.2", "deliverable", "D-5", "breaking", true,
+		)
+	})
 }
 
 // defaultDiagnoseRegistry returns the production ToolExecutor registry

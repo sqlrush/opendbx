@@ -81,6 +81,8 @@ jobs:
           shellcheck git-hooks/pre-commit
       - name: errcode-lint (spec-0.10 D-2)
         run: go run ./tools/errcode-lint ./...
+      - name: paint-pattern-lint (spec-1.20.2 D-3)
+        run: go run ./tools/paint-pattern-lint ./...
       - name: suppression-lint (spec-0.10 D-2.5)
         run: go run ./tools/suppression-lint .
 
@@ -396,6 +398,15 @@ jobs:
         env:
           LLMCHAT_VISUAL_REQUIRED: ${{ vars.LLMCHAT_VISUAL_REQUIRED || '' }}
         run: make ui-llmchat-golden
+      - name: Layer 3 reasoning/render gate (spec-1.20.2 D-6)
+        # 13th independent block-style visual env gate. The smoke runs
+        # the spec-1.20.2 invariants (no mojibake / no mixed reasoning /
+        # no stderr tear) + parked fixture guard
+        # (tests/integration/uitest/reasoningrender/testdata/visual/).
+        # Capture SOP lands post-stage-1 acceptance.
+        env:
+          REASONINGRENDER_VISUAL_REQUIRED: ${{ vars.REASONINGRENDER_VISUAL_REQUIRED || '' }}
+        run: make ui-reasoningrender-golden
 
   # spec-0.11.5 D-4/D-5: Layer 5 screenshot evidence. Required context,
   # label-gated. PR body/label edits retrigger this workflow so stale

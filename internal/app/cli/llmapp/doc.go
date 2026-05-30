@@ -16,7 +16,7 @@
 //
 // text/control split (R2 CRIT-2 + spec-1.21 D-6 union extension):
 // renderable text → TokenStream (Drained in View); control
-// (VisibleContent / Thinking + *llm.ToolUse / *llm.ToolResult / Finish +
+// (VisibleContent / ThinkingToken + *llm.ToolUse / *llm.ToolResult / Finish +
 // TermCode) → ctrl chan → reader-Cmd → Update. Thinking / tool events
 // never enter the FROZEN streaming.Chunk.
 //

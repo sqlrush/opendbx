@@ -15,6 +15,7 @@ import (
 
 	"github.com/sqlrush/opendbx/internal/app/cli/input"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
+	"github.com/sqlrush/opendbx/internal/app/cli/render/paint"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/scheduler"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/style"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/terminal"
@@ -321,7 +322,7 @@ func (p *Program) renderFn(next *buffer.Grid) {
 	sbCols, sbRows := layout.ScrollbackSize()
 	if sbRows > 0 {
 		sbBuf := p.model.View(sbCols, sbRows)
-		paintBufferAt(next, sbBuf, 0, 0)
+		paint.BlitAt(next, sbBuf, 0, 0)
 	}
 	// R4 L-2 go-reviewer: extract InputState once per frame so input row
 	// + status line share an identical snapshot. Removes the burden on
@@ -465,33 +466,6 @@ func runCleanupCmd(cmd scheduler.Cmd) {
 		}
 	}()
 	_ = cmd()
-}
-
-// paintBufferAt copies cells from src into dst starting at (xOff, yOff).
-// Out-of-bounds cells are dropped silently. nil src is a no-op.
-func paintBufferAt(dst *buffer.Grid, src buffer.Buffer, xOff, yOff int) {
-	if src == nil {
-		return
-	}
-	dstCols, dstRows := dst.Size()
-	srcCols, srcRows := src.Size()
-	for y := 0; y < srcRows; y++ {
-		dy := yOff + y
-		if dy < 0 || dy >= dstRows {
-			continue
-		}
-		for x := 0; x < srcCols; x++ {
-			dx := xOff + x
-			if dx < 0 || dx >= dstCols {
-				continue
-			}
-			c := src.Cell(x, y)
-			if buffer.IsContinuation(c) {
-				continue
-			}
-			dst.SetCell(dx, dy, c)
-		}
-	}
 }
 
 // paintTextAt writes runes from s into grid starting at (x, y), using

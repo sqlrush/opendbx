@@ -26,7 +26,7 @@
 .PHONY: hooks-install hooks-status import-check dep-check
 .PHONY: golden golden-update gen-docs cc-help-diff
 .PHONY: coverage-gate makefile-check tag-spec release registry-drift-check
-.PHONY: vuln-check ci-script-check sync-branch-protection suppression-check errcode-check lint-all
+.PHONY: vuln-check ci-script-check sync-branch-protection suppression-check errcode-check paint-pattern-check lint-all
 
 BIN_DIR := bin
 BIN_NAME := opendbx
@@ -197,6 +197,7 @@ gate: import-check dep-check golden ## Local layer-2 gate (must pass before push
 	$(MAKE) ci-script-check
 	$(MAKE) suppression-check
 	$(MAKE) errcode-check
+	$(MAKE) paint-pattern-check
 	$(MAKE) coverage-gate
 	$(MAKE) bench
 	@echo "=== Layer-2 Gate PASSED ==="
@@ -307,8 +308,17 @@ suppression-check: ## Verify all suppression comments carry spec_ref
 errcode-check: ## Verify exported public API errors use errcode (D-2)
 	@$(GO) run ./tools/errcode-lint ./...
 
+# spec-1.20.2 D-3: paint-pattern-lint enforces that cross-receiver
+# cell-to-cell copies go through render/paint.Blit/BlitAt, never the
+# bare dst.SetCell(x, y, src.Cell(...)) (or one-hop assign) pattern
+# that caused the 5/28 user-terminal CJK / markdown mojibake. Run via
+# `go run` (not pre-built binary): tooling source must be present, no
+# command -v silent skip.
+paint-pattern-check: ## Verify no bare cell-to-cell SetCell (D-3)
+	@$(GO) run ./tools/paint-pattern-lint ./...
+
 # spec-0.11.5 D-5: UI Review 5-layer gate targets.
-.PHONY: ui-invariant ui-visual-golden ui-ai-review ui-block-golden ui-block-ai-review ui-tooluse-golden ui-toolresult-golden ui-compact-golden ui-markdown-golden ui-code-golden ui-diff-golden ui-program-golden ui-input-golden ui-keybindings-golden ui-llmchat-golden
+.PHONY: ui-invariant ui-visual-golden ui-ai-review ui-block-golden ui-block-ai-review ui-tooluse-golden ui-toolresult-golden ui-compact-golden ui-markdown-golden ui-code-golden ui-diff-golden ui-program-golden ui-input-golden ui-keybindings-golden ui-llmchat-golden ui-reasoningrender-golden
 ui-invariant: ## Layer 1 static invariants (uiinvariant package tests)
 	$(GO) test -race -count=1 ./internal/testing/uiinvariant/...
 
@@ -353,6 +363,12 @@ ui-keybindings-golden: ## Keybindings cursor/history (spec-1.17) visual golden h
 
 ui-llmchat-golden: ## LLM chat (spec-1.20) visual golden harness
 	LLMCHAT_VISUAL_REQUIRED=$${LLMCHAT_VISUAL_REQUIRED:-} $(GO) test -race -count=1 -run TestLLMChatVisualGolden ./tests/integration/uitest/llmchat/...
+
+# spec-1.20.2 D-6: 13th independent block-style visual env gate. Runs the
+# production-like smoke (no mojibake / no mixed reasoning / no stderr
+# tear) + parked fixture guard. Golden capture lands post-stage-1 SOP.
+ui-reasoningrender-golden: ## Reasoning/render (1.20.2) gate
+	REASONINGRENDER_VISUAL_REQUIRED=$${REASONINGRENDER_VISUAL_REQUIRED:-} $(GO) test -race -count=1 ./tests/integration/uitest/reasoningrender/...
 
 ui-block-ai-review: ## Block Message AI visual review wrapper
 	$(MAKE) ui-ai-review

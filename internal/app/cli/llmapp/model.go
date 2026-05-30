@@ -14,6 +14,7 @@ import (
 	"github.com/sqlrush/opendbx/internal/app/cli/program"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/block"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
+	"github.com/sqlrush/opendbx/internal/app/cli/render/paint"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/scheduler"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/streaming"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/style"
@@ -76,12 +77,14 @@ type Model struct {
 	buffer string
 	cursor int
 
-	history    []llm.Message          // bounded FIFO (R2 MED-4)
-	stream     *streaming.TokenStream // in-flight render stream (nil = idle)
-	control    chan streamControlMsg  // Loop emit → Update (spec-1.21 D-6; legacy R2.2 shape preserved)
-	cancel     context.CancelFunc     // cancels in-flight stream (Cmd/Cleanup)
-	streaming  bool
-	sawContent bool // any visible content this turn (R2 H-5 / R2.2 HIGH-2)
+	history     []llm.Message          // bounded FIFO (R2 MED-4)
+	stream      *streaming.TokenStream // in-flight render stream (nil = idle)
+	control     chan streamControlMsg  // Loop emit → Update (spec-1.21 D-6; legacy R2.2 shape preserved)
+	cancel      context.CancelFunc     // cancels in-flight stream (Cmd/Cleanup)
+	streaming   bool
+	sawContent  bool   // any visible content this turn (R2 H-5 / R2.2 HIGH-2)
+	sawThinking bool   // any thinking-channel token this turn (spec-1.20.2 D-5)
+	thinkingBuf string // accumulated thinking text when strip_think=false
 
 	// toolUseNames joins ToolResult.ToolUseID → ToolUse.Name within a
 	// single submit (spec-1.21 D-6 / spec-1.9b R3 HIGH-3: rendering a
@@ -175,13 +178,18 @@ func (m *Model) Update(msg scheduler.Msg) (program.Model, scheduler.Cmd) {
 		// Drain is race-free (same single-owner as the View Drain).
 		if next.stream != nil {
 			if nodes := next.stream.Drain(); len(nodes) > 0 {
-				next.scrollback = appendNodes(m.scrollback, nodes)
+				nodes = filterThinkingOnlyEmpty(nodes, next.sawThinking, next.sawContent)
+				if len(nodes) > 0 {
+					next.scrollback = appendNodes(next.scrollback, nodes)
+				}
 			}
 		}
 		next.stream = nil
 		next.control = nil
 		next.cancel = nil
 		next.streaming = false
+		next.sawThinking = false
+		next.thinkingBuf = ""
 		return &next, nil
 	}
 	return m, nil
@@ -234,6 +242,8 @@ func (m *Model) submit() (program.Model, scheduler.Cmd) {
 	next.cancel = cancel
 	next.streaming = true
 	next.sawContent = false
+	next.sawThinking = false
+	next.thinkingBuf = ""
 	next.history = appendBounded(m.history, llm.Message{
 		Role:    llm.RoleUser,
 		Content: []llm.ContentBlock{{Type: llm.BlockText, Text: userText}},
@@ -281,6 +291,11 @@ func (m *Model) buildRequest(userText string) llm.Request {
 func (m *Model) handleControl(msg streamControlMsg) (program.Model, scheduler.Cmd) {
 	next := *m
 	switch {
+	case msg.Thinking:
+		next.sawThinking = true
+		if msg.ThinkingToken != "" {
+			next.thinkingBuf += msg.ThinkingToken
+		}
 	case msg.ToolUse != nil:
 		// Mutate the per-submit map in place — next is already a shallow
 		// copy and toolUseNames is owned by this in-flight submit.
@@ -347,35 +362,46 @@ func (m *Model) appendFinishNode(msg streamControlMsg) []block.RenderNode {
 	case "DIAGNOSE.UNEXPECTED_PAUSE":
 		return appendNode(m.scrollback, block.Message{Text: "[DIAGNOSE.UNEXPECTED_PAUSE: 非预期 pause_turn]"})
 	}
+	base := m.scrollback
+	if m.thinkingBuf != "" {
+		base = appendNode(base, block.Thinking{Content: m.thinkingBuf, Collapsed: true})
+	}
+	if m.sawThinking && !m.sawContent && msg.Finish == llm.FinishStop {
+		if m.thinkingBuf != "" {
+			return base
+		}
+		return appendNode(base, block.Message{Text: block.ThinkingOnlyStripMarker()})
+	}
+
 	// Specific finish reasons next; STREAM_EMPTY is the last-resort case
-	// for a genuinely empty (thinking-only) non-Stop end (R2.2 case-order
-	// fix — the !sawContent fallback must not shadow Error/Length).
+	// for a genuinely empty non-Stop end (R2.2 case-order fix — the
+	// !sawContent fallback must not shadow Error/Length).
 	switch {
 	case msg.Finish == llm.FinishCancelled || (msg.Finish == llm.FinishError && errors.Is(msg.Err, context.Canceled)):
 		// T-10a MED: a deliberate user cancel gets its own marker so it is
 		// not silently blank nor mislabeled STREAM_EMPTY (checked before the
 		// !sawContent fallback). msg.Err.Error() is NOT rendered here — the
 		// cancel is expected, not an error to surface.
-		return appendNode(m.scrollback, block.Message{Text: "[已取消]"})
+		return appendNode(base, block.Message{Text: "[已取消]"})
 	case msg.Finish == llm.FinishError && msg.Err != nil:
 		// NB: the SDK's apierror.Error() formats METHOD/URL/STATUS/body only —
 		// it does NOT dump request headers, so the API key (X-Api-Key) never
 		// leaks here. Do not pass SDK errors to httputil.DumpRequest (T-10a
 		// security MED-3).
-		return appendNode(m.scrollback, block.Message{Text: "[错误: " + msg.Err.Error() + "]"})
+		return appendNode(base, block.Message{Text: "[错误: " + msg.Err.Error() + "]"})
 	case msg.Finish == llm.FinishRefusal:
-		return appendNode(m.scrollback, block.Message{Text: "[LLM.PROVIDER_REFUSAL: 模型拒绝生成]"})
+		return appendNode(base, block.Message{Text: "[LLM.PROVIDER_REFUSAL: 模型拒绝生成]"})
 	case !m.sawContent && msg.Finish != llm.FinishStop:
 		// No visible content + non-Stop (thinking-only Length / stop_sequence
 		// / pause / cancel) → explicit status so the screen is not silently
 		// blank (痛点 1.5). Checked before the Length marker so a
 		// thinking-only truncation reports empty, not "[截断]".
-		return appendNode(m.scrollback, block.Message{Text: "[LLM.STREAM_EMPTY: 无可见输出]"})
+		return appendNode(base, block.Message{Text: "[LLM.STREAM_EMPTY: 无可见输出]"})
 	case msg.Finish == llm.FinishLength:
 		// Had visible content but hit the token cap.
-		return appendNode(m.scrollback, block.Message{Text: "[截断: 达到 max_tokens]"})
+		return appendNode(base, block.Message{Text: "[截断: 达到 max_tokens]"})
 	}
-	return m.scrollback
+	return base
 }
 
 // handleCancel cancels an in-flight stream via a Cmd (side effect in Cmd,
@@ -400,6 +426,7 @@ func (m *Model) handleCancel() (program.Model, scheduler.Cmd) {
 func (m *Model) View(cols, rows int) buffer.Buffer {
 	if m.stream != nil {
 		if nodes := m.stream.Drain(); len(nodes) > 0 {
+			nodes = filterThinkingOnlyEmpty(nodes, m.sawThinking, m.sawContent)
 			m.scrollback = append(m.scrollback, nodes...)
 		}
 	}
@@ -417,7 +444,7 @@ func (m *Model) View(cols, rows int) buffer.Buffer {
 		}
 		_, nbRows := nb.Size()
 		top := y - nbRows + 1
-		paintBufferAt(g, nb, 0, top)
+		paint.BlitAt(g, nb, 0, top)
 		y = top - 1
 	}
 	return g
@@ -482,6 +509,21 @@ func appendNodes(sb []block.RenderNode, nodes []block.RenderNode) []block.Render
 	return next
 }
 
+func filterThinkingOnlyEmpty(nodes []block.RenderNode, sawThinking, sawContent bool) []block.RenderNode {
+	if !sawThinking || sawContent || len(nodes) == 0 {
+		return nodes
+	}
+	out := make([]block.RenderNode, 0, len(nodes))
+	for _, n := range nodes {
+		msg, ok := n.(block.Message)
+		if ok && msg.Empty {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
 // transitionToolUseState returns a new scrollback slice with the most
 // recent block.ToolUse matching id rewritten to the given state. Other
 // entries are preserved by identity (interface values are copied; the
@@ -533,32 +575,8 @@ func nodeTypeName(n block.RenderNode) string {
 		return "block.ToolUse"
 	case block.ToolResult:
 		return "block.ToolResult"
+	case block.Thinking:
+		return "block.Thinking"
 	}
 	return "block.unknown"
-}
-
-// paintBufferAt copies src cells into dst at (xOff, yOff); OOB dropped.
-func paintBufferAt(dst *buffer.Grid, src buffer.Buffer, xOff, yOff int) {
-	if src == nil {
-		return
-	}
-	dstCols, dstRows := dst.Size()
-	srcCols, srcRows := src.Size()
-	for sy := 0; sy < srcRows; sy++ {
-		dy := yOff + sy
-		if dy < 0 || dy >= dstRows {
-			continue
-		}
-		for sx := 0; sx < srcCols; sx++ {
-			dx := xOff + sx
-			if dx < 0 || dx >= dstCols {
-				continue
-			}
-			c := src.Cell(sx, sy)
-			if buffer.IsContinuation(c) {
-				continue
-			}
-			dst.SetCell(dx, dy, c)
-		}
-	}
 }

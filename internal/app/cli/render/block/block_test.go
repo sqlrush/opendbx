@@ -15,7 +15,8 @@ import (
 // spec-0.13 D-3 block types still return (nil, ErrUnsupportedNode).
 // Promoted to production so far: Message (spec-1.7) / ToolUse (spec-1.9)
 // / ToolResult (spec-1.9b) / CompactSummary (spec-1.10) / Markdown
-// (spec-1.11) / Code (spec-1.12) / Diff (spec-1.13). Remaining 2 stubs
+// (spec-1.11) / Code (spec-1.12) / Diff (spec-1.13) / Thinking
+// (spec-1.20.2). Remaining 2 stubs
 // (Banner/Progress) preserve the spec-0.13 stub contract.
 //
 // spec-1.12 R2 codex L1: Code removed from stub list (promoted to

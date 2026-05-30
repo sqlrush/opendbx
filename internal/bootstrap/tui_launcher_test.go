@@ -5,10 +5,10 @@
 package bootstrap
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,12 +17,27 @@ import (
 
 	tcellpkg "github.com/sqlrush/opendbx/internal/app/cli/tui"
 	"github.com/sqlrush/opendbx/internal/domain/llm"
+	"github.com/sqlrush/opendbx/internal/platform/config"
+	"github.com/sqlrush/opendbx/internal/platform/logger"
 )
+
+func initLoggerForTUITest(t *testing.T) {
+	t.Helper()
+	err := logger.Init(logger.InitInput{
+		SessionID:      "bootstrap-test",
+		LogPath:        filepath.Join(t.TempDir(), "debug.log"),
+		DisableSidecar: true,
+	})
+	if err != nil && !errors.Is(err, logger.ErrAlreadyInitialised) {
+		t.Fatalf("logger.Init: %v", err)
+	}
+}
 
 // TestLaunchInteractiveTUI_NewScreenFailure exercises the init-failure
 // path. Replaces the screen factory with a stub that always errors.
 // spec-1.17 D-6b: error pass-through unchanged from spec-0.12.
 func TestLaunchInteractiveTUI_NewScreenFailure(t *testing.T) {
+	initLoggerForTUITest(t)
 	// NOT t.Parallel — mutates package-global factory state.
 	orig := getNewScreenFn()
 	setNewScreenFn(func() (tcell.Screen, error) {
@@ -47,6 +62,7 @@ func TestLaunchInteractiveTUI_NewScreenFailure(t *testing.T) {
 // tui.Run path is retired from production (no caller) but its function
 // body remains for any future legacy use.
 func TestLaunchInteractiveTUI_HappyPath(t *testing.T) {
+	initLoggerForTUITest(t)
 	// NOT t.Parallel — mutates package-global factory state.
 	orig := getNewScreenFn()
 	sim := tcellpkg.NewSimulationScreen()
@@ -75,41 +91,25 @@ func TestLaunchInteractiveTUI_HappyPath(t *testing.T) {
 	}
 }
 
-// TestRedirectSlogToFileForTUI_RestoresPrev guards the spec-1.20.1 R-fix
-// follow-up: scheduler emits slog.Warn that, on the stdlib default text
-// handler, lands on os.Stderr (==TUI surface) and shreds the frame. The
-// launcher swap must take effect and the cleanup closure must restore.
-func TestRedirectSlogToFileForTUI_RestoresPrev(t *testing.T) {
-	// NOT t.Parallel: mutates slog default.
+// TestLaunchInteractiveTUI_RestoresSlogDefaultOnFailure guards the TUI slog
+// bridge lifecycle: LaunchInteractiveTUI installs logger.NewSlogHandler while
+// it owns the terminal, then restores the previous stdlib slog default even on
+// early screen-construction failure.
+func TestLaunchInteractiveTUI_RestoresSlogDefaultOnFailure(t *testing.T) {
+	initLoggerForTUITest(t)
+	// NOT t.Parallel: mutates package-global factory state and slog default.
+	orig := getNewScreenFn()
+	setNewScreenFn(func() (tcell.Screen, error) {
+		return nil, tcellpkg.ErrInitFailed
+	})
+	t.Cleanup(func() { setNewScreenFn(orig) })
+
 	prev := slog.Default()
-	restore := redirectSlogToFileForTUI()
-	if slog.Default() == prev {
-		t.Fatal("slog default not swapped by redirectSlogToFileForTUI")
+	if err := LaunchInteractiveTUI(context.Background()); !errors.Is(err, tcellpkg.ErrInitFailed) {
+		t.Fatalf("LaunchInteractiveTUI err = %v, want ErrInitFailed", err)
 	}
-	restore()
 	if slog.Default() != prev {
-		t.Fatal("slog default not restored after cleanup")
-	}
-}
-
-// TestRedirectSlogToFileForTUI_SilencesStderr verifies the swapped handler
-// does not write to os.Stderr (TUI surface). We can't directly observe the
-// file write here, but we can confirm that emitting a Warn through the
-// active handler does NOT go to a stderr-shaped buffer.
-func TestRedirectSlogToFileForTUI_SilencesStderr(t *testing.T) {
-	// NOT t.Parallel: mutates slog default.
-	var buf bytes.Buffer
-	stderrHandler := slog.New(slog.NewTextHandler(&buf, nil))
-	prev := slog.Default()
-	slog.SetDefault(stderrHandler)
-	defer slog.SetDefault(prev)
-
-	restore := redirectSlogToFileForTUI()
-	slog.Warn("frame budget overshoot test marker")
-	restore()
-
-	if strings.Contains(buf.String(), "frame budget overshoot test marker") {
-		t.Errorf("redirected slog still wrote to the prior stderr-shaped sink: %q", buf.String())
+		t.Fatal("LaunchInteractiveTUI did not restore slog default after failure")
 	}
 }
 
@@ -189,4 +189,109 @@ func TestThinkingModeFromConfig(t *testing.T) {
 			t.Errorf("thinkingModeFromConfig(%q) = %v; want %v", in, got, want)
 		}
 	}
+}
+
+// ============================================================
+// spec-1.20.2 D-5: StripThink BREAKING migration notice
+// ============================================================
+
+// captureMigrationEmit installs a stripThinkMigrationLogFn that records
+// every call; returns the slice + a restore func. Bypasses the platform
+// logger singleton's init/close ordering, which is shared across tests
+// in the same process and fights non-parallel test seams.
+func captureMigrationEmit(t *testing.T) (*[]string, func()) {
+	t.Helper()
+	prev := stripThinkMigrationLogFn
+	var calls []string
+	stripThinkMigrationLogFn = func(msg string, _ ...any) {
+		calls = append(calls, msg)
+	}
+	return &calls, func() { stripThinkMigrationLogFn = prev }
+}
+
+// TestEmitStripThinkMigrationNotice_DefaultTrue verifies the one-shot
+// migration log fires when StripThink got the new default and the
+// config Source is SourceDefault.
+func TestEmitStripThinkMigrationNotice_DefaultTrue(t *testing.T) {
+	// NOT t.Parallel: mutates once latch + log function pointer.
+	resetStripThinkMigrationNoticeForTest()
+	calls, restore := captureMigrationEmit(t)
+	defer restore()
+
+	cfg := config.Default() // StripThink=true, Source=SourceDefault
+	emitStripThinkMigrationNotice(cfg)
+
+	if len(*calls) != 1 {
+		t.Fatalf("emit count = %d; want 1", len(*calls))
+	}
+	msg := (*calls)[0]
+	if !strings.Contains(msg, "spec-1.20.2") || !strings.Contains(msg, "strip_think") {
+		t.Errorf("migration notice missing markers: %q", msg)
+	}
+}
+
+// TestEmitStripThinkMigrationNotice_ExplicitTrueSuppressed verifies
+// that an operator who explicitly set strip_think: true via yaml / env
+// does NOT see the migration notice (their setting is intentional, so
+// the notice would be noise).
+func TestEmitStripThinkMigrationNotice_ExplicitTrueSuppressed(t *testing.T) {
+	// NOT t.Parallel: mutates once latch + log function pointer.
+	resetStripThinkMigrationNoticeForTest()
+	calls, restore := captureMigrationEmit(t)
+	defer restore()
+
+	cfg := config.Default()
+	cfg.SetSource("LLM.StripThink", config.SourceUserSettings)
+	emitStripThinkMigrationNotice(cfg)
+
+	if len(*calls) != 0 {
+		t.Errorf("emit fired despite explicit user source: %v", *calls)
+	}
+}
+
+// TestEmitStripThinkMigrationNotice_FalseSuppressed verifies that when
+// StripThink is false (legacy behavior preserved by explicit opt-out),
+// no notice fires regardless of source.
+func TestEmitStripThinkMigrationNotice_FalseSuppressed(t *testing.T) {
+	// NOT t.Parallel: mutates once latch + log function pointer.
+	resetStripThinkMigrationNoticeForTest()
+	calls, restore := captureMigrationEmit(t)
+	defer restore()
+
+	cfg := config.Default()
+	cfg.LLM.StripThink = false
+	cfg.SetSource("LLM.StripThink", config.SourceUserSettings)
+	emitStripThinkMigrationNotice(cfg)
+
+	if len(*calls) != 0 {
+		t.Errorf("emit fired despite strip_think=false: %v", *calls)
+	}
+}
+
+// TestEmitStripThinkMigrationNotice_OnceLatch verifies that two calls
+// in the same process produce exactly one log record (the latch is
+// process-wide so newChatModel re-entry does not spam).
+func TestEmitStripThinkMigrationNotice_OnceLatch(t *testing.T) {
+	// NOT t.Parallel: mutates once latch + log function pointer.
+	resetStripThinkMigrationNoticeForTest()
+	calls, restore := captureMigrationEmit(t)
+	defer restore()
+
+	cfg := config.Default()
+	emitStripThinkMigrationNotice(cfg)
+	emitStripThinkMigrationNotice(cfg)
+
+	if len(*calls) != 1 {
+		t.Errorf("emit fired %d times; want exactly 1 (sync.Once)", len(*calls))
+	}
+}
+
+// TestEmitStripThinkMigrationNotice_NilConfigSafe guards against the
+// degenerate path where caller passes nil — must not panic.
+func TestEmitStripThinkMigrationNotice_NilConfigSafe(t *testing.T) {
+	// NOT t.Parallel: mutates once latch.
+	resetStripThinkMigrationNoticeForTest()
+	_, restore := captureMigrationEmit(t)
+	defer restore()
+	emitStripThinkMigrationNotice(nil) // must not panic
 }

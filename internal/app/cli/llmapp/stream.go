@@ -15,10 +15,13 @@ import (
 //   - ToolUse != nil       → EventToolCall variant
 //   - ToolResult != nil    → EventToolResult variant
 //   - Finish.Terminal()    → EventFinish variant (TermCode optional DIAGNOSE.*)
-//   - default (all nil)    → EventText variant; VisibleContent / Thinking
-//     describe the chunk so Update can accumulate sawContent without
-//     inspecting the TokenStream (otherwise text + FinishLength would be
-//     misjudged !sawContent → false STREAM_EMPTY).
+//   - Thinking=true       → EventText thinking-channel variant; ThinkingToken
+//     carries renderable thinking only when strip_think=false. Thinking never
+//     enters the TokenStream / main content plane.
+//   - default (all nil)    → EventText visible-text variant; VisibleContent
+//     tells Update to accumulate sawContent without inspecting TokenStream
+//     (otherwise text + FinishLength would be misjudged !sawContent → false
+//     STREAM_EMPTY).
 //
 // At most one variant is populated per message; mixed shapes are not
 // produced by makeEmit. Update dispatches on the variants in priority
@@ -27,6 +30,7 @@ import (
 type streamControlMsg struct {
 	VisibleContent bool
 	Thinking       bool
+	ThinkingToken  string          // EventText thinking side channel (spec-1.20.2 D-5)
 	ToolUse        *llm.ToolUse    // EventToolCall (spec-1.21 D-6)
 	ToolResult     *llm.ToolResult // EventToolResult (spec-1.21 D-6)
 	Finish         llm.FinishReason
