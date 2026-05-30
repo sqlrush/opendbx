@@ -30,6 +30,11 @@ type ClockTool struct {
 // Name implements ToolExecutor.
 func (ClockTool) Name() string { return "clock" }
 
+// Cacheable implements diagnose.CacheableTool. clock returns the CURRENT time,
+// so caching it within a window would serve a stale timestamp — it opts out of
+// dedup entirely (spec-1.22 D-4: no key, no lookup, no store).
+func (ClockTool) Cacheable() bool { return false }
+
 // Schema implements ToolExecutor. No input parameters; the model invokes
 // it bare. We still ship a valid JSON-schema object so OpenAI-compat
 // providers that require Parameters do not 400.

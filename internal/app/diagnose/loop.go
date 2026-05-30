@@ -47,6 +47,9 @@ const (
 	DefaultToolTimeout  = 30 * time.Second
 	DefaultTotalTimeout = 10 * time.Minute
 	DefaultReqTimeout   = 60 * time.Second
+	// DefaultDedupWindow is the turn-distance within which an identical
+	// (Name, hash(Input)) tool call is served from cache (spec-1.22 § 3.6).
+	DefaultDedupWindow = 3
 )
 
 // Options is the Loop constructor input.
@@ -65,6 +68,17 @@ type Options struct {
 
 	// ReqTimeout bounds one provider.Stream turn. 0 → DefaultReqTimeout.
 	ReqTimeout time.Duration
+
+	// DedupEnabled turns the per-Run tool-call dedup cache on/off
+	// (spec-1.22 D-5). The zero value is false — a direct NewLoop without
+	// config (e.g. spec-1.21 tests) gets dedup OFF, preserving byte-for-byte
+	// spec-1.21 behavior. Production enables it via config defaults (true).
+	DedupEnabled bool
+
+	// DedupWindow is the turn-distance within which an identical call is
+	// served from cache. 0 → DefaultDedupWindow. Has effect only when
+	// DedupEnabled is true (启停 is the bool, NOT a magic 0 — spec-1.22 D-5).
+	DedupWindow int
 }
 
 // Loop is the constructed orchestrator. Safe for sequential Run calls;
@@ -77,6 +91,8 @@ type Loop struct {
 	toolTimeout  time.Duration
 	totalTimeout time.Duration
 	reqTimeout   time.Duration
+	dedupEnabled bool
+	dedupWindow  int
 }
 
 // NewLoop constructs a Loop, applying defaults to zero-valued Options.
@@ -93,9 +109,16 @@ func NewLoop(opt Options) (*Loop, error) {
 		toolTimeout:  opt.ToolTimeout,
 		totalTimeout: opt.TotalTimeout,
 		reqTimeout:   opt.ReqTimeout,
+		dedupEnabled: opt.DedupEnabled,
+		dedupWindow:  opt.DedupWindow,
 	}
 	if l.maxTurns <= 0 {
 		l.maxTurns = DefaultMaxTurns
+	}
+	// DedupWindow defaults only the window; on/off is DedupEnabled (spec-1.22
+	// D-5 tri-state — a 0 window never doubles as "disabled").
+	if l.dedupWindow <= 0 {
+		l.dedupWindow = DefaultDedupWindow
 	}
 	if l.toolTimeout <= 0 {
 		l.toolTimeout = DefaultToolTimeout
@@ -137,6 +160,10 @@ func (l *Loop) Run(ctx context.Context, req llm.Request, emit EmitFunc) (Result,
 	}
 
 	result := Result{}
+
+	// Per-Run dedup cache (spec-1.22 D-1/D-2). Lifetime == this Run; not
+	// shared across Runs (cross-session caching is spec-2.12).
+	dc := newDedupCache(l.dedupEnabled, l.dedupWindow)
 
 	for turn := 1; turn <= l.maxTurns; turn++ {
 		result.Turns = turn
@@ -309,9 +336,29 @@ func (l *Loop) Run(ctx context.Context, req llm.Request, emit EmitFunc) (Result,
 			for i := range toolUses {
 				tu := &toolUses[i]
 				exec, _ := lookup(l.registry, tu.Name)
-				toolCtx, cancelTool := context.WithTimeout(totalCtx, l.toolTimeout)
-				out, execErr := exec.Execute(toolCtx, tu.Input)
-				cancelTool()
+
+				// spec-1.22 D-2: dedup interception. dKey is "" when the tool
+				// is non-cacheable / dedup disabled / key derivation failed
+				// (invariant #5: such a call derives no key, never stores).
+				dKey, hit, cached := dedupResolve(dc, exec, tu, turn)
+
+				var out ToolOutput
+				var execErr error
+				if cached {
+					// spec-1.22 R-5: a 0-cost cache hit must NOT run past the
+					// total diagnosis budget. Gate on totalCtx before reuse.
+					if cerr := totalCtx.Err(); cerr != nil {
+						fr, code, ferr := classifyTerminal(cerr, totalCtx)
+						_ = emit(ctx, Event{Kind: EventFinish, Turn: turn, Finish: fr, TermCode: code, Err: ferr})
+						// errcode-lint:exempt -- spec-1.22 D-2: classifyTerminal returns a registered DIAGNOSE.TOTAL_TIMEOUT / ctx sentinel; pass-through.
+						return finalize(result, msgs, fr, code, ferr), ferr
+					}
+					out = hit // clean cached result, NO marker (invariant #2 / § 3.6 errata)
+				} else {
+					toolCtx, cancelTool := context.WithTimeout(totalCtx, l.toolTimeout)
+					out, execErr = exec.Execute(toolCtx, tu.Input)
+					cancelTool()
+				}
 
 				tr, term, fr, code, ferr := classifyToolErr(tu.ID, out, execErr, totalCtx)
 				if term {
@@ -319,8 +366,14 @@ func (l *Loop) Run(ctx context.Context, req llm.Request, emit EmitFunc) (Result,
 					// errcode-lint:exempt -- spec-1.21 D-4: ferr is a registered DIAGNOSE.TOTAL_TIMEOUT sentinel or ctx.Canceled from classifyToolErr; pass-through.
 					return finalize(result, msgs, fr, code, ferr), ferr
 				}
+				// spec-1.22 R-4: store ONLY a freshly-executed success
+				// (execErr==nil && !IsError). A hit is not re-stored; an
+				// error/timeout (which may leave out zero-value) never caches.
+				if !cached && dKey != "" && execErr == nil && !out.IsError {
+					dc.store(dKey, out, turn)
+				}
 				results = append(results, tr)
-				if eerr := emit(ctx, Event{Kind: EventToolResult, Turn: turn, ToolResult: &results[len(results)-1]}); eerr != nil {
+				if eerr := emit(ctx, Event{Kind: EventToolResult, Turn: turn, ToolResult: &results[len(results)-1], Cached: cached}); eerr != nil {
 					fr, ferr := classifyEmitErr(eerr)
 					// errcode-lint:exempt -- spec-1.21 D-4: emit-error pass-through (EventToolResult variant).
 					return finalize(result, msgs, fr, "", ferr), ferr
@@ -350,6 +403,33 @@ func (l *Loop) Run(ctx context.Context, req llm.Request, emit EmitFunc) (Result,
 	// maxTurns exhausted without natural finish.
 	_ = emit(ctx, Event{Kind: EventFinish, Turn: result.Turns, Finish: llm.FinishError, TermCode: ErrMaxTurns.Code(), Err: ErrMaxTurns})
 	return finalize(result, msgs, llm.FinishError, ErrMaxTurns.Code(), ErrMaxTurns), ErrMaxTurns
+}
+
+// dedupResolve decides whether the per-Run dedup cache applies to a single
+// tool call (spec-1.22 D-2). It returns the cache key (or "" when the call is
+// non-cacheable / dedup disabled / key derivation failed — such a call is
+// never stored, invariant #5), the cached output, and whether a live
+// (within-window) cached result was found.
+//
+// Key derivation failure is fail-open: json.Marshal cannot fail under the
+// DecodeToolInput invariant, so any error is treated as a cache miss (a miss,
+// not a degraded diagnosis — no errcode per 原则 3).
+func dedupResolve(dc *dedupCache, exec ToolExecutor, tu *llm.ToolUse, turn int) (key string, hit ToolOutput, hot bool) {
+	cacheable := dc.enabled
+	if cacheable {
+		if c, ok := exec.(CacheableTool); ok {
+			cacheable = c.Cacheable()
+		}
+	}
+	if !cacheable {
+		return "", ToolOutput{}, false
+	}
+	k, err := dedupKey(tu.Name, tu.Input)
+	if err != nil {
+		return "", ToolOutput{}, false
+	}
+	out, ok := dc.lookup(k, turn)
+	return k, out, ok
 }
 
 // finalize populates the terminal Result fields and returns by value.
