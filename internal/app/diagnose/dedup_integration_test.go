@@ -45,28 +45,62 @@ type optOutSpyTool struct{ spyTool }
 
 func (optOutSpyTool) Cacheable() bool { return false }
 
-// slowSpyTool ignores ctx and sleeps, so its Execute can outlive a tiny
-// TotalTimeout — used to drive the cache-hit total-budget guard (codex HIGH-3).
-type slowSpyTool struct {
-	name  string
-	calls *int
-	sleep time.Duration
-}
-
-func (s slowSpyTool) Name() string { return s.name }
-
-func (s slowSpyTool) Schema() llm.ToolSchema {
+// spyToolSchema builds the no-input schema shared by the test spy tools.
+func spyToolSchema(name, desc string) llm.ToolSchema {
 	return llm.ToolSchema{
-		Name:        s.name,
-		Description: "slow spy",
+		Name:        name,
+		Description: desc,
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 	}
 }
 
-func (s slowSpyTool) Execute(_ context.Context, _ map[string]any) (ToolOutput, error) {
+// budgetBurnTool blocks until its ctx deadline fires, then returns SUCCESS
+// (ignoring the ctx error). This deterministically expires the total budget
+// before returning a storable success — driving the cache-hit totalCtx guard
+// WITHOUT a flaky wall-clock margin (go-review LOW-1): it waits for the actual
+// deadline rather than racing a fixed sleep against it.
+type budgetBurnTool struct {
+	name  string
+	calls *int
+}
+
+func (s budgetBurnTool) Name() string           { return s.name }
+func (s budgetBurnTool) Schema() llm.ToolSchema { return spyToolSchema(s.name, "budget burn") }
+func (s budgetBurnTool) Execute(ctx context.Context, _ map[string]any) (ToolOutput, error) {
 	*s.calls++
-	time.Sleep(s.sleep) // intentionally ignores ctx to outlive the total budget
-	return ToolOutput{Content: "slow-ok"}, nil
+	<-ctx.Done() // wait for the (total) deadline to fire, then succeed anyway
+	return ToolOutput{Content: "burned-ok"}, nil
+}
+
+// errorTool returns a Go error from Execute (infrastructure-failure shape):
+// the ToolOutput is the zero value, so out.IsError==false. Used to pin the
+// store guard execErr==nil (a `!out.IsError`-only guard would wrongly cache it).
+type errorTool struct {
+	name  string
+	calls *int
+}
+
+func (s errorTool) Name() string           { return s.name }
+func (s errorTool) Schema() llm.ToolSchema { return spyToolSchema(s.name, "always errors") }
+func (s errorTool) Execute(_ context.Context, _ map[string]any) (ToolOutput, error) {
+	*s.calls++
+	return ToolOutput{}, errors.New("boom")
+}
+
+// timeoutTool respects ctx and returns its deadline error — the per-tool
+// timeout shape (recoverable feedback, IsError=true, NOT terminal while the
+// total budget remains). Also a zero ToolOutput, so it pins the same guard.
+type timeoutTool struct {
+	name  string
+	calls *int
+}
+
+func (s timeoutTool) Name() string           { return s.name }
+func (s timeoutTool) Schema() llm.ToolSchema { return spyToolSchema(s.name, "always times out") }
+func (s timeoutTool) Execute(ctx context.Context, _ map[string]any) (ToolOutput, error) {
+	*s.calls++
+	<-ctx.Done()
+	return ToolOutput{}, ctx.Err()
 }
 
 func toolResultEvents(events []Event) []Event {
@@ -216,27 +250,81 @@ func TestDedup_NonCacheableTool_AlwaysExecutes(t *testing.T) {
 
 // TestDedup_HitRespectsTotalBudget — codex HIGH-3: a cache hit must NOT run
 // past the total diagnosis budget. One turn with two identical tool_uses; the
-// first (a slow, ctx-ignoring Execute) burns the 10ms TotalTimeout, then the
-// second is a cache hit whose totalCtx guard must terminate with TOTAL_TIMEOUT.
+// first deterministically burns the 20ms TotalTimeout (blocks until the
+// deadline, then succeeds + stores), then the second is a cache hit whose
+// totalCtx guard must terminate with TOTAL_TIMEOUT.
 func TestDedup_HitRespectsTotalBudget(t *testing.T) {
 	t.Parallel()
 	calls := 0
-	reg, _ := NewRegistry(slowSpyTool{name: "slow", calls: &calls, sleep: 60 * time.Millisecond})
+	reg, _ := NewRegistry(budgetBurnTool{name: "burn", calls: &calls})
 	in := map[string]any{"v": "a"}
 	prov := fake.NewScriptedTurns(
 		fake.Turn{ToolUses: []llm.ToolUse{
-			{ID: "t1", Name: "slow", Input: in},
-			{ID: "t2", Name: "slow", Input: in},
+			{ID: "t1", Name: "burn", Input: in},
+			{ID: "t2", Name: "burn", Input: in},
 		}, Finish: llm.FinishToolUse},
 		fake.Turn{Text: "unreached", Finish: llm.FinishStop},
 	)
-	loop := mustNewLoop(t, Options{Provider: prov, Registry: reg, DedupEnabled: true, TotalTimeout: 10 * time.Millisecond})
+	loop := mustNewLoop(t, Options{Provider: prov, Registry: reg, DedupEnabled: true, TotalTimeout: 20 * time.Millisecond})
 	r := &recorder{}
 	_, runErr := loop.Run(context.Background(), userReq("q"), r.emit)
 	if !errors.Is(runErr, ErrTotalTimeout) {
 		t.Fatalf("Run err = %v; want ErrTotalTimeout (cache hit must not run past total budget)", runErr)
 	}
 	if calls != 1 {
-		t.Errorf("Execute calls = %d; want 1 (1st slow call ran; 2nd was a cache hit caught by the totalCtx guard)", calls)
+		t.Errorf("Execute calls = %d; want 1 (1st call ran + stored; 2nd was a cache hit caught by the totalCtx guard)", calls)
+	}
+}
+
+// TestDedup_ExecError_NotCached — codex post-impl LOW-1 / pre-impl HIGH-1
+// regression: an Execute returning (zero ToolOutput, Go error) has
+// out.IsError==false, so a store guard of `!out.IsError` ALONE would wrongly
+// cache the empty result as a success. The real guard is execErr==nil &&
+// !out.IsError, so the second identical call MUST re-execute.
+func TestDedup_ExecError_NotCached(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	reg, _ := NewRegistry(errorTool{name: "err", calls: &calls})
+	in := map[string]any{"v": "a"}
+	prov := fake.NewScriptedTurns(
+		fake.Turn{ToolUses: []llm.ToolUse{{ID: "t1", Name: "err", Input: in}}, Finish: llm.FinishToolUse},
+		fake.Turn{ToolUses: []llm.ToolUse{{ID: "t2", Name: "err", Input: in}}, Finish: llm.FinishToolUse},
+		fake.Turn{Text: "done", Finish: llm.FinishStop},
+	)
+	loop := mustNewLoop(t, Options{Provider: prov, Registry: reg, DedupEnabled: true})
+	r := &recorder{}
+	if _, err := loop.Run(context.Background(), userReq("q"), r.emit); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("Execute calls = %d; want 2 (a Go-error result must NOT be cached as a success)", calls)
+	}
+	for _, e := range toolResultEvents(r.events) {
+		if e.Cached {
+			t.Error("an errored call must never be Cached")
+		}
+	}
+}
+
+// TestDedup_ToolTimeout_NotCached — same store-guard regression via the
+// per-tool-timeout path: a tool that hits its ToolTimeout returns IsError=true
+// feedback + zero ToolOutput + a DeadlineExceeded execErr; it must not cache.
+func TestDedup_ToolTimeout_NotCached(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	reg, _ := NewRegistry(timeoutTool{name: "to", calls: &calls})
+	in := map[string]any{"v": "a"}
+	prov := fake.NewScriptedTurns(
+		fake.Turn{ToolUses: []llm.ToolUse{{ID: "t1", Name: "to", Input: in}}, Finish: llm.FinishToolUse},
+		fake.Turn{ToolUses: []llm.ToolUse{{ID: "t2", Name: "to", Input: in}}, Finish: llm.FinishToolUse},
+		fake.Turn{Text: "done", Finish: llm.FinishStop},
+	)
+	loop := mustNewLoop(t, Options{Provider: prov, Registry: reg, DedupEnabled: true, ToolTimeout: 5 * time.Millisecond})
+	r := &recorder{}
+	if _, err := loop.Run(context.Background(), userReq("q"), r.emit); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("Execute calls = %d; want 2 (a per-tool-timeout result must NOT be cached)", calls)
 	}
 }

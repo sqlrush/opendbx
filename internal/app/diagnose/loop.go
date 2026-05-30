@@ -414,7 +414,10 @@ func (l *Loop) Run(ctx context.Context, req llm.Request, emit EmitFunc) (Result,
 // Key derivation failure is fail-open: json.Marshal cannot fail under the
 // DecodeToolInput invariant, so any error is treated as a cache miss (a miss,
 // not a degraded diagnosis — no errcode per 原则 3).
-func dedupResolve(dc *dedupCache, exec ToolExecutor, tu *llm.ToolUse, turn int) (key string, hit ToolOutput, hot bool) {
+func dedupResolve(dc *dedupCache, exec ToolExecutor, tu *llm.ToolUse, turn int) (key string, hit ToolOutput, cached bool) {
+	if dc == nil { // nil-safe, mirroring dedupCache.lookup/store (go-review MED-1)
+		return "", ToolOutput{}, false
+	}
 	cacheable := dc.enabled
 	if cacheable {
 		if c, ok := exec.(CacheableTool); ok {
