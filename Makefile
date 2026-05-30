@@ -318,7 +318,7 @@ paint-pattern-check: ## Verify no bare cell-to-cell SetCell (D-3)
 	@$(GO) run ./tools/paint-pattern-lint ./...
 
 # spec-0.11.5 D-5: UI Review 5-layer gate targets.
-.PHONY: ui-invariant ui-visual-golden ui-ai-review ui-block-golden ui-block-ai-review ui-tooluse-golden ui-toolresult-golden ui-compact-golden ui-markdown-golden ui-code-golden ui-diff-golden ui-program-golden ui-input-golden ui-keybindings-golden ui-llmchat-golden
+.PHONY: ui-invariant ui-visual-golden ui-ai-review ui-block-golden ui-block-ai-review ui-tooluse-golden ui-toolresult-golden ui-compact-golden ui-markdown-golden ui-code-golden ui-diff-golden ui-program-golden ui-input-golden ui-keybindings-golden ui-llmchat-golden ui-reasoningrender-golden
 ui-invariant: ## Layer 1 static invariants (uiinvariant package tests)
 	$(GO) test -race -count=1 ./internal/testing/uiinvariant/...
 
@@ -363,6 +363,12 @@ ui-keybindings-golden: ## Keybindings cursor/history (spec-1.17) visual golden h
 
 ui-llmchat-golden: ## LLM chat (spec-1.20) visual golden harness
 	LLMCHAT_VISUAL_REQUIRED=$${LLMCHAT_VISUAL_REQUIRED:-} $(GO) test -race -count=1 -run TestLLMChatVisualGolden ./tests/integration/uitest/llmchat/...
+
+# spec-1.20.2 D-6: 13th independent block-style visual env gate. Runs the
+# production-like smoke (no mojibake / no mixed reasoning / no stderr
+# tear) + parked fixture guard. Golden capture lands post-stage-1 SOP.
+ui-reasoningrender-golden: ## Reasoning/render (1.20.2) gate
+	REASONINGRENDER_VISUAL_REQUIRED=$${REASONINGRENDER_VISUAL_REQUIRED:-} $(GO) test -race -count=1 ./tests/integration/uitest/reasoningrender/...
 
 ui-block-ai-review: ## Block Message AI visual review wrapper
 	$(MAKE) ui-ai-review
