@@ -6,6 +6,10 @@ package main
 
 import (
 	"bytes"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"go/types"
 	"sort"
 	"strings"
 	"testing"
@@ -34,9 +38,14 @@ func TestLint_BadPkg_ReportsAllPatterns(t *testing.T) {
 		got[v.Function+":"+v.Kind]++
 	}
 	want := map[string]int{
-		"BadDirectInline:direct":            1,
-		"BadOneHopUnguarded:one-hop":        1,
-		"BadOneHopGuardDoesNotExit:one-hop": 1,
+		"BadDirectInline:direct":                1,
+		"BadOneHopUnguarded:one-hop":            1,
+		"BadOneHopGuardDoesNotExit:one-hop":     1,
+		"BadInterfaceDestination:direct":        1,
+		"BadOneHopVarDecl:one-hop":              1,
+		"BadOneHopMultiAssign:one-hop":          1,
+		"BadOneHopAlias:one-hop":                1,
+		"BadNestedGuardDoesNotDominate:one-hop": 1,
 	}
 	if len(got) != len(want) {
 		t.Errorf("violation count mismatch: got=%v want=%v", got, want)
@@ -176,4 +185,84 @@ func sortedKeys(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func TestRealMain_BadFlag_ExitCode2(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	if code := realMain([]string{"-definitely-not-a-flag"}, &out); code != 2 {
+		t.Errorf("exit code = %d; want 2", code)
+	}
+}
+
+func TestBodyExits(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		body *ast.BlockStmt
+		want bool
+	}{
+		{"return", &ast.BlockStmt{List: []ast.Stmt{&ast.ReturnStmt{}}}, true},
+		{"continue", &ast.BlockStmt{List: []ast.Stmt{&ast.BranchStmt{Tok: token.CONTINUE}}}, true},
+		{"plain", &ast.BlockStmt{List: []ast.Stmt{&ast.EmptyStmt{}}}, false},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := bodyExits(c.body); got != c.want {
+				t.Errorf("bodyExits = %v; want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestContinuationGuardIdent(t *testing.T) {
+	t.Parallel()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "guard.go", `package p
+import "example.com/paint-pattern-lint-fixtures/buffer"
+func f(c buffer.Cell) { if buffer.IsContinuation(c) { return } }
+`, 0)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	fn := file.Decls[1].(*ast.FuncDecl)
+	ifstmt := fn.Body.List[0].(*ast.IfStmt)
+	got, ok := continuationGuardIdent(ifstmt)
+	if !ok || got != "c" {
+		t.Fatalf("continuationGuardIdent = %q,%v; want c,true", got, ok)
+	}
+}
+
+func TestExprText_Default(t *testing.T) {
+	t.Parallel()
+	if got := exprText(&ast.BasicLit{}); got != "?" {
+		t.Errorf("exprText(default) = %q; want ?", got)
+	}
+}
+
+func TestRealMain_GoodPkgVerbose(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	code := realMain([]string{"-v", "-dir", "testdata/fixtures", "-bufferpkg", fixturesBufferPath, "./goodpkg"}, &out)
+	if code != 0 {
+		t.Fatalf("exit code = %d; want 0; output:\n%s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "scanned patterns") {
+		t.Fatalf("verbose output missing scan summary:\n%s", out.String())
+	}
+}
+
+func TestTypeHelpers_Negative(t *testing.T) {
+	t.Parallel()
+	if !isIntType(types.Typ[types.Int]) {
+		t.Fatal("types.Int should be recognized as int")
+	}
+	if isIntType(types.Typ[types.String]) {
+		t.Fatal("types.String should not be recognized as int")
+	}
+	if isBufferCellType(types.Typ[types.Int], fixturesBufferPath) {
+		t.Fatal("plain int should not be recognized as buffer.Cell")
+	}
 }

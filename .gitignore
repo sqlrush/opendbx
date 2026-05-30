@@ -21,6 +21,7 @@
 *.dll
 *.so
 *.dylib
+/paint-pattern-lint
 
 # Go test
 *.test

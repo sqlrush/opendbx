@@ -77,6 +77,10 @@ func setNewScreenFn(fn func() (tcell.Screen, error)) {
 // a provider that surfaces the LLM.* errcode on the first message, so the
 // user sees an explicit, actionable error.
 func LaunchInteractiveTUI(ctx context.Context) error {
+	if !logger.IsInitialised() {
+		return logger.ErrNotInitialised
+	}
+
 	// Route stdlib slog into the platform logger while TUI owns stderr.
 	// scheduler/render packages use slog.Warn/Error for frame-budget and
 	// channel-saturation diagnostics; in an interactive terminal those records
@@ -115,7 +119,7 @@ func LaunchInteractiveTUI(ctx context.Context) error {
 }
 
 // newChatModel loads config, builds the LLM provider via the factory, and
-// returns the spec-1.20 llmapp chat Model. 原则 3: a provider-construction
+// returns the spec-1.20 llmapp chat Model. Principle 3: a provider-construction
 // failure does NOT fall back to demoapp — it yields a provider whose
 // Stream returns the LLM.* errcode, so the user gets an explicit error
 // (with the actionable Hint) on their first message rather than a silent
@@ -146,7 +150,7 @@ func newChatModel() program.Model {
 		ReqTimeout:   cfg.LLM.RequestTimeout,
 	}
 	if perr != nil {
-		// 原则 3: explicit error, no demoapp fallback.
+		// Principle 3: explicit error, no demoapp fallback.
 		return llmapp.New(fake.New().WithStartErr(perr), opts)
 	}
 	return llmapp.New(provider, opts)
@@ -159,7 +163,7 @@ func newChatModel() program.Model {
 //nolint:gochecknoglobals // spec-1.20.2 D-5 R-1: one-shot migration log; per-process state is the simplest correct shape.
 var stripThinkMigrationNoticeOnce sync.Once
 
-// stripThinkMigrationLogFn is the sink for emitStripThinkMigrationNotice.
+// stripThinkMigrationLogFn is a TEST SEAM sink for emitStripThinkMigrationNotice.
 // Production wires it to logger.WarnForceFile (file-only, bypasses
 // debug gate, never stderr — spec-1.20.2 D-4 contract). Tests override
 // it to a capture closure so the assertion does not depend on the

@@ -16,6 +16,7 @@ type Cell struct {
 type Buffer interface {
 	Size() (int, int)
 	Cell(x, y int) Cell
+	SetCell(x, y int, c Cell)
 }
 
 // Grid mirrors the production *Grid receiver; SetCell takes a Cell.

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,12 +18,26 @@ import (
 	tcellpkg "github.com/sqlrush/opendbx/internal/app/cli/tui"
 	"github.com/sqlrush/opendbx/internal/domain/llm"
 	"github.com/sqlrush/opendbx/internal/platform/config"
+	"github.com/sqlrush/opendbx/internal/platform/logger"
 )
+
+func initLoggerForTUITest(t *testing.T) {
+	t.Helper()
+	err := logger.Init(logger.InitInput{
+		SessionID:      "bootstrap-test",
+		LogPath:        filepath.Join(t.TempDir(), "debug.log"),
+		DisableSidecar: true,
+	})
+	if err != nil && !errors.Is(err, logger.ErrAlreadyInitialised) {
+		t.Fatalf("logger.Init: %v", err)
+	}
+}
 
 // TestLaunchInteractiveTUI_NewScreenFailure exercises the init-failure
 // path. Replaces the screen factory with a stub that always errors.
 // spec-1.17 D-6b: error pass-through unchanged from spec-0.12.
 func TestLaunchInteractiveTUI_NewScreenFailure(t *testing.T) {
+	initLoggerForTUITest(t)
 	// NOT t.Parallel — mutates package-global factory state.
 	orig := getNewScreenFn()
 	setNewScreenFn(func() (tcell.Screen, error) {
@@ -47,6 +62,7 @@ func TestLaunchInteractiveTUI_NewScreenFailure(t *testing.T) {
 // tui.Run path is retired from production (no caller) but its function
 // body remains for any future legacy use.
 func TestLaunchInteractiveTUI_HappyPath(t *testing.T) {
+	initLoggerForTUITest(t)
 	// NOT t.Parallel — mutates package-global factory state.
 	orig := getNewScreenFn()
 	sim := tcellpkg.NewSimulationScreen()
@@ -80,6 +96,7 @@ func TestLaunchInteractiveTUI_HappyPath(t *testing.T) {
 // it owns the terminal, then restores the previous stdlib slog default even on
 // early screen-construction failure.
 func TestLaunchInteractiveTUI_RestoresSlogDefaultOnFailure(t *testing.T) {
+	initLoggerForTUITest(t)
 	// NOT t.Parallel: mutates package-global factory state and slog default.
 	orig := getNewScreenFn()
 	setNewScreenFn(func() (tcell.Screen, error) {

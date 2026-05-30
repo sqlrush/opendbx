@@ -20,7 +20,7 @@
 // buffer.IsContinuation(c) → continue/break/return check.
 //
 // Detection is type-aware (the SetCell receiver must resolve to a
-// *render/buffer.Grid and the Cell call must return buffer.Cell) and
+// a receiver with SetCell(int,int,buffer.Cell) and the Cell call must return buffer.Cell) and
 // includes one-hop local dataflow inside a single function. Exemptions:
 //
 //   - package internal/app/cli/render/paint (helper definition)
@@ -194,79 +194,188 @@ type taint struct {
 
 // inspectFunc walks one function body looking for violations.
 func inspectFunc(p *packages.Package, file *ast.File, fn *ast.FuncDecl, bufferPath string) []Violation {
-	tinfo := p.TypesInfo
+	return inspectStmtList(p, file, fn.Body.List, p.TypesInfo, map[string]taint{}, bufferPath)
+}
+
+func inspectStmtList(
+	p *packages.Package,
+	file *ast.File,
+	stmts []ast.Stmt,
+	tinfo *types.Info,
+	tainted map[string]taint,
+	bufferPath string,
+) []Violation {
 	var out []Violation
-
-	// Per-function tainted variable map. cleared when a buffer.IsContinuation
-	// check on the same ident exits the surrounding flow (continue/break/return).
-	tainted := map[string]taint{}
-
-	// Statement-by-statement walk, in source order. We use ast.Inspect to
-	// descend into nested blocks but track ordering via positions; this is
-	// good enough for the patterns this lint targets (assignment, IfStmt
-	// guards, and SetCell calls in the same function body).
-	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		switch s := n.(type) {
+	for _, stmt := range stmts {
+		switch s := stmt.(type) {
 		case *ast.AssignStmt:
 			handleAssign(s, tinfo, tainted, bufferPath)
+		case *ast.DeclStmt:
+			handleDecl(s, tinfo, tainted, bufferPath)
 		case *ast.IfStmt:
-			handleIsContinuationGuard(s, tainted)
-		case *ast.CallExpr:
-			if v, ok := checkSetCellCall(s, file, p.Fset, tinfo, tainted, bufferPath); ok {
-				out = append(out, v)
+			if isDominatingContinuationGuard(s, tainted) {
+				continue
+			}
+			if s.Init != nil {
+				branchTaint := cloneTaint(tainted)
+				out = append(out, inspectStmtList(p, file, []ast.Stmt{s.Init}, tinfo, branchTaint, bufferPath)...)
+				out = append(out, inspectStmtList(p, file, s.Body.List, tinfo, branchTaint, bufferPath)...)
+			} else {
+				out = append(out, inspectStmtList(p, file, s.Body.List, tinfo, cloneTaint(tainted), bufferPath)...)
+			}
+			if s.Else != nil {
+				out = append(out, inspectElse(p, file, s.Else, tinfo, cloneTaint(tainted), bufferPath)...)
+			}
+		case *ast.ForStmt:
+			loopTaint := cloneTaint(tainted)
+			if s.Init != nil {
+				out = append(out, inspectStmtList(p, file, []ast.Stmt{s.Init}, tinfo, loopTaint, bufferPath)...)
+			}
+			out = append(out, inspectStmtList(p, file, s.Body.List, tinfo, loopTaint, bufferPath)...)
+		case *ast.RangeStmt:
+			out = append(out, inspectStmtList(p, file, s.Body.List, tinfo, cloneTaint(tainted), bufferPath)...)
+		case *ast.BlockStmt:
+			out = append(out, inspectStmtList(p, file, s.List, tinfo, cloneTaint(tainted), bufferPath)...)
+		case *ast.ExprStmt:
+			if call, ok := s.X.(*ast.CallExpr); ok {
+				if v, ok := checkSetCellCall(call, file, p.Fset, tinfo, tainted, bufferPath); ok {
+					out = append(out, v)
+				}
 			}
 		}
-		return true
-	})
+	}
 	return out
 }
 
-// handleAssign records taint for `name := X.Cell(args)` style assignments
-// (single LHS, single RHS call returning buffer.Cell).
-func handleAssign(s *ast.AssignStmt, tinfo *types.Info, tainted map[string]taint, bufferPath string) {
-	if len(s.Lhs) != 1 || len(s.Rhs) != 1 {
-		return
+func inspectElse(
+	p *packages.Package,
+	file *ast.File,
+	stmt ast.Stmt,
+	tinfo *types.Info,
+	tainted map[string]taint,
+	bufferPath string,
+) []Violation {
+	switch s := stmt.(type) {
+	case *ast.BlockStmt:
+		return inspectStmtList(p, file, s.List, tinfo, tainted, bufferPath)
+	case *ast.IfStmt:
+		return inspectStmtList(p, file, []ast.Stmt{s}, tinfo, tainted, bufferPath)
+	default:
+		return inspectStmtList(p, file, []ast.Stmt{s}, tinfo, tainted, bufferPath)
 	}
-	id, ok := s.Lhs[0].(*ast.Ident)
-	if !ok {
-		return
-	}
-	call, ok := s.Rhs[0].(*ast.CallExpr)
-	if !ok {
-		return
-	}
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "Cell" {
-		return
-	}
-	if !returnsBufferCell(call, tinfo, bufferPath) {
-		return
-	}
-	tainted[id.Name] = taint{pos: s.Pos(), source: exprText(sel.X)}
 }
 
-// handleIsContinuationGuard detects an `if buffer.IsContinuation(c) { ... }`
-// where the then-block contains a control-flow exit (continue/break/return).
-// The named identifier is removed from `tainted`.
-func handleIsContinuationGuard(s *ast.IfStmt, tainted map[string]taint) {
-	if s.Cond == nil || s.Body == nil {
+func cloneTaint(in map[string]taint) map[string]taint {
+	out := make(map[string]taint, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+// handleAssign records taint for assignment forms whose RHS returns buffer.Cell,
+// including multi-assign and simple aliases from an already-tainted identifier.
+func handleAssign(s *ast.AssignStmt, tinfo *types.Info, tainted map[string]taint, bufferPath string) {
+	if len(s.Lhs) != len(s.Rhs) {
 		return
+	}
+	for i := range s.Lhs {
+		id, ok := s.Lhs[i].(*ast.Ident)
+		if !ok || id.Name == "_" {
+			continue
+		}
+		if t, ok := taintFromExpr(s.Rhs[i], tinfo, tainted, bufferPath); ok {
+			t.pos = s.Pos()
+			tainted[id.Name] = t
+			continue
+		}
+		delete(tainted, id.Name)
+	}
+}
+
+func handleDecl(s *ast.DeclStmt, tinfo *types.Info, tainted map[string]taint, bufferPath string) {
+	gen, ok := s.Decl.(*ast.GenDecl)
+	if !ok {
+		return
+	}
+	for _, spec := range gen.Specs {
+		vs, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+		handleValueSpec(vs, tinfo, tainted, bufferPath)
+	}
+}
+
+func handleValueSpec(s *ast.ValueSpec, tinfo *types.Info, tainted map[string]taint, bufferPath string) {
+	if len(s.Values) == 0 {
+		for _, name := range s.Names {
+			delete(tainted, name.Name)
+		}
+		return
+	}
+	if len(s.Names) != len(s.Values) {
+		return
+	}
+	for i, name := range s.Names {
+		if name.Name == "_" {
+			continue
+		}
+		if t, ok := taintFromExpr(s.Values[i], tinfo, tainted, bufferPath); ok {
+			t.pos = s.Pos()
+			tainted[name.Name] = t
+			continue
+		}
+		delete(tainted, name.Name)
+	}
+}
+
+func taintFromExpr(expr ast.Expr, tinfo *types.Info, tainted map[string]taint, bufferPath string) (taint, bool) {
+	switch v := expr.(type) {
+	case *ast.ParenExpr:
+		return taintFromExpr(v.X, tinfo, tainted, bufferPath)
+	case *ast.Ident:
+		t, ok := tainted[v.Name]
+		return t, ok
+	case *ast.CallExpr:
+		sel, ok := v.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "Cell" {
+			return taint{}, false
+		}
+		if !returnsBufferCell(v, tinfo, bufferPath) {
+			return taint{}, false
+		}
+		return taint{pos: v.Pos(), source: exprText(sel.X)}, true
+	default:
+		return taint{}, false
+	}
+}
+
+func isDominatingContinuationGuard(s *ast.IfStmt, tainted map[string]taint) bool {
+	id, ok := continuationGuardIdent(s)
+	if !ok || !bodyExits(s.Body) {
+		return false
+	}
+	delete(tainted, id)
+	return true
+}
+
+func continuationGuardIdent(s *ast.IfStmt) (string, bool) {
+	if s.Cond == nil || s.Body == nil {
+		return "", false
 	}
 	call, ok := s.Cond.(*ast.CallExpr)
 	if !ok {
-		return
+		return "", false
 	}
 	if !isBufferIsContinuationCall(call) || len(call.Args) != 1 {
-		return
+		return "", false
 	}
 	id, ok := call.Args[0].(*ast.Ident)
 	if !ok {
-		return
+		return "", false
 	}
-	if !bodyExits(s.Body) {
-		return
-	}
-	delete(tainted, id.Name)
+	return id.Name, true
 }
 
 func bodyExits(b *ast.BlockStmt) bool {
@@ -291,7 +400,7 @@ func checkSetCellCall(call *ast.CallExpr, file *ast.File, fset *token.FileSet, t
 	if !ok || sel.Sel.Name != "SetCell" {
 		return Violation{}, false
 	}
-	if !isBufferGridReceiver(sel.X, tinfo, bufferPath) {
+	if !isBufferSetCellReceiver(sel.X, tinfo, bufferPath) {
 		return Violation{}, false
 	}
 	dstText := exprText(sel.X)
@@ -351,7 +460,11 @@ func returnsBufferCell(call *ast.CallExpr, tinfo *types.Info, bufferPath string)
 	if !ok || tv.Type == nil {
 		return false
 	}
-	named, ok := tv.Type.(*types.Named)
+	return isBufferCellType(tv.Type, bufferPath)
+}
+
+func isBufferCellType(t types.Type, bufferPath string) bool {
+	named, ok := t.(*types.Named)
 	if !ok {
 		return false
 	}
@@ -362,9 +475,11 @@ func returnsBufferCell(call *ast.CallExpr, tinfo *types.Info, bufferPath string)
 	return obj.Pkg() != nil && obj.Pkg().Path() == bufferPath
 }
 
-// isBufferGridReceiver checks whether expr resolves to *buffer.Grid (or
-// buffer.Grid value receiver — same type for method-set purposes).
-func isBufferGridReceiver(expr ast.Expr, tinfo *types.Info, bufferPath string) bool {
+// isBufferSetCellReceiver checks whether expr exposes SetCell(int, int,
+// buffer.Cell). This catches concrete *buffer.Grid values, buffer.Buffer
+// interface-typed destinations, and narrow local interfaces with the same
+// write signature.
+func isBufferSetCellReceiver(expr ast.Expr, tinfo *types.Info, bufferPath string) bool {
 	if tinfo == nil {
 		return false
 	}
@@ -372,19 +487,45 @@ func isBufferGridReceiver(expr ast.Expr, tinfo *types.Info, bufferPath string) b
 	if !ok || tv.Type == nil {
 		return false
 	}
-	t := tv.Type
-	if ptr, ok := t.(*types.Pointer); ok {
-		t = ptr.Elem()
+	return typeHasSetCell(tv.Type, bufferPath)
+}
+
+func typeHasSetCell(t types.Type, bufferPath string) bool {
+	if methodSetHasSetCell(types.NewMethodSet(t), bufferPath) {
+		return true
 	}
-	named, ok := t.(*types.Named)
-	if !ok {
-		return false
+	if _, ok := t.(*types.Pointer); !ok {
+		if methodSetHasSetCell(types.NewMethodSet(types.NewPointer(t)), bufferPath) {
+			return true
+		}
 	}
-	obj := named.Obj()
-	if obj == nil || obj.Name() != "Grid" {
-		return false
+	return false
+}
+
+func methodSetHasSetCell(ms *types.MethodSet, bufferPath string) bool {
+	for i := 0; i < ms.Len(); i++ {
+		sel := ms.At(i)
+		if sel.Obj().Name() != "SetCell" {
+			continue
+		}
+		sig, ok := sel.Obj().Type().(*types.Signature)
+		if !ok || sig.Params().Len() != 3 || sig.Results().Len() != 0 {
+			continue
+		}
+		if !isIntType(sig.Params().At(0).Type()) || !isIntType(sig.Params().At(1).Type()) {
+			continue
+		}
+		if !isBufferCellType(sig.Params().At(2).Type(), bufferPath) {
+			continue
+		}
+		return true
 	}
-	return obj.Pkg() != nil && obj.Pkg().Path() == bufferPath
+	return false
+}
+
+func isIntType(t types.Type) bool {
+	basic, ok := t.(*types.Basic)
+	return ok && basic.Kind() == types.Int
 }
 
 // isBufferIsContinuationCall checks whether call is buffer.IsContinuation(...).

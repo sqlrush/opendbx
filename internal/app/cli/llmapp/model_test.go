@@ -14,6 +14,7 @@ import (
 	"github.com/sqlrush/opendbx/internal/app/cli/program"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/block"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
+	"github.com/sqlrush/opendbx/internal/app/cli/render/streaming"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/terminal"
 	"github.com/sqlrush/opendbx/internal/app/diagnose"
 	"github.com/sqlrush/opendbx/internal/domain/llm"
@@ -208,6 +209,26 @@ func TestModel_ThinkingOnlyStopStripFalseThinkingBlock(t *testing.T) {
 	}
 	if hasNode(final, "(no output)") {
 		t.Fatalf("thinking-only strip=false should not show generic empty placeholder: %v", nodeTexts(final))
+	}
+}
+
+func TestModel_ViewFiltersThinkingOnlyEmptyBeforeStreamDone(t *testing.T) {
+	t.Parallel()
+	m := newFakeModel(fake.New()).withStripThink(true)
+	m.stream = streaming.NewTokenStream(context.Background())
+	m.sawThinking = true
+	m.sawContent = false
+	m.scrollback = appendNode(m.scrollback, block.Message{Text: block.ThinkingOnlyStripMarker()})
+	if err := m.stream.AppendChunk(streaming.Chunk{FinishReason: streaming.FinishStop}); err != nil {
+		t.Fatalf("AppendChunk: %v", err)
+	}
+
+	_ = m.View(80, 24)
+	if hasNode(m, "(no output)") {
+		t.Fatalf("View drain leaked generic empty placeholder before streamDone: %v", nodeTexts(m))
+	}
+	if !hasNode(m, block.ThinkingOnlyStripMarker()) {
+		t.Fatalf("thinking-only marker missing after View drain: %v", nodeTexts(m))
 	}
 }
 

@@ -147,3 +147,53 @@ func TestSlogHandlerPreInitDiscardWarnsOnceAfterInit(t *testing.T) {
 		t.Fatalf("post-init log missing discard count or active warn:\n%s", got)
 	}
 }
+
+func TestSlogHandlerFileOnlyWithDebugToStderr(t *testing.T) {
+	// NOT t.Parallel: mutates logger globals and os.Stderr.
+	resetForTesting(t)
+	logPath := t.TempDir() + "/slog-file-only.log"
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = oldStderr }()
+
+	if err := Init(InitInput{SessionID: "slog-file-only", LogPath: logPath, DebugToStderr: true, DisableSidecar: true}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	l := slog.New(NewSlogHandler())
+	l.Debug("debug file only", "n", 1)
+	l.Info("info file only", "n", 2)
+	l.Warn("warn file only", "n", 3)
+	l.Error("error file only", "n", 4)
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stderr pipe writer: %v", err)
+	}
+	stderrRaw, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read stderr pipe: %v", err)
+	}
+	if len(stderrRaw) != 0 {
+		t.Fatalf("slog handler wrote to stderr under DebugToStderr: %q", stderrRaw)
+	}
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read slog log: %v", err)
+	}
+	got := string(raw)
+	for _, want := range []string{
+		"[DEBUG] debug file only n=1",
+		"[INFO] info file only n=2",
+		"[WARN] warn file only n=3",
+		"[ERROR] error file only n=4",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("log missing %q:\n%s", want, got)
+		}
+	}
+}

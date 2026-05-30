@@ -12,10 +12,9 @@
 // are leaves and block/streaming are roots. R2 sequence reverses to
 // leaf→root + comparison operator flips from `fi >= ti` to `fi <= ti`.
 //
-// Render subpackage strict DAG (leaf→root, 10 layers):
+// Render subpackage strict DAG (leaf→root, 12 entries, including sub-DAG markers):
 //
-//	width → style → terminal → buffer → layout → optimizer → scheduler → block → scrollback → streaming
-//	(0)     (1)      (2)        (3)       (4)      (5)         (6)         (7)     (8)          (9)
+//	width → style → terminal → terminal/tcell → buffer → paint → layout → optimizer → scheduler → block/adapter → block → scrollback → streaming
 //
 // Direction semantics (依赖方向高 index → 低 index):
 //   - "X imports Y" allowed iff index(X) > index(Y).

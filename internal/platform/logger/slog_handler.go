@@ -27,9 +27,9 @@ func ErrorForceFile(msg string, kv ...any) {
 }
 
 // NewSlogHandler returns a slog.Handler that routes stdlib slog records into
-// the platform logger. Warn/Error bypass the debug gate via WarnForceFile /
-// ErrorForceFile so TUI-mode scheduler diagnostics are preserved without
-// writing to stderr. Debug/Info use the normal logger gate.
+// the platform logger's debug file only. All levels bypass the normal logger
+// writer so TUI-mode diagnostics are preserved without writing to stderr,
+// even when the process was launched with --debug-to-stderr.
 //
 // Records seen before logger.Init are discarded. If the same handler later
 // observes an initialised logger, it emits one force-file warning recording the
@@ -69,9 +69,9 @@ func (h *slogHandler) Handle(_ context.Context, rec slog.Record) error {
 	case rec.Level >= slog.LevelWarn:
 		forceFileAttrs(LevelWarn, msg, attrs)
 	case rec.Level >= slog.LevelInfo:
-		impl.Info(msg, attrs...)
+		fileOnlyAttrs(LevelInfo, msg, attrs)
 	default:
-		impl.Debug(msg, attrs...)
+		fileOnlyAttrs(LevelDebug, msg, attrs)
 	}
 	return nil
 }
@@ -177,17 +177,21 @@ func forceFile(level Level, msg string, attrs []Attr) {
 }
 
 func forceFileAttrs(level Level, msg string, attrs []Attr) {
+	if level < LevelWarn {
+		level = LevelWarn
+	}
+	fileOnlyAttrs(level, msg, attrs)
+}
+
+func fileOnlyAttrs(level Level, msg string, attrs []Attr) {
 	impl := current.Load()
 	if impl == nil {
 		return
 	}
-	impl.forceFile(level, msg, attrs)
+	impl.fileOnly(level, msg, attrs)
 }
 
-func (l *loggerImpl) forceFile(level Level, msg string, attrs []Attr) {
-	if level < LevelWarn {
-		level = LevelWarn
-	}
+func (l *loggerImpl) fileOnly(level Level, msg string, attrs []Attr) {
 	merged := redactAttrs(mergeAttrs(l.attrs, attrs))
 	line := redactString(formatEvent(time.Now(), level, formatForceMessage(redactString(msg), merged)))
 	_ = mainWriteFunc(l.logPath, false)(line)

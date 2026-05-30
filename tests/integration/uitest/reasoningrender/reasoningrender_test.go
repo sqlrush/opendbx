@@ -240,7 +240,8 @@ func TestSmoke_NoStderrTear_SlogStaysOffTerminal(t *testing.T) {
 // independent block-style visual fixture set per spec-1.20.2 D-6.
 // Each fixture dir must exist; golden.png capture lands in a follow-up
 // SOP. The env gate REASONINGRENDER_VISUAL_REQUIRED=1 turns missing
-// dirs into failures (CI strict), matching spec-1.10..1.21 precedent.
+// dirs into failures; missing golden.png skips until strict capture is enabled,
+// matching spec-1.10..1.21 precedent.
 func TestReasoningRenderVisualGolden_ParkedFixtures(t *testing.T) {
 	t.Parallel()
 	fixtures := []string{
@@ -249,12 +250,23 @@ func TestReasoningRenderVisualGolden_ParkedFixtures(t *testing.T) {
 		"DeepSeekReasoning",
 		"StripThinkOnOff",
 	}
+	strict := os.Getenv("REASONINGRENDER_VISUAL_REQUIRED") != ""
 	for _, name := range fixtures {
 		path := filepath.Join("testdata", "visual", name)
 		info, err := os.Stat(path)
 		if err != nil || !info.IsDir() {
 			t.Errorf("parked fixture dir missing: %s (run spec-1.20.2 D-6 capture SOP)", path)
+			continue
 		}
+		golden := filepath.Join(path, "golden.png")
+		if _, err := os.Stat(golden); err == nil {
+			continue
+		}
+		if strict {
+			t.Errorf("missing reasoning/render golden fixture: %s", golden)
+			continue
+		}
+		t.Skipf("missing reasoning/render golden fixture for %s; capture pending (set REASONINGRENDER_VISUAL_REQUIRED=1 once captured)", name)
 	}
 }
 

@@ -426,6 +426,7 @@ func (m *Model) handleCancel() (program.Model, scheduler.Cmd) {
 func (m *Model) View(cols, rows int) buffer.Buffer {
 	if m.stream != nil {
 		if nodes := m.stream.Drain(); len(nodes) > 0 {
+			nodes = filterThinkingOnlyEmpty(nodes, m.sawThinking, m.sawContent)
 			m.scrollback = append(m.scrollback, nodes...)
 		}
 	}
@@ -512,7 +513,7 @@ func filterThinkingOnlyEmpty(nodes []block.RenderNode, sawThinking, sawContent b
 	if !sawThinking || sawContent || len(nodes) == 0 {
 		return nodes
 	}
-	out := nodes[:0]
+	out := make([]block.RenderNode, 0, len(nodes))
 	for _, n := range nodes {
 		msg, ok := n.(block.Message)
 		if ok && msg.Empty {
