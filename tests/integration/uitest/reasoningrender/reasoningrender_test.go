@@ -26,7 +26,6 @@ package reasoningrender_test
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"log/slog"
 	"os"
@@ -307,8 +306,3 @@ func gridASCII(buf buffer.Buffer) []byte {
 	}
 	return b.Bytes()
 }
-
-// Suppress unused-import warning for context if a future test needs
-// ctx-bearing helpers (mirrors other env gate boilerplate). Not used
-// today.
-var _ = context.Background

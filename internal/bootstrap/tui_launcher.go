@@ -71,7 +71,7 @@ func setNewScreenFn(fn func() (tcell.Screen, error)) {
 // Returns nil on key-exit (Ctrl+C double-press / Ctrl+\), ctx.Err on
 // cancel, ErrInitFailed wrap on tcell screen construction failure.
 //
-// The Model is llmapp.New (spec-1.20 D-6 production chat). 原则 3: when
+// The Model is llmapp.New (spec-1.20 D-6 production chat). Principle 3: when
 // the LLM provider cannot be constructed (no API key / unknown provider),
 // we do NOT silently fall back to demoapp — instead llmapp is started with
 // a provider that surfaces the LLM.* errcode on the first message, so the
