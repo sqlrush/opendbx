@@ -22,6 +22,8 @@ func TestEnvMap_HasExpectedEntries(t *testing.T) {
 		"OPENDBX_DIAGNOSE_MAX_TURNS":           "Diagnose.MaxTurns",
 		"OPENDBX_DIAGNOSE_TOOL_TIMEOUT":        "Diagnose.ToolTimeout",
 		"OPENDBX_DIAGNOSE_TOTAL_TIMEOUT":       "Diagnose.TotalTimeout",
+		"OPENDBX_DIAGNOSE_DEDUP_ENABLED":       "Diagnose.DedupEnabled",
+		"OPENDBX_DIAGNOSE_DEDUP_WINDOW":        "Diagnose.DedupWindow",
 	}
 	for envName, path := range want {
 		if got := m[envName]; got != path {
@@ -61,6 +63,23 @@ func TestApplyENV_DiagnoseOverrides(t *testing.T) {
 	}
 	if cfg.Diagnose.TotalTimeout != 5*time.Minute {
 		t.Errorf("TotalTimeout = %v; want 5m", cfg.Diagnose.TotalTimeout)
+	}
+}
+
+// TestApplyENV_DedupOverrides covers the spec-1.22 dedup env knobs: a bool
+// (DedupEnabled) and an int (DedupWindow).
+func TestApplyENV_DedupOverrides(t *testing.T) {
+	cfg := Default()
+	t.Setenv("OPENDBX_DIAGNOSE_DEDUP_ENABLED", "false")
+	t.Setenv("OPENDBX_DIAGNOSE_DEDUP_WINDOW", "7")
+	if err := applyENV(cfg); err != nil {
+		t.Fatalf("applyENV: %v", err)
+	}
+	if cfg.Diagnose.DedupEnabled {
+		t.Errorf("DedupEnabled = true; want false (env override)")
+	}
+	if cfg.Diagnose.DedupWindow != 7 {
+		t.Errorf("DedupWindow = %d; want 7", cfg.Diagnose.DedupWindow)
 	}
 }
 

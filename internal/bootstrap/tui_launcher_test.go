@@ -148,6 +148,10 @@ func TestNewChatModel_PropagatesDiagnoseConfig(t *testing.T) {
 	t.Setenv("OPENDBX_DIAGNOSE_MAX_TURNS", "8")
 	t.Setenv("OPENDBX_DIAGNOSE_TOOL_TIMEOUT", "45s")
 	t.Setenv("OPENDBX_DIAGNOSE_TOTAL_TIMEOUT", "5m")
+	// spec-1.22: dedup knobs ride the same config → llmapp.Options → diagnose
+	// wiring path; assert they resolve without breaking it.
+	t.Setenv("OPENDBX_DIAGNOSE_DEDUP_ENABLED", "true")
+	t.Setenv("OPENDBX_DIAGNOSE_DEDUP_WINDOW", "5")
 	t.Setenv("OPENDBX_LLM_REQUEST_TIMEOUT", "90s")
 	defer func() {
 		if r := recover(); r != nil {

@@ -50,6 +50,29 @@ func TestValidate_MaxFails(t *testing.T) {
 	}
 }
 
+// TestValidate_DedupWindowMinFails — spec-1.22: DedupWindow has validate
+// "min=1" (启停 is the DedupEnabled bool, so 0 is never a valid window —
+// codex HIGH-2). DedupEnabled=false does NOT exempt the field from validation.
+func TestValidate_DedupWindowMinFails(t *testing.T) {
+	cfg := Default()
+	cfg.Diagnose.DedupWindow = 0 // min=1
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for DedupWindow=0")
+	}
+	if !strings.Contains(err.Error(), "DedupWindow") {
+		t.Errorf("error should mention DedupWindow: %v", err)
+	}
+}
+
+func TestValidate_DedupWindowMaxFails(t *testing.T) {
+	cfg := Default()
+	cfg.Diagnose.DedupWindow = 101 // max=100
+	if err := Validate(cfg); err == nil {
+		t.Fatal("expected error for DedupWindow=101")
+	}
+}
+
 func TestValidate_NestedSliceErrorPath(t *testing.T) {
 	cfg := Default()
 	cfg.Connections = []ConnectionConfig{

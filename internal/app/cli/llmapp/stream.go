@@ -33,6 +33,7 @@ type streamControlMsg struct {
 	ThinkingToken  string          // EventText thinking side channel (spec-1.20.2 D-5)
 	ToolUse        *llm.ToolUse    // EventToolCall (spec-1.21 D-6)
 	ToolResult     *llm.ToolResult // EventToolResult (spec-1.21 D-6)
+	Cached         bool            // EventToolResult — spec-1.22: result served from dedup cache (render-only; ToolResult content is byte-identical to a fresh run)
 	Finish         llm.FinishReason
 	TermCode       string // EventFinish — DIAGNOSE.* code or "" on natural Stop
 	Err            error

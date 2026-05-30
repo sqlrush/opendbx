@@ -148,6 +148,9 @@ func newChatModel() program.Model {
 		ToolTimeout:  cfg.Diagnose.ToolTimeout,
 		TotalTimeout: cfg.Diagnose.TotalTimeout,
 		ReqTimeout:   cfg.LLM.RequestTimeout,
+		// spec-1.22: wire the dedup cache from config.
+		DedupEnabled: cfg.Diagnose.DedupEnabled,
+		DedupWindow:  cfg.Diagnose.DedupWindow,
 	}
 	if perr != nil {
 		// Principle 3: explicit error, no demoapp fallback.
