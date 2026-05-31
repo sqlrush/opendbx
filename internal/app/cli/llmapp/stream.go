@@ -6,6 +6,7 @@ package llmapp
 
 import (
 	"github.com/sqlrush/opendbx/internal/app/cli/render/streaming"
+	"github.com/sqlrush/opendbx/internal/app/report"
 	"github.com/sqlrush/opendbx/internal/domain/llm"
 )
 
@@ -37,6 +38,7 @@ type streamControlMsg struct {
 	Finish         llm.FinishReason
 	TermCode       string // EventFinish — DIAGNOSE.* code or "" on natural Stop
 	Err            error
+	Snapshot       *report.RunSnapshot // EventFinish — spec-1.23 D-3: the run snapshot, sealed atomically with the finish (rides this msg → no post-Run send → no channel-close race)
 }
 
 // readControlMsg asks Update to arm readControlCmd (pull one control msg).

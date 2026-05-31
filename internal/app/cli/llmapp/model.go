@@ -19,6 +19,7 @@ import (
 	"github.com/sqlrush/opendbx/internal/app/cli/render/streaming"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/style"
 	"github.com/sqlrush/opendbx/internal/app/diagnose"
+	"github.com/sqlrush/opendbx/internal/app/report"
 	"github.com/sqlrush/opendbx/internal/domain/llm"
 )
 
@@ -99,6 +100,11 @@ type Model struct {
 	toolUseNames map[string]string
 
 	scrollback []block.RenderNode
+
+	// lastSnapshot is the most recent completed (non-cancelled) diagnosis run,
+	// captured by the snapshotBuilder and sealed at EventFinish. /report reads
+	// it (spec-1.23 D-3/D-4). nil until the first completed run.
+	lastSnapshot *report.RunSnapshot
 }
 
 var (
@@ -259,7 +265,7 @@ func (m *Model) submit() (program.Model, scheduler.Cmd) {
 	next.scrollback = appendNode(m.scrollback, block.Message{Text: "> " + userText})
 	next.toolUseNames = map[string]string{} // reset per submit (spec-1.21 D-6)
 
-	return &next, loopStartCmd(ctx, m.loop, req, ts, ctrl, m.stripThink)
+	return &next, loopStartCmd(ctx, m.loop, req, userText, ts, ctrl, m.stripThink)
 }
 
 // buildRequest assembles the model-agnostic Request from history + the new
@@ -341,6 +347,12 @@ func (m *Model) handleControl(msg streamControlMsg) (program.Model, scheduler.Cm
 	case msg.Finish.Terminal():
 		next.sawContent = m.sawContent || msg.VisibleContent
 		next.scrollback = next.appendFinishNode(msg)
+		// spec-1.23 D-3: adopt the sealed run snapshot for /report. A cancelled
+		// run does NOT overwrite a prior good snapshot ("last completed", not
+		// "last attempted" — architect L-2).
+		if msg.Snapshot != nil && msg.Finish != llm.FinishCancelled {
+			next.lastSnapshot = msg.Snapshot
+		}
 	default:
 		next.sawContent = m.sawContent || msg.VisibleContent
 	}
