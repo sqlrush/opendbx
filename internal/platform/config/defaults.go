@@ -90,6 +90,9 @@ func Default() *Config {
 			MaxTurns:     16,
 			ToolTimeout:  30 * time.Second,
 			TotalTimeout: 10 * time.Minute,
+			// spec-1.22: dedup cache on by default, 3-turn window (§ 3.6).
+			DedupEnabled: true,
+			DedupWindow:  3,
 		},
 		Connections: nil, // user must add via `opendbx db add` or yaml
 		Models:      nil, // user must add via yaml or `opendbx auth login`

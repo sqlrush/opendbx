@@ -58,6 +58,12 @@ type Options struct {
 	ToolTimeout  time.Duration
 	TotalTimeout time.Duration
 	ReqTimeout   time.Duration
+
+	// DedupEnabled / DedupWindow wire the spec-1.22 per-Run tool-call dedup
+	// cache. DedupEnabled defaults false here (zero value) so a bare
+	// Options keeps spec-1.21 behavior; production turns it on via config.
+	DedupEnabled bool
+	DedupWindow  int
 }
 
 // Model is the spec-1.20 production chat Model (replaces demoapp); under
@@ -121,6 +127,8 @@ func New(provider llm.Provider, opts Options) *Model {
 		ToolTimeout:  opts.ToolTimeout,
 		TotalTimeout: opts.TotalTimeout,
 		ReqTimeout:   opts.ReqTimeout,
+		DedupEnabled: opts.DedupEnabled,
+		DedupWindow:  opts.DedupWindow,
 	})
 	if err != nil {
 		// diagnose.NewLoop only fails on nil Provider — programmer error
@@ -326,6 +334,9 @@ func (m *Model) handleControl(msg streamControlMsg) (program.Model, scheduler.Cm
 		}
 		sb := transitionToolUseState(m.scrollback, msg.ToolResult.ToolUseID, targetState)
 		tr := block.NewToolResult(msg.ToolResult.ToolUseID, name, msg.ToolResult.Content, msg.ToolResult.IsError)
+		// spec-1.22 D-6: post-set the render-only Cached flag (NewToolResult
+		// signature stays unchanged so the ~30 existing call sites don't move).
+		tr.Cached = msg.Cached
 		next.scrollback = appendNode(sb, tr)
 	case msg.Finish.Terminal():
 		next.sawContent = m.sawContent || msg.VisibleContent

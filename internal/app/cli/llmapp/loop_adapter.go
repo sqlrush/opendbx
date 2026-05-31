@@ -64,7 +64,7 @@ func makeEmit(ts *streaming.TokenStream, ctrl chan<- streamControlMsg, stripThin
 		case diagnose.EventToolCall:
 			return send(ctx, streamControlMsg{ToolUse: e.ToolUse})
 		case diagnose.EventToolResult:
-			return send(ctx, streamControlMsg{ToolResult: e.ToolResult})
+			return send(ctx, streamControlMsg{ToolResult: e.ToolResult, Cached: e.Cached})
 		case diagnose.EventFinish:
 			// Push a terminal chunk so the TokenStream's per-finish
 			// branches (Length truncation marker / cancel state) keep

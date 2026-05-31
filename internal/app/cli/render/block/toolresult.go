@@ -78,6 +78,11 @@ type ToolResult struct {
 	IsError   bool
 	ToolName  string
 	State     ToolResultState
+	// Cached marks a result served from the spec-1.22 dedup cache. It is a
+	// render-only signal — the wire/transcript content is byte-identical to a
+	// fresh run (CLAUDE.md § 3.6 errata). Set by the caller after NewToolResult
+	// (the ctor signature is intentionally unchanged).
+	Cached bool
 }
 
 // NewToolResult constructs a ToolResult and derives State per CC if-chain
@@ -187,9 +192,25 @@ func (t ToolResult) Render(ctx Context) (buffer.Buffer, error) {
 	return buf, nil
 }
 
-// collectRows builds the logical rows per state. Returns the rows and
-// any adapter error encountered. Empty result-success → no rows (R3 MED-1).
+// collectRows builds the logical rows per state, then appends the spec-1.22
+// dedup "(cached)" marker when the result was served from cache. The marker is
+// a dim row of its own so it stays visible even for an empty-success hit whose
+// content renders zero rows (codex MED-2 — the flag must never silently
+// disappear).
 func (t ToolResult) collectRows(rdr adapter.HeaderRenderer, actx adapter.Context) ([]toolResultRow, error) {
+	rows, err := t.collectStateRows(rdr, actx)
+	if err != nil {
+		return nil, err
+	}
+	if t.Cached {
+		rows = append(rows, toolResultRow{text: "  (cached)", style: StyleDimmed})
+	}
+	return rows, nil
+}
+
+// collectStateRows builds the per-state logical rows (pre-cached-marker).
+// Empty result-success → no rows (R3 MED-1).
+func (t ToolResult) collectStateRows(rdr adapter.HeaderRenderer, actx adapter.Context) ([]toolResultRow, error) {
 	ind := resultIndicator(t.State)
 
 	switch t.State {

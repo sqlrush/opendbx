@@ -130,6 +130,13 @@ type DiagnoseConfig struct {
 	MaxTurns     int           `yaml:"max_turns" json:"max_turns" env:"OPENDBX_DIAGNOSE_MAX_TURNS" validate:"min=1,max=100"`
 	ToolTimeout  time.Duration `yaml:"tool_timeout" json:"tool_timeout" env:"OPENDBX_DIAGNOSE_TOOL_TIMEOUT" validate:"min=1"`
 	TotalTimeout time.Duration `yaml:"total_timeout" json:"total_timeout" env:"OPENDBX_DIAGNOSE_TOTAL_TIMEOUT" validate:"min=1"`
+	// spec-1.22 tool dedup cache. DedupEnabled is the on/off switch (启停 is
+	// the bool, NOT a magic DedupWindow==0 — codex HIGH-2). DedupWindow is the
+	// turn-distance within which an identical call is served from cache; it is
+	// intentionally NOT in the validateCrossField block (independent of
+	// MaxTurns — a window > MaxTurns benignly degrades to whole-Run dedup, Q7).
+	DedupEnabled bool `yaml:"dedup_enabled" json:"dedup_enabled" env:"OPENDBX_DIAGNOSE_DEDUP_ENABLED"`
+	DedupWindow  int  `yaml:"dedup_window" json:"dedup_window" env:"OPENDBX_DIAGNOSE_DEDUP_WINDOW" validate:"min=1,max=100"`
 }
 
 // ConnectionConfig — DB connection schema. Stage 0 keeps minimal fields;

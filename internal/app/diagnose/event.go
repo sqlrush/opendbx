@@ -43,6 +43,7 @@ type Event struct {
 	Thinking   bool             // EventText — true → thinking-channel token
 	ToolUse    *llm.ToolUse     // EventToolCall
 	ToolResult *llm.ToolResult  // EventToolResult
+	Cached     bool             // EventToolResult — spec-1.22: result served from dedup cache (render-only signal; the ToolResult content is byte-identical to a fresh run, CLAUDE.md § 3.6 errata)
 	Finish     llm.FinishReason // EventFinish
 	TermCode   string           // EventFinish — DIAGNOSE.* code ("" on natural FinishStop / FinishStopSequence)
 	Err        error            // EventFinish — registered errcode (LLM.* / DIAGNOSE.*) or ctx.Err

@@ -88,4 +88,11 @@ func TestDefault_DiagnoseValues(t *testing.T) {
 	if d.Diagnose.TotalTimeout != 10*time.Minute {
 		t.Errorf("Diagnose.TotalTimeout = %v, want 10min", d.Diagnose.TotalTimeout)
 	}
+	// spec-1.22: dedup cache on by default, 3-turn window.
+	if !d.Diagnose.DedupEnabled {
+		t.Errorf("Diagnose.DedupEnabled = false, want true (dedup on by default)")
+	}
+	if d.Diagnose.DedupWindow != 3 {
+		t.Errorf("Diagnose.DedupWindow = %d, want 3", d.Diagnose.DedupWindow)
+	}
 }
