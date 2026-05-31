@@ -53,6 +53,16 @@ func Open(ctx context.Context, driverName, dsn string) (Conn, error) {
 	return d.Open(ctx, dsn)
 }
 
+// Lookup returns the registered driver for name and true, or (nil, false).
+// Used by callers (e.g. the connection resolver) that need the Driver value
+// itself — for instance to test for the DSNComposer capability.
+func Lookup(name string) (Driver, bool) {
+	mu.RLock()
+	defer mu.RUnlock()
+	d, ok := drivers[name]
+	return d, ok
+}
+
 // registeredNames returns the sorted set of registered driver names. Used by
 // tests; kept unexported (production code does not enumerate drivers).
 func registeredNames() []string {

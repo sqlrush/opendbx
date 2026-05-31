@@ -50,6 +50,15 @@ func TestSecretDSNExpose(t *testing.T) {
 	}
 }
 
+func TestSecretDSNGoString(t *testing.T) {
+	// fmt's %#v routes through Format (which shadows GoString), so exercise
+	// GoString directly to confirm it too is leak-safe.
+	g := NewSecretDSN(secretRaw).GoString()
+	if strings.Contains(g, "sup3rs3cr3t") || !strings.Contains(g, "REDACTED") {
+		t.Errorf("GoString leaked or missing placeholder: %s", g)
+	}
+}
+
 func TestSecretDSNIsZero(t *testing.T) {
 	if !(SecretDSN{}).IsZero() {
 		t.Error("zero SecretDSN should report IsZero")

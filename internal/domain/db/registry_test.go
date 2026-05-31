@@ -79,6 +79,17 @@ func TestOpenConcurrent(t *testing.T) {
 	wg.Wait()
 }
 
+func TestLookup(t *testing.T) {
+	Register(fakeDriver{name: "lookup-ok"})
+	d, ok := Lookup("lookup-ok")
+	if !ok || d.Name() != "lookup-ok" {
+		t.Errorf("Lookup registered = (%v, %v)", d, ok)
+	}
+	if _, ok := Lookup("lookup-missing"); ok {
+		t.Error("Lookup missing reported found")
+	}
+}
+
 func TestRegisteredNames(t *testing.T) {
 	Register(fakeDriver{name: "reg-named"})
 	found := false
