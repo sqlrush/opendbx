@@ -83,3 +83,18 @@ card's `spec_ref` field.
 - **go_directive**: requires `go 1.22+`; opendbx at `go 1.24` compatible.
 - **pkgsite**: https://pkg.go.dev/github.com/openai/openai-go@v1.12.0
 - **spec_ref**: spec-1.20.1-openai-compat.md § 5 + § 1.4 (B-64/65/66 codex VERIFIED) + allowlist transitive_lock
+
+## `github.com/jackc/pgx/v5` v5.7.6
+
+- **license**: MIT (module LICENSE)
+- **maintenance**: active (jackc; the de-facto modern PostgreSQL driver for Go; mature 5.x line; widely adopted incl. by GORM/sqlc)
+- **alternatives considered**:
+  - `lib/pq` — in maintenance mode (upstream recommends pgx); no `context` cancellation on some paths; rejected
+  - `database/sql` + a driver — adds an abstraction layer opendbx does not need yet (no multi-DB SQL until Stage 6); pgxpool gives pooling + reconnect directly
+  - `go-pg` / ORM — too high-level; opendbx wants raw control for diagnosis queries; rejected
+- **version choice (v5.7.6 not latest v5.8.0)**: v5.8.0 requires `testify v1.11.1`, which requires `rogpeppe/go-internal v1.15.0` (declares `go 1.25`) and would force the whole project's go directive 1.24.0 → 1.25. v5.7.6 requires only `testify v1.8.1`, so MVS keeps the project's existing `testify v1.8.4` — no testify-driven go bump. API for opendbx's surface (`pgxpool.New`/`Ping`/`QueryRow`/`pgconn.Timeout`/`*pgconn.PgError`) is identical across 5.7/5.8.
+- **risk**: **transitive-closure (mostly module-graph-only)** — pgx adds 3 modules compiled into the binary (`pgpassfile` / `pgservicefile` / `puddle/v2`) + bumps `gopkg.in/check.v1` to v1.0.0-2020 (pgx's testify test require). That check.v1 → `kr/pretty` → `kr/text` + `rogpeppe/go-internal` chain is **test-only (NOT in the opendbx binary; `go mod why -m` = go-internal/fmtsort, objx = "main module does not need")**. `go-internal` is **capped at v1.14.1 via a `go.mod exclude v1.15.0`** because v1.15.0 declares `go 1.25` while v1.14.1 (`go 1.23`, has `fmtsort`) keeps the project at `go 1.24.0`. All transitive modules version-pinned in `allowlist.json:transitive_lock`. `x/crypto` (SCRAM auth) already satisfied at v0.40.0. API churn risk low (5.x mature 3+ years; pinned v5.7.6, upgrade requires review).
+- **isolation**: only `internal/domain/db/postgres` imports pgx; app layer is driver-agnostic via the `db.Driver`/`db.Conn` interface (规则 16 / § 3.7 multi-DB).
+- **go_directive**: pgx v5.7.6 requires `go 1.23+`; opendbx at `go 1.24.0` compatible (no bump — see version choice above).
+- **pkgsite**: https://pkg.go.dev/github.com/jackc/pgx/v5@v5.7.6
+- **spec_ref**: spec-1.18-pg-driver.md § 5 (D-7 dep decision) + § 6 R-6 + allowlist transitive_lock
