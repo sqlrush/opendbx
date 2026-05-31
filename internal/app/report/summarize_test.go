@@ -18,6 +18,20 @@ func TestSummarize_UnderLimits_Unchanged(t *testing.T) {
 	}
 }
 
+func TestCutRunes(t *testing.T) {
+	t.Parallel()
+	if got := cutRunes("abc", 10); got != "abc" {
+		t.Errorf("under-max: %q", got) // len <= max → unchanged
+	}
+	// "中" is 3 bytes; max=4 lands inside the 2nd rune → back up to 3.
+	if got := cutRunes("中中中", 4); got != "中" {
+		t.Errorf("mid-rune cut = %q; want 中", got)
+	}
+	if got := cutRunes("中中中", 6); got != "中中" {
+		t.Errorf("rune-boundary cut = %q; want 中中", got)
+	}
+}
+
 func TestSummarize_Empty(t *testing.T) {
 	t.Parallel()
 	if got := summarize(""); got != "" {

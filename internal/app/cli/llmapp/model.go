@@ -180,6 +180,10 @@ func (m *Model) Update(msg scheduler.Msg) (program.Model, scheduler.Cmd) {
 		}
 	case streamControlMsg:
 		return m.handleControl(v)
+	case reportWrittenMsg:
+		return m.handleReportWritten(v)
+	case reportWriteFailedMsg:
+		return m.handleReportWriteFailed(v)
 	case streamDoneMsg:
 		next := *m
 		// T-10a HIGH-3: the TokenStream contract requires a Drain AFTER Close
@@ -225,6 +229,13 @@ func (m *Model) handleAction(msg program.KeyActionMsg) (program.Model, scheduler
 	case keybindings.ActionSubmit:
 		if m.buffer == "" {
 			return &next, nil
+		}
+		// spec-1.23 D-4: /report is intercepted here, BEFORE submit(), so it
+		// does not start a new diagnosis or reset lastSnapshot. (The streaming
+		// guard at the top of handleAction already blocks any submit mid-run,
+		// so /report cannot race a live diagnosis.)
+		if isReportCommand(next.buffer) {
+			return &next, next.dispatchReport()
 		}
 		return next.submit()
 	case keybindings.ActionCancel:
