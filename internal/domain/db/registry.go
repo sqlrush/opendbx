@@ -14,6 +14,7 @@ package db
 
 import (
 	"context"
+	"sort"
 	"sync"
 
 	"github.com/sqlrush/opendbx/internal/platform/errcode"
@@ -55,7 +56,7 @@ func Open(ctx context.Context, driverName, dsn string) (Conn, error) {
 
 // Lookup returns the registered driver for name and true, or (nil, false).
 // Used by callers (e.g. the connection resolver) that need the Driver value
-// itself — for instance to test for the DSNComposer capability.
+// itself — for instance to test for the DSNComposer capability (spec-1.19 D-6).
 func Lookup(name string) (Driver, bool) {
 	mu.RLock()
 	defer mu.RUnlock()
@@ -72,5 +73,16 @@ func registeredNames() []string {
 	for name := range drivers {
 		out = append(out, name)
 	}
+	sort.Strings(out)
 	return out
+}
+
+// unregisterForTesting removes a driver registration. Test-only helper (not
+// exported — production never deregisters) so tests can Register + Cleanup and
+// stay idempotent across `go test -count>1` (spec-1.18 R-fix; post-impl
+// go-reviewer HIGH-1). Mirrors errcode.unregisterForTesting.
+func unregisterForTesting(name string) {
+	mu.Lock()
+	defer mu.Unlock()
+	delete(drivers, name)
 }

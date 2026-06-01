@@ -26,14 +26,28 @@ type Driver struct{}
 // Compile-time interface conformance.
 var _ db.Driver = Driver{}
 
+// newPool is the pool constructor seam. Production = pgxpool.New (returning a
+// *pgxpool.Pool that satisfies pgxPool); tests override it to inject a fake so
+// Open's success path is unit-testable without a real PostgreSQL (spec-1.18
+// R-fix; post-impl go-reviewer MED-1).
+//
+//nolint:gochecknoglobals // spec-1.18 R-fix: test seam, mirrors the database/sql driver-constructor pattern.
+var newPool = func(ctx context.Context, dsn string) (pgxPool, error) {
+	return pgxpool.New(ctx, dsn)
+}
+
 // Name returns the registry key.
 func (Driver) Name() string { return "postgres" }
 
 // Open builds a pgxpool from the DSN and verifies reachability (eager-ping)
 // before returning. Any failure is classified to a sanitized DB.* error that
 // never renders the DSN.
+//
+// The caller MUST supply a context with a deadline (e.g. context.WithTimeout)
+// — the eager Ping has no internal timeout floor, so a black-holed host would
+// otherwise block until the OS TCP timeout (post-impl security-reviewer LOW-1).
 func (Driver) Open(ctx context.Context, dsn string) (db.Conn, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+	pool, err := newPool(ctx, dsn)
 	if err != nil {
 		// errcode-lint:exempt -- spec-1.18 D-4: classify always returns a sanitized errcode.Error (db.Err*); this is the error origin, not a pass-through.
 		return nil, classify(err)
