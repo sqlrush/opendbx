@@ -39,6 +39,10 @@ type Config struct {
 	Scheduler SchedulerConfig `yaml:"scheduler" json:"scheduler"`
 	Diagnose  DiagnoseConfig  `yaml:"diagnose" json:"diagnose"`
 
+	// DefaultConnection selects the active connection by alias when no
+	// --connection-alias CLI flag is given (spec-1.19 D-1/D-6).
+	DefaultConnection string `yaml:"default_connection,omitempty" json:"default_connection,omitempty"`
+
 	// Inline collections — schema in spec-1.19 (Connections) / spec-1.20 (Models).
 	// Stage 0 contract is "field exists; full schema deferred".
 	Connections []ConnectionConfig `yaml:"connections,omitempty" json:"connections,omitempty"`
@@ -139,12 +143,28 @@ type DiagnoseConfig struct {
 	DedupWindow  int  `yaml:"dedup_window" json:"dedup_window" env:"OPENDBX_DIAGNOSE_DEDUP_WINDOW" validate:"min=1,max=100"`
 }
 
-// ConnectionConfig — DB connection schema. Stage 0 keeps minimal fields;
-// spec-1.19-connection-config fills the rest.
+// ConnectionConfig — DB connection schema (spec-1.19). Two mutually-exclusive
+// modes (XOR, enforced by validateConnections):
+//
+//   - DSN mode: a full driver DSN string (any driver). Self-contained.
+//   - fields mode: structured Host/Port/Database/User/Password/SSLMode
+//     (postgres only — composed via the driver's db.DSNComposer capability).
+//
+// Host/Database/User/Port carry NO validate tag: the per-field validator
+// cannot tell which mode a connection is in, so requiring them via tags would
+// break DSN-mode configs. Their cross-field rules live in validateConnections.
+// Password resolution prefers OPENDBX_DB_PASSWORD_<ALIAS> over the config
+// field (see resolvePassword); the field itself is redacted in all dumps.
 type ConnectionConfig struct {
-	Alias  string `yaml:"alias" json:"alias" validate:"required"`
-	Driver string `yaml:"driver" json:"driver" validate:"oneof=postgres mysql oracle opengauss"`
-	DSN    string `yaml:"dsn" json:"dsn" redact:"true"`
+	Alias    string `yaml:"alias" json:"alias" validate:"required"`
+	Driver   string `yaml:"driver" json:"driver" validate:"oneof=postgres mysql oracle opengauss"`
+	DSN      string `yaml:"dsn,omitempty" json:"dsn,omitempty" redact:"true"`
+	Host     string `yaml:"host,omitempty" json:"host,omitempty"`
+	Port     int    `yaml:"port,omitempty" json:"port,omitempty"`
+	Database string `yaml:"database,omitempty" json:"database,omitempty"`
+	User     string `yaml:"user,omitempty" json:"user,omitempty"`
+	Password string `yaml:"password,omitempty" json:"password,omitempty" redact:"true"`
+	SSLMode  string `yaml:"sslmode,omitempty" json:"sslmode,omitempty" validate:"omitempty,oneof=disable allow prefer require verify-ca verify-full"`
 }
 
 // ModelConfig — LLM model endpoint. Stage 0 minimal; spec-1.20 fills rest.

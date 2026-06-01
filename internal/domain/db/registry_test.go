@@ -100,3 +100,16 @@ func TestRegisteredNames(t *testing.T) {
 		t.Error("registeredNames did not include reg-named")
 	}
 }
+
+// TestLookup covers db.Lookup (spec-1.19 D-6 — bootstrap ResolveDSN uses it for
+// the DSNComposer capability assertion).
+func TestLookup(t *testing.T) {
+	registerTestDriver(t, "reg-lookup")
+	d, ok := Lookup("reg-lookup")
+	if !ok || d.Name() != "reg-lookup" {
+		t.Errorf("Lookup registered = (%v, %v)", d, ok)
+	}
+	if _, ok := Lookup("reg-lookup-missing"); ok {
+		t.Error("Lookup missing reported found")
+	}
+}

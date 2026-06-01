@@ -347,7 +347,7 @@ func yamlMaxDepth(raw []byte) int {
 // markAllAsSource marks every top-level field as having `src` provenance.
 // Used at Load() entry to seed sources map for Default values.
 func markAllAsSource(cfg *Config, src SettingSource) {
-	for _, name := range []string{"Security", "Output", "LLM", "Session", "Sentinel", "Trace", "Scheduler", "Connections", "Models"} {
+	for _, name := range []string{"Security", "Output", "LLM", "Session", "Sentinel", "Trace", "Scheduler", "DefaultConnection", "Connections", "Models"} {
 		cfg.SetSource(name, src)
 	}
 	for _, path := range configSourcePaths(reflect.TypeOf(Config{}), "") {
