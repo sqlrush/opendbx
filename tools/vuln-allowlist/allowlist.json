@@ -1,6 +1,20 @@
 {
   "exemptions": [
     {
+      "osv_id": "GO-2026-4772",
+      "module": "github.com/jackc/pgx/v5",
+      "expiry": "2026-12-01",
+      "reason": "pgx memory-safety advisory; fixed in pgx v5.9.0. govulncheck classifies as package-result (imported, NO reachable call path — opendbx uses only pgxpool New/Ping/QueryRow/Close, not the vulnerable symbols). pgx v5.9.0's go.mod declares go 1.25.0, so the fix would force the whole project go 1.24.0 → 1.25 (the bump spec-1.18 R2 deliberately avoided). Accepted as not-reachable + go-version-locked; revisit when the toolchain bumps to go 1.25 (Stage 2+), at which point v5.9.0 is free.",
+      "spec_ref": "spec-1.18-pg-driver.md § 6 R-6 (post-impl T-10a security-reviewer HIGH-1; user path-3/3 keep v5.7.6)"
+    },
+    {
+      "osv_id": "GO-2026-4771",
+      "module": "github.com/jackc/pgx/v5",
+      "expiry": "2026-12-01",
+      "reason": "pgx memory-safety advisory; fixed in pgx v5.9.0. govulncheck package-result (not reachable — only pgxpool New/Ping/QueryRow/Close used). v5.9.0 requires go 1.25.0 → forces project go-version bump avoided by spec-1.18 R2. Accepted as not-reachable + go-version-locked; revisit at the go-1.25 toolchain bump (Stage 2+).",
+      "spec_ref": "spec-1.18-pg-driver.md § 6 R-6 (post-impl T-10a security-reviewer HIGH-1; user path-3/3 keep v5.7.6)"
+    },
+    {
       "osv_id": "GO-2025-4007",
       "module": "stdlib",
       "expiry": "2026-08-14",
