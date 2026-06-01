@@ -112,6 +112,51 @@ func TestPgConnHealthCheckError(t *testing.T) {
 	}
 }
 
+// TestOpenSuccess covers Driver.Open's happy path (newPool succeeds + Ping
+// succeeds → wrapped pgConn) without a real PG, via the newPool seam
+// (post-impl go-reviewer MED-1).
+func TestOpenSuccess(t *testing.T) {
+	orig := newPool
+	t.Cleanup(func() { newPool = orig })
+	newPool = func(context.Context, string) (pgxPool, error) {
+		return &fakePool{row: fakeRow{version: "PostgreSQL 16.2"}}, nil
+	}
+	conn, err := Driver{}.Open(context.Background(), "any-dsn")
+	if err != nil {
+		t.Fatalf("Open success: %v", err)
+	}
+	if conn == nil {
+		t.Fatal("Open returned nil conn")
+	}
+	if err := conn.Ping(context.Background()); err != nil {
+		t.Errorf("Ping on opened conn: %v", err)
+	}
+	_ = conn.Close()
+}
+
+func TestOpenPingFailsClosesPool(t *testing.T) {
+	orig := newPool
+	t.Cleanup(func() { newPool = orig })
+	fp := &fakePool{pingErr: &pgconn.PgError{Code: "08006"}}
+	newPool = func(context.Context, string) (pgxPool, error) { return fp, nil }
+	_, err := Driver{}.Open(context.Background(), "dsn")
+	if !errors.Is(err, db.ErrConnectFailed) {
+		t.Errorf("eager-ping failure: want DB.CONNECT_FAILED, got %v", err)
+	}
+	if fp.closes != 1 {
+		t.Errorf("pool not closed on eager-ping failure: closes=%d", fp.closes)
+	}
+}
+
+func TestOpenNewPoolError(t *testing.T) {
+	orig := newPool
+	t.Cleanup(func() { newPool = orig })
+	newPool = func(context.Context, string) (pgxPool, error) { return nil, errors.New("dial fail") }
+	if _, err := (Driver{}).Open(context.Background(), "dsn"); !errors.Is(err, db.ErrConnectFailed) {
+		t.Errorf("newPool error: want DB.CONNECT_FAILED, got %v", err)
+	}
+}
+
 func TestPgConnCloseIdempotent(t *testing.T) {
 	fp := &fakePool{}
 	c := &pgConn{pool: fp}

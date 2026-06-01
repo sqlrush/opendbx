@@ -40,16 +40,17 @@ func (e *safeErr) Error() string { return e.structured.Error() }
 
 // Unwrap returns both the structured errcode error (so errcode.As / a
 // db.Err* errors.Is match) and the pgx root (so errors.As(&pgErr) /
-// errors.Is(ctx.Err) match). Go 1.20+ multi-error unwrap.
+// errors.Is(ctx.Err) match). Go 1.20+ multi-error unwrap. root is always
+// non-nil here (sanitized is only called from classify on a non-nil err); a
+// nil entry would simply be skipped by errors.Is/As traversal regardless.
 func (e *safeErr) Unwrap() []error {
-	if e.root == nil {
-		return []error{e.structured}
-	}
 	return []error{e.structured, e.root}
 }
 
 // sanitized builds a safeErr for a registered DB.* code, preserving root for
-// matching while keeping it out of the rendered text.
+// matching while keeping it out of the rendered text. The empty msg/hint make
+// errcode.New inherit the registered db.Err* defaults (errcode.New fallback) —
+// so the rendered "[DB.*] message" stays the canonical sentinel text.
 func sanitized(code string, root error) error {
 	return &safeErr{structured: errcode.New(code, "", ""), root: root}
 }

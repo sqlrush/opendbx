@@ -14,6 +14,7 @@ package db
 
 import (
 	"context"
+	"sort"
 	"sync"
 
 	"github.com/sqlrush/opendbx/internal/platform/errcode"
@@ -62,5 +63,16 @@ func registeredNames() []string {
 	for name := range drivers {
 		out = append(out, name)
 	}
+	sort.Strings(out)
 	return out
+}
+
+// unregisterForTesting removes a driver registration. Test-only helper (not
+// exported — production never deregisters) so tests can Register + Cleanup and
+// stay idempotent across `go test -count>1` (spec-1.18 R-fix; post-impl
+// go-reviewer HIGH-1). Mirrors errcode.unregisterForTesting.
+func unregisterForTesting(name string) {
+	mu.Lock()
+	defer mu.Unlock()
+	delete(drivers, name)
 }

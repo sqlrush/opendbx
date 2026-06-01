@@ -25,8 +25,17 @@ func (fakeConn) Ping(context.Context) error                  { return nil }
 func (fakeConn) HealthCheck(context.Context) (Health, error) { return Health{Reachable: true}, nil }
 func (fakeConn) Close() error                                { return nil }
 
+// registerTestDriver registers a fake driver and unregisters it on cleanup, so
+// the global registry stays clean across `go test -count>1` (post-impl
+// go-reviewer HIGH-1).
+func registerTestDriver(t *testing.T, name string) {
+	t.Helper()
+	Register(fakeDriver{name: name})
+	t.Cleanup(func() { unregisterForTesting(name) })
+}
+
 func TestRegisterAndOpen(t *testing.T) {
-	Register(fakeDriver{name: "reg-ok"})
+	registerTestDriver(t, "reg-ok")
 	conn, err := Open(context.Background(), "reg-ok", "dsn")
 	if err != nil {
 		t.Fatalf("Open registered driver: %v", err)
@@ -37,7 +46,7 @@ func TestRegisterAndOpen(t *testing.T) {
 }
 
 func TestRegisterDuplicatePanics(t *testing.T) {
-	Register(fakeDriver{name: "reg-dup"})
+	registerTestDriver(t, "reg-dup")
 	defer func() {
 		if r := recover(); r == nil {
 			t.Fatal("duplicate Register did not panic")
@@ -65,7 +74,7 @@ func TestOpenUnknownDriver(t *testing.T) {
 // TestOpenConcurrent exercises the RWMutex: many concurrent Open reads against
 // a registered driver while the registry is otherwise quiescent. Run with -race.
 func TestOpenConcurrent(t *testing.T) {
-	Register(fakeDriver{name: "reg-concurrent"})
+	registerTestDriver(t, "reg-concurrent")
 	var wg sync.WaitGroup
 	for i := 0; i < 64; i++ {
 		wg.Add(1)
@@ -80,7 +89,7 @@ func TestOpenConcurrent(t *testing.T) {
 }
 
 func TestRegisteredNames(t *testing.T) {
-	Register(fakeDriver{name: "reg-named"})
+	registerTestDriver(t, "reg-named")
 	found := false
 	for _, n := range registeredNames() {
 		if n == "reg-named" {
