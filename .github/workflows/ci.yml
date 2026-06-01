@@ -1,11 +1,24 @@
 # opendbx CI — spec-0.9 D-1 (final state after T-9)
 #
-# 12 stable-name required jobs (validate / build-linux / build-macos /
-# unit-test / import-rules / dependency-policy / cli-golden / security /
-# perf-smoke / ui-visual / ui-screenshots / ci-ui-review). All branch
-# protection contexts reference these stable names 1:1
-# (scripts/ci/branch-protection-required-checks.json SSOT enforced by
-# tools/ci-protection-check; see `make ci-script-check`).
+# 12 stable-name jobs (validate / build-linux / build-macos / unit-test /
+# import-rules / dependency-policy / cli-golden / security / perf-smoke /
+# ui-visual / ui-screenshots / ci-ui-review). All 12 are listed in the SSOT
+# (scripts/ci/branch-protection-required-checks.json) and enforced 1:1 against
+# this file's job 'name:' fields by tools/ci-protection-check (`make ci-script-check`).
+#
+# REQUIRED vs OPTIONAL — the branch-protection required_status_checks set is a
+# curated SUBSET of the SSOT, NOT all 12:
+#   required (run every PR, all cheap ubuntu): validate / build-linux /
+#     unit-test / import-rules / dependency-policy / cli-golden / security.
+#   optional (skip on regular PRs; run on main push / workflow_dispatch / label):
+#     build-macos (macOS 10× cost — `area:darwin`) and perf-smoke (`area:perf`)
+#     per the spec-1.22 CI-cost chore; ui-visual / ui-screenshots / ci-ui-review
+#     are label-gated UI jobs (already optional since spec-0.11.5).
+#   NOTE: the SSOT lists all 12 for the naming-drift check — it is NOT the
+#   required set. `sync-branch-protection.sh --apply` would push all 12 to
+#   required (over-requiring the optional/label-gated jobs) — a pre-existing
+#   footgun; teaching the SSOT/sync tooling an explicit "optional" set is a
+#   recommended follow-up.
 #
 # T-5 / T-7 / T-8 / T-9 history (兼容 PR 模式):
 #   T-5: 17 jobs (9 stable + 8 legacy placeholders) shipped in one PR;
@@ -116,10 +129,18 @@ jobs:
           fi
           echo "$out" | grep -q "TERMINAL.NOT_A_TTY" || (echo "interact did not emit TERMINAL.NOT_A_TTY"; echo "$out"; exit 1)
 
+  # spec-1.22 CI-cost chore: the macOS runner bills at ~10× a Linux minute and
+  # was the dominant Actions consumer. This job is now OPTIONAL (moved out of
+  # branch-protection required checks) and skips on regular PRs — it runs on
+  # main push (a post-merge darwin build gate before the spec tag), manual
+  # dispatch, and PRs explicitly labeled `area:darwin` (cross-platform work).
   build-macos:
     name: build-macos
     runs-on: macos-latest
     needs: validate
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'area:darwin')
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -259,10 +280,18 @@ jobs:
         run: make vuln-check
 
   # spec-0.9 T-4 / D-3: perf-smoke — make bench WARN-only
+  # spec-1.22 CI-cost chore: perf bench is WARN-only (规则 11 baseline matters
+  # at the per-stage / main-push level, not every PR synchronize). Now OPTIONAL
+  # (out of required checks); skips on regular PRs and runs on main push, manual
+  # dispatch, and PRs labeled `area:perf`. Perf regressions are still caught on
+  # main before the spec tag, and on demand via the label.
   perf-smoke:
     name: perf-smoke
     runs-on: ubuntu-latest
     needs: validate
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'area:perf')
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
