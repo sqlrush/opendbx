@@ -73,12 +73,16 @@ func (b *snapshotBuilder) addToolResult(tr *llm.ToolResult, cached bool) {
 }
 
 // seal produces the finished snapshot at EventFinish. The result is a fresh
-// value safe to send over the control channel.
+// value safe to send over the control channel: the timeline is copied so the
+// sealed snapshot does not alias the builder's backing array (spec-1.23 R-fix;
+// post-impl go-reviewer LOW-1 — defensive ownership transfer).
 func (b *snapshotBuilder) seal(e diagnose.Event) *report.RunSnapshot {
+	tl := make([]report.ToolEvent, len(b.timeline))
+	copy(tl, b.timeline)
 	return &report.RunSnapshot{
 		Prompt:       b.prompt,
 		FinalAnswer:  b.answer.String(),
-		ToolTimeline: b.timeline,
+		ToolTimeline: tl,
 		Turns:        e.Turn,
 		FinishStatus: e.Finish,
 		TermCode:     e.TermCode,

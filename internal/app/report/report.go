@@ -25,6 +25,9 @@ import (
 // now is the report-generation timestamp (injected for deterministic tests);
 // it is rendered in UTC.
 func Generate(snap RunSnapshot, now time.Time) string {
+	// Redact secrets BEFORE rendering — the report is a durable, user-visible
+	// artifact (disk + screen). spec-1.23 R-fix (post-impl codex HIGH-1).
+	snap = redactSnapshot(snap)
 	var b strings.Builder
 	writeHeader(&b, snap, now)
 	writeQuestion(&b, snap)
@@ -58,10 +61,37 @@ func writeProcess(b *strings.Builder, snap RunSnapshot) {
 		te := snap.ToolTimeline[i]
 		fmt.Fprintf(b, "### %d. %s%s%s\n\n", i+1, te.Name, cachedTag(te.Cached), errorTag(te.IsError))
 		if len(te.Input) > 0 {
-			fmt.Fprintf(b, "参数:\n\n```json\n%s\n```\n\n", canonicalJSON(te.Input))
+			j := canonicalJSON(te.Input)
+			f := fence(j)
+			fmt.Fprintf(b, "参数:\n\n%sjson\n%s\n%s\n\n", f, j, f)
 		}
-		fmt.Fprintf(b, "结果:\n\n```\n%s\n```\n\n", summarize(te.Result))
+		res := summarize(te.Result)
+		f := fence(res)
+		fmt.Fprintf(b, "结果:\n\n%s\n%s\n%s\n\n", f, res, f)
 	}
+}
+
+// fence returns a backtick run long enough to safely wrap s in a fenced code
+// block: one longer than the longest backtick run inside s (min 3). Prevents
+// a tool result/input containing ``` from breaking out of the fence and
+// spoofing later report sections (spec-1.23 R-fix; post-impl codex LOW-1).
+func fence(s string) string {
+	longest, cur := 0, 0
+	for _, r := range s {
+		if r == '`' {
+			cur++
+			if cur > longest {
+				longest = cur
+			}
+		} else {
+			cur = 0
+		}
+	}
+	n := longest + 1
+	if n < 3 {
+		n = 3
+	}
+	return strings.Repeat("`", n)
 }
 
 func writeConclusion(b *strings.Builder, snap RunSnapshot) {

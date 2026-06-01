@@ -16,6 +16,7 @@ package report
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/sqlrush/opendbx/internal/platform/config"
@@ -33,15 +34,29 @@ var ErrWriteFailed = errcode.Register(
 )
 
 // reportsDirFn resolves the reports directory. It is a package seam so tests
-// can redirect writes to a temp dir.
-var reportsDirFn = defaultReportsDir
+// can redirect writes to a temp dir. Guarded by reportsDirMu so the test-seam
+// mutation is visible to -race even if a test ever runs in parallel
+// (spec-1.23 R-fix; post-impl go-reviewer MED-1).
+var (
+	reportsDirMu sync.RWMutex
+	reportsDirFn = defaultReportsDir
+)
+
+// resolveReportsDir reads the (possibly test-redirected) reports dir func
+// under the lock.
+func resolveReportsDir() (string, error) {
+	reportsDirMu.RLock()
+	fn := reportsDirFn
+	reportsDirMu.RUnlock()
+	return fn()
+}
 
 // WriteReport atomically writes md to <reports-dir>/<UTC-ts>.md and returns the
 // path. now must be the same instant used to render the report header so the
 // filename and header agree (it is rendered in UTC; the colons of RFC3339 are
 // replaced with hyphens for filename safety).
 func WriteReport(md string, now time.Time) (string, error) {
-	dir, err := reportsDirFn()
+	dir, err := resolveReportsDir()
 	if err != nil {
 		return "", errcode.Wrap(ErrWriteFailed.Code(), err, "resolve reports directory", "")
 	}

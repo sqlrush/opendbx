@@ -23,10 +23,11 @@ import (
 )
 
 const (
-	reportCommandName     = "report"
-	reportNoDiagnosisMsg  = "还没有可生成报告的诊断；先问一个诊断问题，完成后再 /report。"
-	reportWrittenPrefix   = "报告已写入: "
-	reportWriteFailPrefix = "报告已渲染，但写入文件失败: "
+	reportCommandName      = "report"
+	reportNoDiagnosisMsg   = "还没有可生成报告的诊断；先问一个诊断问题，完成后再 /report。"
+	reportStreamingBusyMsg = "诊断进行中，请等完成后再 /report。"
+	reportWrittenPrefix    = "报告已写入: "
+	reportWriteFailPrefix  = "报告已渲染，但写入文件失败: "
 )
 
 // reportWrittenMsg / reportWriteFailedMsg carry the result of the write Cmd.

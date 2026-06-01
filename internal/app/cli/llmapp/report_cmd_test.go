@@ -7,6 +7,8 @@
 package llmapp
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -84,6 +86,60 @@ func TestModel_ReportCommand_WithSnapshot(t *testing.T) {
 	}
 	if _, ok := lastNode(nm).(block.Markdown); !ok {
 		t.Errorf("last node = %T; want block.Markdown", lastNode(nm))
+	}
+}
+
+// TestModel_ReportCommand_StreamingRejected — /report submitted mid-diagnosis
+// is rejected with a visible note; no Cmd, lastSnapshot untouched (spec-1.23
+// R-fix; post-impl codex MED-1 / cr MED-1).
+func TestModel_ReportCommand_StreamingRejected(t *testing.T) {
+	t.Parallel()
+	snap := &report.RunSnapshot{Prompt: "q", FinalAnswer: "a", FinishStatus: llm.FinishStop}
+	m := &Model{buffer: "/report", streaming: true, lastSnapshot: snap}
+	out, cmd := m.handleAction(submitAction())
+	nm := out.(*Model)
+	if cmd != nil {
+		t.Error("mid-stream /report must not return a Cmd")
+	}
+	if nm.lastSnapshot != snap {
+		t.Error("mid-stream /report must not mutate lastSnapshot")
+	}
+	bm, ok := lastNode(nm).(block.Message)
+	if !ok || !strings.Contains(bm.Text, "诊断进行中") {
+		t.Errorf("missing streaming-busy note: %+v", lastNode(nm))
+	}
+}
+
+// TestModel_ReportCommand_CmdWritesFile — end-to-end (spec-1.23 D-7; post-impl
+// cr HIGH-1): /report renders a Markdown node AND its write Cmd, when executed,
+// persists a file whose content equals the rendered source.
+func TestModel_ReportCommand_CmdWritesFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	snap := &report.RunSnapshot{Prompt: "为什么慢", FinalAnswer: "加索引", FinishStatus: llm.FinishStop}
+	m := &Model{buffer: "/report", lastSnapshot: snap}
+	out, cmd := m.handleAction(submitAction())
+	if cmd == nil {
+		t.Fatal("expected a write Cmd")
+	}
+	md, ok := lastNode(out.(*Model)).(block.Markdown)
+	if !ok {
+		t.Fatalf("last node = %T; want block.Markdown", lastNode(out.(*Model)))
+	}
+
+	msg := cmd() // execute the IO Cmd off the pure path
+	written, ok := msg.(reportWrittenMsg)
+	if !ok {
+		t.Fatalf("Cmd returned %T (%+v); want reportWrittenMsg", msg, msg)
+	}
+	got, err := os.ReadFile(written.path)
+	if err != nil {
+		t.Fatalf("read written report: %v", err)
+	}
+	if string(got) != md.Source {
+		t.Errorf("file content != rendered source\nfile:\n%s\nnode:\n%s", got, md.Source)
 	}
 }
 

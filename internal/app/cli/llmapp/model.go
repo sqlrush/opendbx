@@ -217,6 +217,14 @@ func (m *Model) Update(msg scheduler.Msg) (program.Model, scheduler.Cmd) {
 func (m *Model) handleAction(msg program.KeyActionMsg) (program.Model, scheduler.Cmd) {
 	// Ignore input edits while a stream is in flight (single-turn).
 	if m.streaming && msg.Action != keybindings.ActionCancel {
+		// A /report submitted mid-diagnosis is REJECTED with a visible note
+		// (spec-1.23 D-4 / post-impl codex MED-1 + cr MED-1) — not silently
+		// dropped. No Cmd, no snapshot mutation; the live run is untouched.
+		if msg.Action == keybindings.ActionSubmit && isReportCommand(m.buffer) {
+			next := *m
+			next.scrollback = appendNode(m.scrollback, block.Message{Text: reportStreamingBusyMsg})
+			return &next, nil
+		}
 		return m, nil
 	}
 	next := *m

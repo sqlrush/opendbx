@@ -14,9 +14,22 @@ import (
 
 func redirectReportsDir(t *testing.T, dir string) {
 	t.Helper()
+	swapReportsDirFn(t, func() (string, error) { return dir, nil })
+}
+
+// swapReportsDirFn replaces the reports-dir resolver under the lock and
+// restores it on cleanup (spec-1.23 R-fix: race-safe test seam).
+func swapReportsDirFn(t *testing.T, fn func() (string, error)) {
+	t.Helper()
+	reportsDirMu.Lock()
 	old := reportsDirFn
-	reportsDirFn = func() (string, error) { return dir, nil }
-	t.Cleanup(func() { reportsDirFn = old })
+	reportsDirFn = fn
+	reportsDirMu.Unlock()
+	t.Cleanup(func() {
+		reportsDirMu.Lock()
+		reportsDirFn = old
+		reportsDirMu.Unlock()
+	})
 }
 
 func TestWriteReport_Success(t *testing.T) {
@@ -94,9 +107,7 @@ func TestWriteReport_RenameFails_Errcode(t *testing.T) {
 }
 
 func TestWriteReport_DirResolveError_Errcode(t *testing.T) {
-	old := reportsDirFn
-	reportsDirFn = func() (string, error) { return "", errors.New("resolve boom") }
-	t.Cleanup(func() { reportsDirFn = old })
+	swapReportsDirFn(t, func() (string, error) { return "", errors.New("resolve boom") })
 	_, err := WriteReport("x", time.Now())
 	if !errors.Is(err, ErrWriteFailed) {
 		t.Errorf("want ErrWriteFailed; got %v", err)
@@ -111,9 +122,7 @@ func TestWriteReport_MkdirFails_Errcode(t *testing.T) {
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	old := reportsDirFn
-	reportsDirFn = func() (string, error) { return filepath.Join(file, "reports"), nil } // under a file
-	t.Cleanup(func() { reportsDirFn = old })
+	swapReportsDirFn(t, func() (string, error) { return filepath.Join(file, "reports"), nil }) // under a file
 	_, err := WriteReport("x", time.Now())
 	if !errors.Is(err, ErrWriteFailed) {
 		t.Errorf("want ErrWriteFailed; got %v", err)
