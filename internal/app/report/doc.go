@@ -2,6 +2,6 @@
 //
 // Package report AWR-style report generation.
 //
-// Design: spec-1.23 + spec-3.7
+// Design: spec-1.23 (spec-3.12 reporting enhancements planned)
 // Author: sqlrush
 package report
