@@ -75,6 +75,41 @@
   ],
   "transitive_lock": [
     {
+      "_note": "pgx/v5 runtime dep (spec-1.18): reads ~/.pgpass. Compiled into binary.",
+      "module": "github.com/jackc/pgpassfile",
+      "version": "v1.0.0"
+    },
+    {
+      "_note": "pgx/v5 runtime dep (spec-1.18): reads pg_service.conf. Compiled into binary.",
+      "module": "github.com/jackc/pgservicefile",
+      "version": "v0.0.0-20240606120523-5a60cdf6a761"
+    },
+    {
+      "_note": "pgx/v5 runtime dep (spec-1.18): pgxpool connection pool. Compiled into binary.",
+      "module": "github.com/jackc/puddle/v2",
+      "version": "v2.2.2"
+    },
+    {
+      "_note": "spec-1.18: test-only chain pulled by pgx's check.v1 v1.0.0 require (testify). go mod why: go-internal/fmtsort. NOT in opendbx binary; capped at v1.14.1 via go.mod exclude (v1.15.0 needs go1.25).",
+      "module": "github.com/rogpeppe/go-internal",
+      "version": "v1.14.1"
+    },
+    {
+      "_note": "spec-1.18: test-only chain (check.v1 → kr/pretty). NOT in opendbx binary.",
+      "module": "github.com/kr/pretty",
+      "version": "v0.3.0"
+    },
+    {
+      "_note": "spec-1.18: test-only chain (kr/pretty → kr/text). NOT in opendbx binary.",
+      "module": "github.com/kr/text",
+      "version": "v0.2.0"
+    },
+    {
+      "_note": "spec-1.18: testify/mock side dep pulled by pgx's testify require. go mod why: main module does not need. NOT in opendbx binary.",
+      "module": "github.com/stretchr/objx",
+      "version": "v0.1.0"
+    },
+    {
       "module": "golang.org/x/mod",
       "version": "v0.29.0"
     },
@@ -164,7 +199,7 @@
     },
     {
       "module": "gopkg.in/check.v1",
-      "version": "v0.0.0-20161208181325-20d25e280405"
+      "version": "v1.0.0-20201130134442-10cb98267c6c"
     },
     {
       "module": "github.com/clipperhouse/uax29/v2",

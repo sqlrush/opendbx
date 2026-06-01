@@ -63,6 +63,20 @@ var redactPatterns = []struct {
 	},
 }
 
+// RedactString masks known secret patterns (password=/token/api_key/
+// Authorization/Bearer/sk-*/URL userinfo) in free-form text and returns the
+// result. Exported so user-visible artifact producers (spec-1.23 fault
+// report) can reuse the same battle-tested redactor before writing a durable
+// file or rendering to screen. Idempotent.
+func RedactString(s string) string { return redactString(s) }
+
+// RedactValue returns a redacted deep copy of v: string values are
+// pattern-masked; map/struct fields whose key or name looks secret (password,
+// api_key, token, ...) — or which carry a redact:"true" tag — are fully
+// masked. Exported for spec-1.23 report tool-input (map[string]any) redaction.
+// The input is not mutated.
+func RedactValue(v any) any { return redactValue(v, false) }
+
 // redactString returns s with all known secret patterns masked. Idempotent
 // (applying twice is harmless because <REDACTED> itself contains no
 // secret-shaped substrings).

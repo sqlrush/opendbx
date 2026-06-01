@@ -90,6 +90,81 @@ func validateCrossField(cfg *Config, errs *ValidationErrors) {
 			Source:   src.String(),
 		})
 	}
+
+	validateConnections(cfg, errs)
+}
+
+// validateConnections enforces the spec-1.19 ConnectionConfig cross-field
+// invariants the per-field tag grammar cannot express: DSN-xor-fields,
+// fields-mode required trio, port range, and alias / env-key uniqueness.
+// Never echoes a password/DSN value (those fields are redacted; we report
+// structural facts only).
+func validateConnections(cfg *Config, errs *ValidationErrors) {
+	src := cfg.Source("Connections").String()
+	seenAlias := map[string]int{}
+	seenEnvKey := map[string]string{} // envKey → first alias
+
+	for i, conn := range cfg.Connections {
+		base := fmt.Sprintf("Connections[%d]", i)
+
+		// XOR: exactly one of DSN-mode / fields-mode.
+		dsnSet := conn.DSN != ""
+		fieldsSet := conn.Host != "" || conn.Database != "" || conn.User != ""
+		if dsnSet == fieldsSet { // both set (conflict) or neither (empty)
+			actual := "neither dsn nor host/database/user set"
+			if dsnSet {
+				actual = "both dsn and structured fields set"
+			}
+			*errs = append(*errs, ValidationError{
+				Path: base, Rule: "dsn-xor-fields",
+				Expected: "exactly one of {dsn} or {host/database/user}",
+				Actual:   actual, Source: src,
+			})
+		} else if fieldsSet { // fields mode: require the full trio
+			for _, m := range []struct{ name, val string }{
+				{"host", conn.Host}, {"database", conn.Database}, {"user", conn.User},
+			} {
+				if m.val == "" {
+					*errs = append(*errs, ValidationError{
+						Path: base + "." + m.name, Rule: "required-in-fields-mode",
+						Expected: "non-empty in fields mode", Actual: "empty", Source: src,
+					})
+				}
+			}
+		}
+
+		// Port range (0 means unset → driver default; only flag out-of-range).
+		if conn.Port != 0 && (conn.Port < 1 || conn.Port > 65535) {
+			*errs = append(*errs, ValidationError{
+				Path: base + ".port", Rule: "range",
+				Expected: "1..65535", Actual: strconv.Itoa(conn.Port), Source: src,
+			})
+		}
+
+		// Alias uniqueness.
+		if prev, dup := seenAlias[conn.Alias]; dup {
+			*errs = append(*errs, ValidationError{
+				Path: base + ".alias", Rule: "unique",
+				Expected: "alias unique across connections",
+				Actual:   fmt.Sprintf("%q also at Connections[%d]", conn.Alias, prev), Source: src,
+			})
+		} else {
+			seenAlias[conn.Alias] = i
+		}
+
+		// Normalised env-key uniqueness (prod-db and prod_db collide).
+		ek := envKey(conn.Alias)
+		if other, dup := seenEnvKey[ek]; dup && other != conn.Alias {
+			*errs = append(*errs, ValidationError{
+				Path: base + ".alias", Rule: "envkey-unique",
+				Expected: "aliases must map to distinct " + passwordEnvPrefix + "<KEY>",
+				Actual:   fmt.Sprintf("%q and %q both → %s%s", conn.Alias, other, passwordEnvPrefix, ek),
+				Source:   src,
+			})
+		} else if !dup {
+			seenEnvKey[ek] = conn.Alias
+		}
+	}
 }
 
 func walkValidate(v reflect.Value, parentPath string, cfg *Config, errs *ValidationErrors) {

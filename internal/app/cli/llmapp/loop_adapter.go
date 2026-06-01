@@ -22,6 +22,7 @@ package llmapp
 
 import (
 	"context"
+	"time"
 
 	"github.com/sqlrush/opendbx/internal/app/cli/render/scheduler"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/streaming"
@@ -36,7 +37,7 @@ import (
 // stripThink suppresses thinking-channel token payloads from the control
 // message. The Thinking flag still surfaces so the Model can distinguish a
 // thinking-only response from a genuinely empty stream.
-func makeEmit(ts *streaming.TokenStream, ctrl chan<- streamControlMsg, stripThink bool) diagnose.EmitFunc {
+func makeEmit(ts *streaming.TokenStream, ctrl chan<- streamControlMsg, stripThink bool, sb *snapshotBuilder) diagnose.EmitFunc {
 	send := func(ctx context.Context, msg streamControlMsg) error {
 		select {
 		case ctrl <- msg:
@@ -59,11 +60,14 @@ func makeEmit(ts *streaming.TokenStream, ctrl chan<- streamControlMsg, stripThin
 			visible := e.Text != ""
 			if visible {
 				_ = ts.AppendChunk(streaming.Chunk{Token: e.Text})
+				sb.addText(e.Text) // spec-1.23 D-3: accumulate the visible final answer
 			}
 			return send(ctx, streamControlMsg{VisibleContent: visible})
 		case diagnose.EventToolCall:
+			sb.addToolCall(e.ToolUse) // spec-1.23 D-3
 			return send(ctx, streamControlMsg{ToolUse: e.ToolUse})
 		case diagnose.EventToolResult:
+			sb.addToolResult(e.ToolResult, e.Cached) // spec-1.23 D-3
 			return send(ctx, streamControlMsg{ToolResult: e.ToolResult, Cached: e.Cached})
 		case diagnose.EventFinish:
 			// Push a terminal chunk so the TokenStream's per-finish
@@ -74,10 +78,14 @@ func makeEmit(ts *streaming.TokenStream, ctrl chan<- streamControlMsg, stripThin
 				FinishReason: mapToRender(e.Finish),
 				Err:          e.Err,
 			})
+			// spec-1.23 D-3: seal the run snapshot atomically with the finish
+			// and ride it on this same control msg — no separate post-Run send,
+			// so no channel-close race (three-route T-2 收敛 fix).
 			return send(ctx, streamControlMsg{
 				Finish:   e.Finish,
 				TermCode: e.TermCode,
 				Err:      e.Err,
+				Snapshot: sb.seal(e),
 			})
 		case diagnose.EventTurnStart:
 			// Turn boundaries are not surfaced to the UI in this stage;
@@ -97,6 +105,7 @@ func loopStartCmd(
 	ctx context.Context,
 	loop *diagnose.Loop,
 	req llm.Request,
+	userText string,
 	ts *streaming.TokenStream,
 	ctrl chan streamControlMsg,
 	stripThink bool,
@@ -105,7 +114,10 @@ func loopStartCmd(
 		go func() {
 			defer close(ctrl)
 			defer func() { _ = ts.Close() }()
-			emit := makeEmit(ts, ctrl, stripThink)
+			// spec-1.23 D-3: capture the run snapshot from the Event stream.
+			// Goroutine-local; only the sealed value escapes via EventFinish.
+			sb := newSnapshotBuilder(userText, time.Now)
+			emit := makeEmit(ts, ctrl, stripThink, sb)
 			// Result / err are surfaced via EventFinish through ctrl; we
 			// intentionally drop them here. The Loop is the single source
 			// of truth for classification (spec-1.21 D-4) — duplicating
