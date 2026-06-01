@@ -16,7 +16,7 @@ import (
 // (the single db.Open boundary). A new Expose() call anywhere else in
 // production code is a secret-leak regression and fails this test.
 func TestSecretExposeCallsiteConfined(t *testing.T) {
-	root, err := filepath.Abs("../..") // internal/
+	root, err := filepath.Abs("../..") // repo root (cwd is internal/bootstrap) — scans the WHOLE tree, stronger than just internal/
 	if err != nil {
 		t.Fatal(err)
 	}

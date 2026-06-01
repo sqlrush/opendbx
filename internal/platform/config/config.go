@@ -164,7 +164,7 @@ type ConnectionConfig struct {
 	Database string `yaml:"database,omitempty" json:"database,omitempty"`
 	User     string `yaml:"user,omitempty" json:"user,omitempty"`
 	Password string `yaml:"password,omitempty" json:"password,omitempty" redact:"true"`
-	SSLMode  string `yaml:"sslmode,omitempty" json:"sslmode,omitempty" validate:"oneof=disable allow prefer require verify-ca verify-full"`
+	SSLMode  string `yaml:"sslmode,omitempty" json:"sslmode,omitempty" validate:"omitempty,oneof=disable allow prefer require verify-ca verify-full"`
 }
 
 // ModelConfig — LLM model endpoint. Stage 0 minimal; spec-1.20 fills rest.

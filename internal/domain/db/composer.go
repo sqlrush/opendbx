@@ -25,7 +25,10 @@ type ConnFields struct {
 	Port     int
 	Database string
 	User     string
-	Password string
+	// Password carries redact:"true" so that if a ConnFields value is ever
+	// handed to the logger (logger.RedactValue honours the tag), the secret is
+	// masked — defense-in-depth (spec-1.19 R-fix; post-impl security NIT).
+	Password string `redact:"true"`
 	SSLMode  string
 }
 

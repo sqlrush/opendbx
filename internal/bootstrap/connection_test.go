@@ -7,10 +7,12 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/sqlrush/opendbx/internal/domain/db"
-	_ "github.com/sqlrush/opendbx/internal/domain/db/postgres" // register postgres driver
+	// postgres driver is registered by the production drivers.go side-effect
+	// import (spec-1.19 R-fix); tests rely on that, not a test-only import.
 	"github.com/sqlrush/opendbx/internal/platform/config"
 )
 
@@ -90,4 +92,50 @@ func TestWarnIfInsecureSSLNoPanic(t *testing.T) {
 		warnIfInsecureSSL(config.ConnectionConfig{Alias: "a", SSLMode: m})
 	}
 	warnIfInsecureSSL(config.ConnectionConfig{Alias: "a", DSN: "postgres://x"}) // DSN mode skipped
+}
+
+// TestPostgresDriverRegisteredInProduction guards against the post-impl
+// codex HIGH-1 regression: the postgres driver must be registered by the
+// PRODUCTION side-effect import (drivers.go), NOT a test-only blank import.
+// This file no longer imports the postgres package, so a passing Lookup here
+// proves the production wiring registers it.
+func TestPostgresDriverRegisteredInProduction(t *testing.T) {
+	if _, ok := db.Lookup("postgres"); !ok {
+		t.Fatal("postgres driver not registered — production bootstrap/drivers.go side-effect import is missing (codex HIGH-1)")
+	}
+}
+
+// TestOpenConnection covers the end-to-end composition path including the
+// single sanctioned secret.Expose() boundary (post-impl go-reviewer HIGH —
+// OpenConnection was 0% covered).
+func TestOpenConnection(t *testing.T) {
+	ctx := context.Background()
+
+	// 0 connections → CONN.NO_CONNECTION (ActiveConnection error path).
+	if _, err := OpenConnection(ctx, &config.Config{}, ""); !errors.Is(err, ErrNoConnection) {
+		t.Errorf("empty cfg → want CONN.NO_CONNECTION, got %v", err)
+	}
+
+	// fields mode on a non-DSNComposer driver → CONN.UNSUPPORTED_FIELDS
+	// (ResolveDSN error path).
+	cfgNC := &config.Config{Connections: []config.ConnectionConfig{
+		{Alias: "nc", Driver: "fake-nocompose", Host: "h", Database: "d", User: "u"},
+	}}
+	if _, err := OpenConnection(ctx, cfgNC, "nc"); !errors.Is(err, ErrUnsupportedFields) {
+		t.Errorf("non-composer fields → want CONN.UNSUPPORTED_FIELDS, got %v", err)
+	}
+
+	// DSN mode against the real postgres driver → reaches db.Open via the
+	// single secret.Expose() boundary; a dead port yields a sanitized DB.*
+	// error (the point is the boundary executes, not the connection succeeds).
+	cfgDSN := &config.Config{Connections: []config.ConnectionConfig{
+		{Alias: "pg", Driver: "postgres", DSN: "postgres://u:pw@127.0.0.1:1/db?sslmode=disable&connect_timeout=1"},
+	}}
+	_, err := OpenConnection(ctx, cfgDSN, "pg")
+	if err == nil {
+		t.Error("OpenConnection to a dead port should fail")
+	}
+	if strings.Contains(err.Error(), "pw") {
+		t.Errorf("OpenConnection error leaked password: %s", err.Error())
+	}
 }
