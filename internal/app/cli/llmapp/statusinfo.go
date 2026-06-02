@@ -50,7 +50,7 @@ func GitBranch(dir string) string {
 	if gitDir == "" {
 		return ""
 	}
-	head, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+	head, err := os.ReadFile(filepath.Join(gitDir, "HEAD")) // #nosec G304 -- spec-1.25 D-4: git metadata path derived from cwd discovery walk, not user input
 	if err != nil {
 		return ""
 	}
@@ -93,7 +93,7 @@ func resolveGitDir(gitPath string) string {
 	if info.IsDir() {
 		return gitPath
 	}
-	data, err := os.ReadFile(gitPath)
+	data, err := os.ReadFile(gitPath) // #nosec G304 -- spec-1.25 D-4: .git path derived from cwd discovery walk, not user input
 	if err != nil {
 		return ""
 	}

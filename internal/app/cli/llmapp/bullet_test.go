@@ -15,8 +15,8 @@ import (
 // the bullet is consumed (pending→false) once placed.
 func TestMarkAssistantBullet_FirstContentOnly(t *testing.T) {
 	nodes := []block.RenderNode{
-		block.Message{Empty: true},                  // thinking-only placeholder: skip
-		block.Message{Text: "first answer"},         // ← gets the bullet
+		block.Message{Empty: true},                   // thinking-only placeholder: skip
+		block.Message{Text: "first answer"},          // ← gets the bullet
 		block.Message{Text: "second line same turn"}, // no bullet (per-turn)
 	}
 	out, pending := markAssistantBullet(nodes, true)
