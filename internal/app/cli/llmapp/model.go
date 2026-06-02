@@ -184,9 +184,9 @@ func New(provider llm.Provider, opts Options) *Model {
 	// plain render-only node that scrolls with history and is NOT re-seeded
 	// on /clear (Q-life ★A CC parity).
 	if opts.Welcome {
-		wel := block.NewWelcome(opts.Version, opts.Cwd, welcomeTip)
-		wel.Model = opts.ModelName
-		m.scrollback = []block.RenderNode{wel}
+		m.scrollback = []block.RenderNode{
+			block.NewWelcome(opts.Version, opts.Cwd, welcomeTip),
+		}
 	}
 	return m
 }

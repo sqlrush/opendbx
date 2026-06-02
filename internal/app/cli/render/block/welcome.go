@@ -2,210 +2,117 @@
 //
 // Author: sqlrush
 
-// File welcome.go — production Welcome panel block (spec-1.25 D-1 + errata R4).
-//
-// !!! TEST-PHASE ONLY — MUST BE REPLACED BEFORE 1.0 COMMERCIALIZATION !!!
-// errata R4 (用户 path 3/3 2026-06-02): replicates Claude Code v2.1.x's
-// two-panel rounded-box welcome (left: greeting + sparkle mascot + model +
-// cwd; right: tips / what's new) for the TEST PHASE, to validate render-engine
-// fidelity + CC UX parity. The sparkle mascot + layout mirror Anthropic's CC;
-// per the user directive they MUST be swapped for an opendbx-original welcome
-// before commercial 1.0 (tracked: spec-1.25 §10 + roadmap pre-1.0 gate;
-// CLAUDE.md § 3.2). Do NOT ship this welcome in a commercial build.
-//
-// render-only: never enters the llm wire.
+// File welcome.go — production Welcome panel block (spec-1.25 D-1).
+// Renames + replaces the spec-0.13 Banner stub (which returned
+// ErrUnsupportedNode; grep-confirmed zero production callers). Renders the
+// classic CC-style boxed welcome `╭─ ✻ Welcome to opendbx ─╮` — a
+// deliberate opendbx approximation of the pre-LogoV2 CC welcome (CC's
+// current WelcomeV2.tsx is an ASCII-art logo; spec-1.25 §1.1 #5 keeps the
+// boxed form). `✻` = CC figures.ts:6 TEARDROP_ASTERISK. The body carries
+// the version, cwd, a single static tip, and the "? for shortcuts" hint
+// (CC PromptInputFooterLeftSide.tsx:411). render-only: never enters the
+// llm wire.
 
 package block
 
 import (
-	"strings"
-
 	"github.com/sqlrush/opendbx/internal/app/cli/render/buffer"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/style"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/width"
 )
 
+// welcomeTitle is the boxed-welcome title text (embedded in the top rule).
+const welcomeTitle = "✻ Welcome to opendbx"
+
+// welcomeShortcuts mirrors CC's "? for shortcuts" footer hint.
+const welcomeShortcuts = "? for shortcuts"
+
+// Box-drawing runes for the rounded welcome frame.
 const (
-	// welcomeLeftW is the left-panel inner width (CC v2.1.x uses 52).
-	welcomeLeftW = 52
-	// welcomeMinCols is the minimum terminal width for the two-panel box;
-	// below it the welcome degrades to a single text line.
-	welcomeMinCols = 90
+	bdTopLeft     = '╭'
+	bdTopRight    = '╮'
+	bdBottomLeft  = '╰'
+	bdBottomRight = '╯'
+	bdHorizontal  = '─'
+	bdVertical    = '│'
 )
 
-// welcomeMascot is CC's minimal sparkle mark (quadrant block runes), centered
-// in the left panel. TEST-PHASE clone — see file header.
-var welcomeMascot = []string{
-	"▗ ▗   ▖ ▖",
-	"▘▘ ▝▝",
-}
-
-// welcomeAccent is the Claude-brand terracotta orange (~#D97757), used for the
-// title + sparkle mascot (TEST-PHASE clone fidelity).
-var welcomeAccent = style.Style{FG: style.RGB(0xD9, 0x77, 0x57)}
-
 // Welcome is the spec-1.25 D-1 production welcome panel (replaces the
-// spec-0.13 Banner stub). Zero-value renders with empty fields.
+// spec-0.13 Banner stub). Zero-value Welcome{} renders a minimal frame
+// (it does NOT return ErrUnsupportedNode — that was the stub contract).
 type Welcome struct {
 	Version string // build version (internal/platform/version.String())
 	Cwd     string // working dir, already ~-abbreviated by the caller
 	Tip     string // single static onboarding tip (non-random; replayable)
-	Model   string // active model name (left-panel line)
 }
 
-// NewWelcome constructs a Welcome panel.
+// NewWelcome constructs a Welcome panel. Empty fields are simply omitted
+// from the body (e.g. version="" drops the version line).
 func NewWelcome(version, cwd, tip string) Welcome {
 	return Welcome{Version: version, Cwd: cwd, Tip: tip}
 }
 
-// Render produces the CC v2.1.x two-panel rounded-box welcome. Graceful:
-// Cols < welcomeMinCols → single-line `✻ Welcome to opendbx <version>`.
-// MeasureOnly returns the row count with no cell writes.
+// Render produces the boxed welcome Buffer. Graceful degradation: when
+// Cols is too small for the frame it falls back to a single truncated
+// line `✻ Welcome to opendbx <version>` (spec-1.25 D-1 / R-2). MeasureOnly
+// returns the correct row count with no cell writes (spec-1.7 contract).
 func (w Welcome) Render(ctx Context) (buffer.Buffer, error) {
 	if ctx.Cols <= 0 {
 		return measureOnlyBuf(0, 0), nil
 	}
-	if ctx.Cols < welcomeMinCols {
+	body := w.bodyLines()
+	boxW, ok := boxWidth(body, ctx.Cols)
+	if !ok {
 		return w.renderFallback(ctx), nil
 	}
-	left := w.leftPanel()
-	right := w.rightPanel()
-	n := max(len(left), len(right))
-	rows := n + 2 // top + content + bottom
+	rows := len(body) + 2 // top rule + body + bottom rule
 	if ctx.MeasureOnly {
 		return measureOnlyBuf(ctx.Cols, rows), nil
 	}
+	theme := themeOrDefault(ctx.Theme)
+	// The frame is left-aligned: cols [boxW, ctx.Cols) stay blank (terminal
+	// default). This is intentional (spec-1.25 §1.1 boxed-form scope), not a
+	// missing right margin (code-reviewer LOW-1).
 	buf, err := buffer.NewGrid(ctx.Cols, rows)
 	if err != nil {
 		return measureOnlyBuf(ctx.Cols, rows), nil
 	}
-	theme := themeOrDefault(ctx.Theme)
 	dim := theme.Style(StyleDimmed)
-	cols := ctx.Cols
+	normal := theme.Style(StyleNormal)
 
-	w.paintTop(buf, cols, dim)
-	for i := 0; i < n; i++ {
-		y := i + 1
-		buf.SetCell(0, y, buffer.Cell{Ch: '│', St: dim})
-		buf.SetCell(welcomeLeftW+1, y, buffer.Cell{Ch: '│', St: dim})
-		buf.SetCell(cols-1, y, buffer.Cell{Ch: '│', St: dim})
-		if i < len(left) {
-			lx := 1 + center(left[i].text, welcomeLeftW)
-			writeRunes(buf, lx, y, left[i].text, left[i].st, welcomeLeftW+1)
-		}
-		if i < len(right) {
-			writeRunes(buf, welcomeLeftW+3, y, right[i].text, right[i].st, cols-1)
-		}
+	paintWelcomeTop(buf, boxW, dim, normal)
+	inner := boxW - 4 // content width between "│ " and " │"
+	for i, line := range body {
+		paintWelcomeBody(buf, i+1, boxW, inner, line, dim)
 	}
-	w.paintBottom(buf, rows-1, cols, dim)
+	paintWelcomeBottom(buf, rows-1, boxW, dim)
 	return buf, nil
 }
 
-// styledLine is a panel line with its style.
-type styledLine struct {
-	text string
-	st   style.Style
-}
-
-// leftPanel builds the centered left-panel lines (greeting + mascot + model
-// + cwd), styled.
-func (w Welcome) leftPanel() []styledLine {
-	dim := DefaultTheme{}.Style(StyleDimmed)
-	normal := DefaultTheme{}.Style(StyleNormal)
-	out := []styledLine{
-		{"", normal},
-		{"Welcome to opendbx!", normal},
-		{"", normal},
-		{welcomeMascot[0], welcomeAccent},
-		{"", normal},
-		{welcomeMascot[1], welcomeAccent},
-	}
-	if w.Model != "" {
-		out = append(out, styledLine{w.Model, dim})
-	} else {
-		out = append(out, styledLine{"", normal})
-	}
-	out = append(out, styledLine{"", normal})
-	if w.Cwd != "" {
-		out = append(out, styledLine{w.Cwd, dim})
-	}
-	return out
-}
-
-// rightPanel builds the left-aligned right-panel lines (tips / what's new),
-// styled.
-func (w Welcome) rightPanel() []styledLine {
-	dim := DefaultTheme{}.Style(StyleDimmed)
-	normal := DefaultTheme{}.Style(StyleNormal)
-	tip := w.Tip
-	if tip == "" {
-		tip = "直接用自然语言描述你的数据库问题即可开始诊断"
-	}
-	return []styledLine{
-		{"", normal},
-		{"Tips for getting started", normal},
-		{tip, dim},
-		{strings.Repeat("─", 40), dim},
-		{"What's new", normal},
-		{"interact TUI 对齐 Claude Code(spec-1.25)", dim},
-		{"welcome / 输入框 / 状态行 / ⏺ 消息 / ⎿ 工具树", dim},
-		{"", normal},
-		{"自然语言诊断 · \\ 执行 SQL · / 命令(Stage 2)", dim},
-	}
-}
-
-// paintTop writes ╭─── opendbx <version> ───…───╮ across cols.
-func (w Welcome) paintTop(buf *buffer.Grid, cols int, dim style.Style) {
-	title := "opendbx"
+// bodyLines builds the ordered, non-empty body content lines.
+func (w Welcome) bodyLines() []string {
+	var lines []string
 	if w.Version != "" {
-		title += " " + w.Version
+		lines = append(lines, w.Version)
 	}
-	buf.SetCell(0, 0, buffer.Cell{Ch: '╭', St: dim})
-	x := 1
-	for ; x < 4 && x < cols-1; x++ {
-		buf.SetCell(x, 0, buffer.Cell{Ch: '─', St: dim})
+	if w.Cwd != "" {
+		lines = append(lines, w.Cwd)
 	}
-	if x < cols-1 {
-		buf.SetCell(x, 0, buffer.Cell{Ch: ' ', St: dim})
-		x++
+	if w.Tip != "" {
+		lines = append(lines, w.Tip)
 	}
-	x = writeRunes(buf, x, 0, title, welcomeAccent, cols-1)
-	if x < cols-1 {
-		buf.SetCell(x, 0, buffer.Cell{Ch: ' ', St: dim})
-		x++
-	}
-	for ; x < cols-1; x++ {
-		buf.SetCell(x, 0, buffer.Cell{Ch: '─', St: dim})
-	}
-	buf.SetCell(cols-1, 0, buffer.Cell{Ch: '╮', St: dim})
+	lines = append(lines, "") // blank spacer before the shortcuts hint
+	lines = append(lines, welcomeShortcuts)
+	return lines
 }
 
-// paintBottom writes ╰───…───╯ at row y.
-func (w Welcome) paintBottom(buf *buffer.Grid, y, cols int, dim style.Style) {
-	buf.SetCell(0, y, buffer.Cell{Ch: '╰', St: dim})
-	for x := 1; x < cols-1; x++ {
-		buf.SetCell(x, y, buffer.Cell{Ch: '─', St: dim})
-	}
-	buf.SetCell(cols-1, y, buffer.Cell{Ch: '╯', St: dim})
-}
-
-// center returns the left-pad (in cells) to center text of display width
-// within w columns.
-func center(text string, w int) int {
-	tw := width.Width(text)
-	if tw >= w {
-		return 0
-	}
-	return (w - tw) / 2
-}
-
-// renderFallback returns a single dim line when the terminal is too narrow
-// for the two-panel box.
+// renderFallback returns a single dim line "✻ Welcome to opendbx <version>"
+// truncated to Cols, used when the terminal is too narrow for the frame.
 func (w Welcome) renderFallback(ctx Context) buffer.Buffer {
 	if ctx.MeasureOnly {
 		return measureOnlyBuf(ctx.Cols, 1)
 	}
-	line := "✻ Welcome to opendbx"
+	line := welcomeTitle
 	if w.Version != "" {
 		line += " " + w.Version
 	}
@@ -215,6 +122,71 @@ func (w Welcome) renderFallback(ctx Context) buffer.Buffer {
 	}
 	writeRunes(buf, 0, 0, line, themeOrDefault(ctx.Theme).Style(StyleDimmed), ctx.Cols)
 	return buf
+}
+
+// boxWidth computes the frame width capped at cols. Returns ok=false when
+// cols cannot fit even the minimal title frame (caller falls back to a
+// single line). The frame must satisfy both the title rule (>= title+5:
+// ╭─ title ─╮) and the widest body row (>= body+4: │ body │).
+func boxWidth(body []string, cols int) (int, bool) {
+	// +6 = ╭ ─ space title space ─ ╮ : guarantees at least one trailing "─"
+	// after the title so the top renders ╭─ ✻ ... ─╮ (codex D1-LOW-1), not
+	// ╭─ ✻ ... ╮.
+	titleMin := width.Width(welcomeTitle) + 6
+	bodyMin := 0
+	for _, l := range body {
+		if bw := width.Width(l) + 4; bw > bodyMin {
+			bodyMin = bw
+		}
+	}
+	want := titleMin
+	if bodyMin > want {
+		want = bodyMin
+	}
+	if cols < titleMin {
+		return 0, false // too narrow even for the title frame
+	}
+	if want > cols {
+		want = cols // cap; body content truncates via writeRunes
+	}
+	return want, true
+}
+
+// paintWelcomeTop writes ╭─ <title> ─...─╮ across boxW cells. The title is
+// StyleNormal; the frame runes are dim.
+func paintWelcomeTop(buf *buffer.Grid, boxW int, dim, normal style.Style) {
+	buf.SetCell(0, 0, buffer.Cell{Ch: bdTopLeft, St: dim})
+	buf.SetCell(1, 0, buffer.Cell{Ch: bdHorizontal, St: dim})
+	buf.SetCell(2, 0, buffer.Cell{Ch: ' ', St: dim})
+	x := writeRunes(buf, 3, 0, welcomeTitle, normal, boxW-1)
+	if x < boxW-1 {
+		buf.SetCell(x, 0, buffer.Cell{Ch: ' ', St: dim})
+		x++
+	}
+	for ; x < boxW-1; x++ {
+		buf.SetCell(x, 0, buffer.Cell{Ch: bdHorizontal, St: dim})
+	}
+	buf.SetCell(boxW-1, 0, buffer.Cell{Ch: bdTopRight, St: dim})
+}
+
+// paintWelcomeBody writes │ <content padded to inner> │ at row y.
+func paintWelcomeBody(buf *buffer.Grid, y, boxW, inner int, content string, dim style.Style) {
+	buf.SetCell(0, y, buffer.Cell{Ch: bdVertical, St: dim})
+	buf.SetCell(1, y, buffer.Cell{Ch: ' ', St: dim})
+	end := writeRunes(buf, 2, y, content, dim, 2+inner)
+	for x := end; x < boxW-1; x++ {
+		buf.SetCell(x, y, buffer.Cell{Ch: ' ', St: dim})
+	}
+	buf.SetCell(boxW-1, y, buffer.Cell{Ch: bdVertical, St: dim})
+}
+
+// paintWelcomeBottom writes ╰─...─╯ across boxW cells at row y.
+func paintWelcomeBottom(buf *buffer.Grid, y, boxW int, dim style.Style) {
+	buf.SetCell(0, y, buffer.Cell{Ch: bdBottomLeft, St: dim})
+	for x := 1; x < boxW-1; x++ {
+		buf.SetCell(x, y, buffer.Cell{Ch: bdHorizontal, St: dim})
+	}
+	buf.SetCell(boxW-1, y, buffer.Cell{Ch: bdBottomRight, St: dim})
 }
 
 // writeRunes writes text into buf at (x0,y) with style s, stopping before

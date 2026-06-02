@@ -38,45 +38,40 @@ func gridRow(t *testing.T, buf buffer.Buffer, y int) string {
 	return strings.TrimRight(b.String(), " ")
 }
 
-func TestWelcome_CCMascotRender(t *testing.T) {
-	w := NewWelcome("v0.49.0", "~/opendbx", "为什么这条 SQL 慢")
-	w.Model = "deepseek-v4-pro"
-	buf, err := w.Render(Context{Cols: 120, Rows: 30})
+func TestWelcome_BoxedRender(t *testing.T) {
+	w := NewWelcome("v0.49.0", "~/opendbx", "Try \"为什么这条 SQL 慢\"")
+	buf, err := w.Render(Context{Cols: 80, Rows: 24})
 	if err != nil {
 		t.Fatalf("Render err: %v", err)
 	}
 	g := buf.(*buffer.Grid)
 	cols, rows := g.Size()
-	if rows < 6 {
-		t.Fatalf("two-panel welcome should have several rows, got %d", rows)
+	if rows < 4 {
+		t.Fatalf("boxed welcome should have >=4 rows, got %d", rows)
 	}
+	top := gridRow(t, buf, 0)
+	bottom := gridRow(t, buf, rows-1)
+	// top has rounded corners + title; bottom has rounded corners.
+	if !strings.HasPrefix(top, "╭") || !strings.Contains(top, "✻ Welcome to opendbx") {
+		t.Errorf("top = %q; want ╭...✻ Welcome to opendbx...", top)
+	}
+	if !strings.HasPrefix(bottom, "╰") || !strings.HasSuffix(bottom, "╯") {
+		t.Errorf("bottom = %q; want ╰...╯", bottom)
+	}
+	// body carries version, cwd, tip, and the shortcuts hint.
 	all := ""
 	for y := 0; y < rows; y++ {
 		all += gridRow(t, buf, y) + "\n"
 	}
-	// rounded box corners + two-panel content
-	if g.Cell(0, 0).Ch != '╭' || g.Cell(cols-1, 0).Ch != '╮' {
-		t.Errorf("top corners = %q/%q; want ╭/╮", g.Cell(0, 0).Ch, g.Cell(cols-1, 0).Ch)
-	}
-	for _, want := range []string{
-		"opendbx", "v0.49.0", // title
-		"Welcome to opendbx!",          // left greeting
-		"deepseek-v4-pro", "~/opendbx", // left model + cwd
-		"Tips for getting started", // right header
-		"为什么这条 SQL 慢",              // right tip
-	} {
+	for _, want := range []string{"v0.49.0", "~/opendbx", "为什么这条 SQL 慢", "? for shortcuts"} {
 		if !strings.Contains(all, want) {
-			t.Errorf("welcome missing %q; got:\n%s", want, all)
+			t.Errorf("welcome box missing %q; got:\n%s", want, all)
 		}
-	}
-	// the sparkle mascot quadrant glyphs appear
-	if !strings.ContainsRune(all, '▗') || !strings.ContainsRune(all, '▘') {
-		t.Errorf("welcome missing sparkle mascot ▗/▘; got:\n%s", all)
 	}
 	// no row exceeds Cols (rule 20 Layer 1 invariant)
 	for y := 0; y < rows; y++ {
-		if rw := width.Width(gridRow(t, buf, y)); rw > cols {
-			t.Errorf("row %d width %d exceeds cols %d", y, rw, cols)
+		if w := width.Width(gridRow(t, buf, y)); w > cols {
+			t.Errorf("row %d width %d exceeds cols %d", y, w, cols)
 		}
 	}
 }
@@ -104,9 +99,9 @@ func TestWelcome_NarrowFallbackSingleLine(t *testing.T) {
 
 func TestWelcome_MeasureOnly(t *testing.T) {
 	w := NewWelcome("v0.49.0", "~/opendbx", "tip")
-	full, _ := w.Render(Context{Cols: 120, Rows: 30})
+	full, _ := w.Render(Context{Cols: 80, Rows: 24})
 	_, wantRows := full.(*buffer.Grid).Size()
-	mo, err := w.Render(Context{Cols: 120, Rows: 30, MeasureOnly: true})
+	mo, err := w.Render(Context{Cols: 80, Rows: 24, MeasureOnly: true})
 	if err != nil {
 		t.Fatalf("MeasureOnly err: %v", err)
 	}
