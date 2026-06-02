@@ -28,6 +28,10 @@ const (
 	reportStreamingBusyMsg = "诊断进行中，请等完成后再 /report。"
 	reportWrittenPrefix    = "报告已写入: "
 	reportWriteFailPrefix  = "报告已渲染，但写入文件失败: "
+	// reportHeaderTitle is the spec-1.25 D-7 SpeakerAssistant header prepended
+	// before the report Markdown node so the ⏺ bullet sits on a title line and
+	// the report body reads as an assistant turn (CC hierarchy parity).
+	reportHeaderTitle = "诊断报告"
 )
 
 // reportWrittenMsg / reportWriteFailedMsg carry the result of the write Cmd.
@@ -53,6 +57,10 @@ func (m *Model) dispatchReport() scheduler.Cmd {
 	}
 	now := time.Now()
 	md := report.Generate(*m.lastSnapshot, now)
+	// spec-1.25 D-7: prepend a SpeakerAssistant header so the ⏺ bullet sits on
+	// the title and the Markdown body indents naturally beneath it (Markdown
+	// has no Speaker field; a header Message is the composition seam).
+	m.scrollback = appendNode(m.scrollback, block.Message{Text: reportHeaderTitle, Speaker: block.SpeakerAssistant})
 	m.scrollback = appendNode(m.scrollback, block.NewMarkdown(md))
 	return writeReportCmd(md, now)
 }

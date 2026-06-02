@@ -104,6 +104,13 @@ type Model struct {
 	sawThinking bool   // any thinking-channel token this turn (spec-1.20.2 D-5)
 	thinkingBuf string // accumulated thinking text when strip_think=false
 
+	// assistantBulletPending marks that the current assistant turn has not yet
+	// emitted its ⏺ speaker bullet (spec-1.25 D-5 / CRIT-A). Set at submit;
+	// the first drained content Message of the turn consumes it (per-turn, not
+	// per-line). render/streaming stays neutral — the bullet is a post-drain
+	// render-only decoration applied here in llmapp.
+	assistantBulletPending bool
+
 	// toolUseNames joins ToolResult.ToolUseID → ToolUse.Name within a
 	// single submit (spec-1.21 D-6 / spec-1.9b R3 HIGH-3: rendering a
 	// ToolResult requires the peer ToolUse.Name; empty → skip render
@@ -233,6 +240,7 @@ func (m *Model) Update(msg scheduler.Msg) (program.Model, scheduler.Cmd) {
 			if nodes := next.stream.Drain(); len(nodes) > 0 {
 				nodes = filterThinkingOnlyEmpty(nodes, next.sawThinking, next.sawContent)
 				if len(nodes) > 0 {
+					nodes, next.assistantBulletPending = markAssistantBullet(nodes, next.assistantBulletPending)
 					next.scrollback = appendNodes(next.scrollback, nodes)
 				}
 			}
@@ -243,6 +251,7 @@ func (m *Model) Update(msg scheduler.Msg) (program.Model, scheduler.Cmd) {
 		next.streaming = false
 		next.sawThinking = false
 		next.thinkingBuf = ""
+		next.assistantBulletPending = false // turn over; do not leak bullet
 		return &next, nil
 	}
 	return m, nil
@@ -316,7 +325,11 @@ func (m *Model) submit() (program.Model, scheduler.Cmd) {
 		Role:    llm.RoleUser,
 		Content: []llm.ContentBlock{{Type: llm.BlockText, Text: userText}},
 	}, m.maxHistory)
-	next.scrollback = appendNode(m.scrollback, block.Message{Text: "> " + userText})
+	// spec-1.25 D-5: user echo is plain (no "> " prefix — CC parity), tagged
+	// SpeakerUser. Starting the assistant turn arms the ⏺ bullet for the first
+	// content node drained (CRIT-A per-turn).
+	next.scrollback = appendNode(m.scrollback, block.Message{Text: userText, Speaker: block.SpeakerUser})
+	next.assistantBulletPending = true
 	next.toolUseNames = map[string]string{} // reset per submit (spec-1.21 D-6)
 
 	return &next, loopStartCmd(ctx, m.loop, req, userText, ts, ctrl, m.stripThink)
@@ -504,6 +517,7 @@ func (m *Model) View(cols, rows int) buffer.Buffer {
 	if m.stream != nil {
 		if nodes := m.stream.Drain(); len(nodes) > 0 {
 			nodes = filterThinkingOnlyEmpty(nodes, m.sawThinking, m.sawContent)
+			nodes, m.assistantBulletPending = markAssistantBullet(nodes, m.assistantBulletPending)
 			m.scrollback = append(m.scrollback, nodes...)
 		}
 	}
@@ -597,6 +611,30 @@ func appendNodes(sb []block.RenderNode, nodes []block.RenderNode) []block.Render
 	next = append(next, sb...)
 	next = append(next, nodes...)
 	return next
+}
+
+// markAssistantBullet tags the FIRST content Message in nodes with
+// SpeakerAssistant when a bullet is pending, returning the (possibly
+// modified) nodes and the still-pending flag (spec-1.25 D-5 / CRIT-A).
+// Per-turn: only the first assistant content node of a turn carries the ⏺
+// bullet (CC AssistantTextMessage is per-message, not per-line). When no
+// content Message is found (e.g. thinking-only / tool-only drain), the
+// bullet stays pending for a later drain in the same turn. nodes are
+// replaced by value (block.Message is a value type), not mutated in place.
+func markAssistantBullet(nodes []block.RenderNode, pending bool) ([]block.RenderNode, bool) {
+	if !pending {
+		return nodes, false
+	}
+	for i, n := range nodes {
+		msg, ok := n.(block.Message)
+		if !ok || msg.Text == "" || msg.Empty {
+			continue
+		}
+		msg.Speaker = block.SpeakerAssistant
+		nodes[i] = msg
+		return nodes, false // consumed
+	}
+	return nodes, true // still pending
 }
 
 func filterThinkingOnlyEmpty(nodes []block.RenderNode, sawThinking, sawContent bool) []block.RenderNode {

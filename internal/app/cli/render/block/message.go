@@ -12,6 +12,7 @@
 package block
 
 import (
+	"runtime"
 	"strings"
 	"unicode/utf8"
 
@@ -20,6 +21,37 @@ import (
 	"github.com/sqlrush/opendbx/internal/app/cli/render/style"
 	"github.com/sqlrush/opendbx/internal/app/cli/render/width"
 )
+
+// SpeakerKind tags a Message with its conversational speaker (spec-1.25 D-5).
+// The zero value SpeakerNone preserves the spec-1.7 FROZEN render (no prefix),
+// so all existing block.Message{Text:...} construction sites are unaffected
+// (规则 21). Speaker is a discriminator FIELD (not a separate block type)
+// because user/assistant/system text share the same data shape — a string +
+// wrap/markers — unlike ToolUse vs ToolResult which have genuinely different
+// shapes and so are separate types (memory feedback_cc_block_design_bifurcation).
+type SpeakerKind int
+
+const (
+	// SpeakerNone renders the text with no speaker decoration (default).
+	SpeakerNone SpeakerKind = iota
+	// SpeakerAssistant prefixes the first line with the ⏺ bullet (CC
+	// AssistantTextMessage.tsx:232 BLACK_CIRCLE — per message, not per line)
+	// and hanging-indents continuation lines by 2.
+	SpeakerAssistant
+	// SpeakerUser renders plain (no prefix), matching CC's user echo. It
+	// carries no visual change vs SpeakerNone; the tag documents provenance
+	// and drops the legacy "> " prefix that the caller used to prepend.
+	SpeakerUser
+)
+
+// speakerBullet is the assistant speaker glyph: ⏺ on darwin, ● elsewhere
+// (CC figures.ts:4 BLACK_CIRCLE platform split; spec-1.25 Q7b).
+var speakerBullet = func() rune {
+	if runtime.GOOS == "darwin" {
+		return '⏺'
+	}
+	return '●'
+}()
 
 // Message is the spec-0.13 D-3 message block type. spec-1.7 D-2 ships
 // production Render per spec-1.6 forward (R-9 4 fields + R-12 robust
@@ -45,6 +77,9 @@ type Message struct {
 	Truncated bool
 	Continued bool
 	Empty     bool
+	// Speaker tags the conversational speaker (spec-1.25 D-5). Default
+	// SpeakerNone preserves spec-1.7 behavior.
+	Speaker SpeakerKind
 }
 
 // Render produces a Buffer per spec-1.7 D-2 (R2 forward batch).
@@ -61,6 +96,9 @@ func (m Message) Render(ctx Context) (buffer.Buffer, error) {
 	if ctx.Cols <= 0 {
 		return measureOnlyBuf(0, 0), nil
 	}
+	if m.Speaker == SpeakerAssistant && ctx.Cols > 2 {
+		return m.renderWithBullet(ctx)
+	}
 	if m.Empty {
 		return emptyPlaceholder(ctx), nil
 	}
@@ -74,6 +112,40 @@ func (m Message) Render(ctx Context) (buffer.Buffer, error) {
 		return renderPlainText(ctx, m), nil
 	}
 	return renderMixed(ctx, m, fences), nil
+}
+
+// renderWithBullet renders a SpeakerAssistant Message: the inner content is
+// rendered at width Cols-2, then composited into a Cols-wide buffer offset
+// by 2 columns, with the ⏺ bullet written at (0,0). Continuation lines fall
+// under the hanging indent (their first 2 cells stay blank). Per-turn bullet
+// (CC AssistantTextMessage: the glyph appears once per message, on the first
+// line — not per wrapped line). Empty content renders 0 rows (no orphan
+// bullet). spec-1.25 D-5.
+func (m Message) renderWithBullet(ctx Context) (buffer.Buffer, error) {
+	inner := m
+	inner.Speaker = SpeakerNone
+	innerCtx := ctx
+	innerCtx.Cols = ctx.Cols - 2
+	innerBuf, err := inner.Render(innerCtx)
+	if err != nil {
+		return nil, err
+	}
+	_, rows := innerBuf.Size()
+	if rows == 0 {
+		return measureOnlyBuf(ctx.Cols, 0), nil // no content → no bullet
+	}
+	if ctx.MeasureOnly {
+		return measureOnlyBuf(ctx.Cols, rows), nil
+	}
+	out, err := buffer.NewGrid(ctx.Cols, rows)
+	if err != nil {
+		return measureOnlyBuf(ctx.Cols, rows), nil
+	}
+	if g, ok := innerBuf.(*buffer.Grid); ok {
+		paint.BlitAt(out, g, 2, 0)
+	}
+	out.SetCell(0, 0, buffer.Cell{Ch: speakerBullet, St: themeOrDefault(ctx.Theme).Style(StyleNormal)})
+	return out, nil
 }
 
 // renderPlainText renders Text with no fence detection. Applies
