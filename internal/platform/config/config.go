@@ -164,7 +164,13 @@ type ConnectionConfig struct {
 	Database string `yaml:"database,omitempty" json:"database,omitempty"`
 	User     string `yaml:"user,omitempty" json:"user,omitempty"`
 	Password string `yaml:"password,omitempty" json:"password,omitempty" redact:"true"`
-	SSLMode  string `yaml:"sslmode,omitempty" json:"sslmode,omitempty" validate:"omitempty,oneof=disable allow prefer require verify-ca verify-full"`
+	// validate:"oneof=..." — NOT "omitempty,oneof": the self-contained reflect
+	// validator (validation.go) has no `omitempty` rule, and checkOneOf already
+	// passes the empty string (empty SSLMode → driver default "prefer"). The
+	// spec-1.19 R-fix briefly added `omitempty,` (go-playground style) which the
+	// custom validator rejected as an unknown rule, breaking ALL connections
+	// config-load (hotfix/config-sslmode-omitempty; surfaced by Stage-1 Layer-5).
+	SSLMode string `yaml:"sslmode,omitempty" json:"sslmode,omitempty" validate:"oneof=disable allow prefer require verify-ca verify-full"`
 }
 
 // ModelConfig — LLM model endpoint. Stage 0 minimal; spec-1.20 fills rest.
