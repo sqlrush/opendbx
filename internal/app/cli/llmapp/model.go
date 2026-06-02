@@ -382,14 +382,16 @@ func (m *Model) handleControl(msg streamControlMsg) (program.Model, scheduler.Cm
 			next.thinkingBuf += msg.ThinkingToken
 		}
 	case msg.ToolUse != nil:
-		// spec-1.25 D-5 / codex D5-HIGH-1: flush any pending assistant text
-		// into scrollback BEFORE the tool-use node, so prose that preceded the
-		// tool call orders first (carrying the ⏺ bullet) instead of being
-		// drained later in View and landing after the tool tree. Scoped to the
-		// node-appending branches only — draining before Thinking/Finish would
-		// corrupt the thinking-only filter timing (sawThinking/sawContent not
-		// yet updated; the Finish path drains in streamDoneMsg after Close).
-		next.scrollback, next.assistantBulletPending = next.drainPendingInto(m.scrollback)
+		// spec-1.25 D-5 / codex D5-HIGH-1 (DEFERRED): draining pending stream
+		// text here to order assistant prose before the tool node is NOT done —
+		// the TokenStream is shared across all loop turns and the loop goroutine
+		// can race ahead, so a boundary drain pulls FUTURE-turn text before this
+		// tool node (proven by TestModel_LoopAppendsToolBlocks failing under CI
+		// timing). A correct fix needs producer-side ordering (per-turn stream
+		// boundary or text-via-ordered-channel) — tracked as a spec-1.21
+		// follow-up. The ⏺ bullet still attaches correctly via markAssistantBullet
+		// at the View/streamDoneMsg drain.
+		//
 		// Mutate the per-submit map in place — next is already a shallow
 		// copy and toolUseNames is owned by this in-flight submit.
 		if next.toolUseNames == nil {
@@ -398,7 +400,7 @@ func (m *Model) handleControl(msg streamControlMsg) (program.Model, scheduler.Cm
 		next.toolUseNames[msg.ToolUse.ID] = msg.ToolUse.Name
 		tu := block.NewToolUse(msg.ToolUse.ID, msg.ToolUse.Name, msg.ToolUse.Input)
 		tu.State = block.StateRunning // caller owns transition per spec-1.9 toolcall.go:62-64
-		next.scrollback = appendNode(next.scrollback, tu)
+		next.scrollback = appendNode(m.scrollback, tu)
 	case msg.ToolResult != nil:
 		name := next.toolUseNames[msg.ToolResult.ToolUseID]
 		if name == "" {
@@ -407,13 +409,6 @@ func (m *Model) handleControl(msg streamControlMsg) (program.Model, scheduler.Cm
 			// (spec-1.9b R3 HIGH-3).
 			break
 		}
-		// NB: no drainPendingInto here. The result immediately follows its
-		// tool-use with no intervening assistant text; and by the time this
-		// control msg is processed the loop may have raced ahead and streamed
-		// the NEXT turn's prose into the shared TokenStream — draining it here
-		// would order that future text before this result. The ToolUse-branch
-		// drain (which flushes all text preceding a tool call, including a
-		// prior turn's) is the correct and sufficient ordering fix.
 		// codex T-10a P2-1 absorb: transition the matching block.ToolUse
 		// from StateRunning to StateResolved/StateError so the UI does
 		// not show the tool as "Running" forever once its result has
@@ -424,7 +419,7 @@ func (m *Model) handleControl(msg streamControlMsg) (program.Model, scheduler.Cm
 		if msg.ToolResult.IsError {
 			targetState = block.StateError
 		}
-		sb := transitionToolUseState(next.scrollback, msg.ToolResult.ToolUseID, targetState)
+		sb := transitionToolUseState(m.scrollback, msg.ToolResult.ToolUseID, targetState)
 		tr := block.NewToolResult(msg.ToolResult.ToolUseID, name, msg.ToolResult.Content, msg.ToolResult.IsError)
 		// spec-1.22 D-6: post-set the render-only Cached flag (NewToolResult
 		// signature stays unchanged so the ~30 existing call sites don't move).
@@ -640,50 +635,6 @@ func appendNodes(sb []block.RenderNode, nodes []block.RenderNode) []block.Render
 // content Message is found (e.g. thinking-only / tool-only drain), the
 // bullet stays pending for a later drain in the same turn. nodes are
 // replaced by value (block.Message is a value type), not mutated in place.
-// drainPendingInto flushes any in-flight stream text onto sb (filtering
-// thinking-only placeholders + marking the per-turn assistant bullet),
-// returning the updated scrollback and pending flag. Used at control
-// boundaries (handleControl) so assistant prose that preceded a tool-use /
-// finish node is ordered before it (codex D5-HIGH-1). No-op when no stream
-// is active or no nodes are pending. Mirrors the View drain (same
-// sawThinking/sawContent gating, same single-owner scheduler goroutine).
-func (m *Model) drainPendingInto(sb []block.RenderNode) ([]block.RenderNode, bool) {
-	pending := m.assistantBulletPending
-	if m.stream == nil {
-		return sb, pending
-	}
-	nodes := m.stream.Drain()
-	if len(nodes) == 0 {
-		return sb, pending
-	}
-	nodes = filterThinkingOnlyEmpty(nodes, m.sawThinking, m.sawContent)
-	// Mid-turn boundary: flush only REAL assistant text. Empty / empty-text
-	// placeholders are turn-end artifacts (the thinking-only "(no output)"
-	// indicator) and must NOT be inserted before a tool node — the View /
-	// streamDoneMsg drain still handles them at turn end.
-	nodes = contentNodesOnly(nodes)
-	if len(nodes) == 0 {
-		return sb, pending
-	}
-	nodes, pending = markAssistantBullet(nodes, pending)
-	return appendNodes(sb, nodes), pending
-}
-
-// contentNodesOnly returns a new slice keeping only nodes with real visible
-// content — drops block.Message placeholders (Empty or empty Text). Used by
-// drainPendingInto so a tool boundary flushes prose but not the turn-end
-// "(no output)" placeholder (spec-1.25 D-5 / codex D5-HIGH-1).
-func contentNodesOnly(nodes []block.RenderNode) []block.RenderNode {
-	out := make([]block.RenderNode, 0, len(nodes))
-	for _, n := range nodes {
-		if msg, ok := n.(block.Message); ok && (msg.Empty || msg.Text == "") {
-			continue
-		}
-		out = append(out, n)
-	}
-	return out
-}
-
 func markAssistantBullet(nodes []block.RenderNode, pending bool) ([]block.RenderNode, bool) {
 	if !pending {
 		return nodes, false
