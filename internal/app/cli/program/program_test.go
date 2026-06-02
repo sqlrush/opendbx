@@ -446,36 +446,59 @@ func TestProgram_Cleanup_FiredOnExit(t *testing.T) {
 
 // --- Layout ---
 
-func TestLayout_ScrollbackSize(t *testing.T) {
+// TestLayout_OffsetTable freezes the spec-1.25 §4.1 offset math: input is a
+// 3-row top/bottom-rule box when Rows>=5 (CC PromptInput.tsx:2268 parity), else
+// it gracefully degrades to the spec-1.16 single-row input. N=5 is a
+// correctness floor (status 1 + box 3 + >=1 scrollback row), NOT a tuning knob:
+// below it ScrollbackSize would go negative.
+func TestLayout_OffsetTable(t *testing.T) {
 	cases := []struct {
-		name     string
-		l        Layout
-		wantCols int
-		wantRows int
+		name string
+		rows int
+		box  bool // expect box mode
+		// expected geometry; -1 means "absent"
+		sbRows  int
+		top     int
+		content int // == InputRow()
+		bottom  int
+		status  int
 	}{
-		{"normal", Layout{Cols: 80, Rows: 24}, 80, 22},
-		{"minimal", Layout{Cols: 80, Rows: 3}, 80, 1},
-		{"too small", Layout{Cols: 80, Rows: 1}, 80, 0},
+		{"box-24", 24, true, 20, 20, 21, 22, 23},
+		{"box-5-floor", 5, true, 1, 1, 2, 3, 4},
+		{"single-4", 4, false, 2, -1, 2, -1, 3},
+		{"single-3", 3, false, 1, -1, 1, -1, 2},
+		{"single-2", 2, false, 0, -1, 0, -1, 1},
+		{"degenerate-1", 1, false, 0, -1, -1, -1, 0},
+		{"degenerate-0", 0, false, 0, -1, -1, -1, -1},
 	}
 	for _, c := range cases {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
-			t.Parallel() // R2 N-3
-			cols, rows := c.l.ScrollbackSize()
-			if cols != c.wantCols || rows != c.wantRows {
-				t.Errorf("got (%d,%d), want (%d,%d)", cols, rows, c.wantCols, c.wantRows)
+			t.Parallel()
+			l := Layout{Cols: 80, Rows: c.rows}
+			if got := l.BoxMode(); got != c.box {
+				t.Errorf("BoxMode = %v, want %v", got, c.box)
+			}
+			if cols, rows := l.ScrollbackSize(); cols != 80 || rows != c.sbRows {
+				t.Errorf("ScrollbackSize = (%d,%d), want (80,%d)", cols, rows, c.sbRows)
+			}
+			if got := l.InputBoxTop(); got != c.top {
+				t.Errorf("InputBoxTop = %d, want %d", got, c.top)
+			}
+			if got := l.InputRow(); got != c.content {
+				t.Errorf("InputRow(content) = %d, want %d", got, c.content)
+			}
+			if got := l.InputBoxBottom(); got != c.bottom {
+				t.Errorf("InputBoxBottom = %d, want %d", got, c.bottom)
+			}
+			if got := l.StatusLine(); got != c.status {
+				t.Errorf("StatusLine = %d, want %d", got, c.status)
+			}
+			// invariant: scrollback rows never negative (R-1 graceful)
+			if _, rows := l.ScrollbackSize(); rows < 0 {
+				t.Errorf("ScrollbackSize rows negative: %d", rows)
 			}
 		})
-	}
-}
-
-func TestLayout_InputRow_StatusLine(t *testing.T) {
-	l := Layout{Cols: 80, Rows: 24}
-	if got := l.InputRow(); got != 22 {
-		t.Errorf("InputRow = %d, want 22", got)
-	}
-	if got := l.StatusLine(); got != 23 {
-		t.Errorf("StatusLine = %d, want 23", got)
 	}
 }
 
@@ -738,7 +761,7 @@ func TestProgram_InputRow_QuitArmedOverride(t *testing.T) {
 	p.quitArmed = true
 	grid, _ := buffer.NewGrid(40, 5)
 	p.renderFn(grid)
-	got := rowToString(grid, 3) // InputRow
+	got := rowToString(grid, (Layout{Rows: 5}).InputRow()) // InputRow
 	if !strings.Contains(got, "Press Ctrl+C again to quit") {
 		t.Errorf("input row when quit armed = %q", got)
 	}
@@ -753,7 +776,7 @@ func TestProgram_InputRow_Natural_Prompt(t *testing.T) {
 	p := New(drv, m)
 	grid, _ := buffer.NewGrid(40, 5)
 	p.renderFn(grid)
-	got := rowToString(grid, 3)
+	got := rowToString(grid, (Layout{Rows: 5}).InputRow())
 	if !strings.HasPrefix(got, "> hello") {
 		t.Errorf("Natural input row = %q; want prefix '> hello'", got)
 	}
@@ -767,7 +790,7 @@ func TestProgram_InputRow_Slash_NoPrompt(t *testing.T) {
 	p := New(drv, m)
 	grid, _ := buffer.NewGrid(40, 5)
 	p.renderFn(grid)
-	got := rowToString(grid, 3)
+	got := rowToString(grid, (Layout{Rows: 5}).InputRow())
 	if strings.HasPrefix(got, "> ") {
 		t.Errorf("Slash input row = %q; should NOT have '> ' prompt", got)
 	}
@@ -783,7 +806,7 @@ func TestProgram_InputRow_SQL_NoPrompt(t *testing.T) {
 	p := New(drv, m)
 	grid, _ := buffer.NewGrid(40, 5)
 	p.renderFn(grid)
-	got := rowToString(grid, 3)
+	got := rowToString(grid, (Layout{Rows: 5}).InputRow())
 	if strings.HasPrefix(got, "> ") {
 		t.Errorf("SQL input row = %q; should NOT have '> ' prompt", got)
 	}
@@ -819,7 +842,7 @@ func TestProgram_InputRow_CursorGlyphAtPosition(t *testing.T) {
 			p := New(drv, m)
 			grid, _ := buffer.NewGrid(40, 5)
 			p.renderFn(grid)
-			row := rowToString(grid, 3) // InputRow
+			row := rowToString(grid, (Layout{Rows: 5}).InputRow()) // InputRow
 			if !strings.Contains(row, "_") {
 				t.Errorf("row missing cursor glyph: %q", row)
 			}
@@ -847,11 +870,63 @@ func TestProgram_InputRow_ColsOverflowTruncate(t *testing.T) {
 			grid, _ := buffer.NewGrid(10, 5)
 			p.renderFn(grid)
 			// 验证 row 不写出 col 10 以外 (paint 用 paintTextAt 自带 cols boundary)
-			row := rowToString(grid, 3)
+			row := rowToString(grid, (Layout{Rows: 5}).InputRow())
 			if len(row) > 10 {
 				t.Errorf("row exceeded cols: len=%d, row=%q", len(row), row)
 			}
 		})
+	}
+}
+
+// --- spec-1.25 D-3: top/bottom-rule input box ---
+
+// TestProgram_InputBox_RulesInBoxMode: when Rows>=5 the input is framed by
+// a top rule (all '─') and a bottom rule carrying the "? for shortcuts"
+// borderText (CC PromptInput.tsx:2268 parity), with the buffer on the
+// content row between them.
+func TestProgram_InputBox_RulesInBoxMode(t *testing.T) {
+	drv := newFakeDriver(40, 6)
+	m := &testModel{inputState: InputState{Buffer: "hi", Cursor: 2}}
+	p := New(drv, m)
+	grid, _ := buffer.NewGrid(40, 6)
+	p.renderFn(grid)
+	l := Layout{Cols: 40, Rows: 6}
+	top := rowToString(grid, l.InputBoxTop())
+	content := rowToString(grid, l.InputRow())
+	bottom := rowToString(grid, l.InputBoxBottom())
+	if !strings.HasPrefix(top, "──────") || strings.ContainsAny(top, "?h") {
+		t.Errorf("top rule = %q; want all '─'", top)
+	}
+	if !strings.HasPrefix(content, "> hi") {
+		t.Errorf("content row = %q; want '> hi' prefix", content)
+	}
+	if !strings.Contains(bottom, "? for shortcuts") || !strings.HasPrefix(bottom, "──") {
+		t.Errorf("bottom rule = %q; want '─...─ ? for shortcuts ─'", bottom)
+	}
+}
+
+// TestProgram_InputBox_SingleRowFallback: below the N=5 floor the input
+// degrades to the spec-1.16 single-row form (no rules) so tiny terminals
+// never produce negative scrollback (R-1 graceful).
+func TestProgram_InputBox_SingleRowFallback(t *testing.T) {
+	drv := newFakeDriver(40, 4)
+	m := &testModel{inputState: InputState{Buffer: "hi", Cursor: 2}}
+	p := New(drv, m)
+	grid, _ := buffer.NewGrid(40, 4)
+	p.renderFn(grid)
+	l := Layout{Cols: 40, Rows: 4}
+	if l.BoxMode() {
+		t.Fatalf("Rows=4 must not be box mode")
+	}
+	content := rowToString(grid, l.InputRow()) // Rows-2 = 2
+	if !strings.HasPrefix(content, "> hi") {
+		t.Errorf("single-row content = %q; want '> hi'", content)
+	}
+	// no rule rune anywhere above status in single-row mode
+	for y := 0; y < l.StatusLine(); y++ {
+		if strings.Contains(rowToString(grid, y), "───") {
+			t.Errorf("row %d unexpectedly contains a rule in single-row mode", y)
+		}
 	}
 }
 

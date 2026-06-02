@@ -4,33 +4,76 @@
 
 package program
 
-// Layout describes the current terminal geometry and the three-zone
-// split: scrollback occupies rows [0, Rows-2), the input row sits at
-// Rows-2, the status line at Rows-1.
+// inputBoxMinRows is the spec-1.25 §4.1 N=5 correctness floor for the
+// 3-row top/bottom-rule input box: status(1) + box(3) + >=1 scrollback
+// row. Below it the input degrades to the spec-1.16 single-row form so
+// ScrollbackSize never goes negative (R-1 graceful).
+const inputBoxMinRows = 5
+
+// Layout describes the current terminal geometry. spec-1.25 D-3: when
+// Rows >= inputBoxMinRows the input is a 3-row top/bottom-rule box (CC
+// PromptInput.tsx:2268 borderLeft/Right=false parity) occupying rows
+// [Rows-4, Rows-1): top rule (Rows-4) / content (Rows-3) / bottom rule
+// (Rows-2); the status line sits at Rows-1 and scrollback at [0, Rows-4).
+// Below the floor it degrades to the spec-1.15/1.16 single-row split
+// (input Rows-2, status Rows-1, scrollback [0, Rows-2)).
 //
-// spec-1.16/1.17 will extend layout to multi-row input + side panels
-// via LayoutPlugin; baseline 3 zones are hardcoded for spec-1.15.
+// LayoutPlugin (below) remains an unwired forward-link seam (spec-1.17
+// side panels); spec-1.25 deliberately uses the concrete accessors here
+// rather than the plugin (R2 CRIT-B: plugin has no consumer).
 type Layout struct {
 	Cols, Rows int
 }
 
+// BoxMode reports whether the terminal is tall enough for the 3-row
+// input box (Rows >= inputBoxMinRows). Callers paint the single-row
+// input when false.
+func (l Layout) BoxMode() bool {
+	return l.Rows >= inputBoxMinRows
+}
+
 // ScrollbackSize returns the cols × rows available for Model.View
-// rendering — the entire terminal width with the bottom two rows
-// reserved for input + status. When the terminal is too small to fit
-// all three zones (Rows < 3) ScrollbackSize collapses gracefully.
+// rendering: full width with the bottom zones reserved (4 rows in box
+// mode: top/content/bottom rule + status; 2 rows in single-row mode).
+// Collapses gracefully (never negative) on tiny terminals.
 func (l Layout) ScrollbackSize() (cols, rows int) {
 	cols = l.Cols
-	rows = l.Rows - 2
+	if l.BoxMode() {
+		rows = l.Rows - 4
+	} else {
+		rows = l.Rows - 2
+	}
 	if rows < 0 {
 		rows = 0
 	}
 	return
 }
 
-// InputRow returns the row index of the input row (Rows-2). Returns
-// -1 when the terminal is too small (Rows < 2).
+// InputRow returns the row index of the input CONTENT row (where the
+// buffer + cursor are painted) in both modes: Rows-3 in box mode,
+// Rows-2 in single-row mode. Returns -1 when too small (Rows < 2).
 func (l Layout) InputRow() int {
+	if l.BoxMode() {
+		return l.Rows - 3
+	}
 	if l.Rows < 2 {
+		return -1
+	}
+	return l.Rows - 2
+}
+
+// InputBoxTop returns the top-rule row (Rows-4) in box mode, else -1.
+func (l Layout) InputBoxTop() int {
+	if !l.BoxMode() {
+		return -1
+	}
+	return l.Rows - 4
+}
+
+// InputBoxBottom returns the bottom-rule row (Rows-2) in box mode,
+// else -1.
+func (l Layout) InputBoxBottom() int {
+	if !l.BoxMode() {
 		return -1
 	}
 	return l.Rows - 2
