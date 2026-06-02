@@ -38,34 +38,30 @@ func gridRow(t *testing.T, buf buffer.Buffer, y int) string {
 	return strings.TrimRight(b.String(), " ")
 }
 
-func TestWelcome_LogoRender(t *testing.T) {
+func TestWelcome_CCMascotRender(t *testing.T) {
 	w := NewWelcome("v0.49.0", "~/opendbx", "Try \"为什么这条 SQL 慢\"")
-	buf, err := w.Render(Context{Cols: 80, Rows: 24})
+	buf, err := w.Render(Context{Cols: 80, Rows: 30})
 	if err != nil {
 		t.Fatalf("Render err: %v", err)
 	}
 	g := buf.(*buffer.Grid)
 	cols, rows := g.Size()
-	if rows < 3 {
-		t.Fatalf("logo welcome should have >=3 rows, got %d", rows)
+	if rows < len(welcomeArt) {
+		t.Fatalf("mascot welcome should have >= %d rows, got %d", len(welcomeArt), rows)
 	}
-	// row 0 starts with the opendbx logo mark (left column), text follows.
-	if got := g.Cell(0, 0).Ch; got != []rune(welcomeMark[0])[0] {
-		t.Errorf("row0 col0 = %q; want logo mark glyph %q", got, []rune(welcomeMark[0])[0])
-	}
-	// the headline / version / cwd / tip appear in the text column.
 	all := ""
 	for y := 0; y < rows; y++ {
 		all += gridRow(t, buf, y) + "\n"
 	}
-	for _, want := range []string{"opendbx", "v0.49.0", "✻ Welcome to opendbx!", "cwd: ~/opendbx", "为什么这条 SQL 慢"} {
+	// title + version + footer (cwd / tip) present
+	for _, want := range []string{"Welcome to opendbx", "v0.49.0", "cwd: ~/opendbx", "为什么这条 SQL 慢"} {
 		if !strings.Contains(all, want) {
-			t.Errorf("welcome logo missing %q; got:\n%s", want, all)
+			t.Errorf("welcome missing %q; got:\n%s", want, all)
 		}
 	}
-	// "? for shortcuts" is NOT in the welcome (it lives in the input bottom rule).
-	if strings.Contains(all, "? for shortcuts") {
-		t.Errorf("welcome must NOT carry '? for shortcuts' (input footer owns it); got:\n%s", all)
+	// the clawd mascot body glyphs appear (CC-clone fidelity)
+	if !strings.ContainsRune(all, '█') || !strings.ContainsRune(all, '░') {
+		t.Errorf("welcome missing mascot glyphs █/░; got:\n%s", all)
 	}
 	// no row exceeds Cols (rule 20 Layer 1 invariant)
 	for y := 0; y < rows; y++ {
