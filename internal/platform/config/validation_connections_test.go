@@ -96,6 +96,25 @@ func TestValidateConnectionsEnvKeyCollision(t *testing.T) {
 	}
 }
 
+// TestValidateConnectionsValidPasses is the regression guard for
+// hotfix/config-sslmode-omitempty: a VALID connections config (fields mode with
+// a legal sslmode, AND fields mode with empty sslmode, AND DSN mode) must
+// produce ZERO validation errors. The original spec-1.19 tests only asserted
+// the PRESENCE of specific failure rules, never that a valid config passes —
+// which let the `omitempty` unknown-rule bug ship (every connection failed on
+// the unknown "omitempty" rule). This test would have caught it.
+func TestValidateConnectionsValidPasses(t *testing.T) {
+	cfg := Default() // base on defaults so unrelated required fields are valid
+	cfg.Connections = []ConnectionConfig{
+		{Alias: "pg-explicit", Driver: "postgres", Host: "h", Database: "d", User: "u", SSLMode: "disable"},
+		{Alias: "pg-default-ssl", Driver: "postgres", Host: "h2", Database: "d2", User: "u2"}, // empty SSLMode OK
+		{Alias: "pg-dsn", Driver: "postgres", DSN: "postgres://u:p@h:5432/db"},
+	}
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("valid connections config must pass Validate, got: %v", err)
+	}
+}
+
 func TestValidateConnectionsSSLModeOneof(t *testing.T) {
 	es := validateConns(t, []ConnectionConfig{
 		{Alias: "a", Driver: "postgres", Host: "h", Database: "d", User: "u", SSLMode: "bogus"},
