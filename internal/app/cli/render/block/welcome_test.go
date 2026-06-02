@@ -38,7 +38,7 @@ func gridRow(t *testing.T, buf buffer.Buffer, y int) string {
 	return strings.TrimRight(b.String(), " ")
 }
 
-func TestWelcome_BoxedRender(t *testing.T) {
+func TestWelcome_LogoRender(t *testing.T) {
 	w := NewWelcome("v0.49.0", "~/opendbx", "Try \"为什么这条 SQL 慢\"")
 	buf, err := w.Render(Context{Cols: 80, Rows: 24})
 	if err != nil {
@@ -46,32 +46,31 @@ func TestWelcome_BoxedRender(t *testing.T) {
 	}
 	g := buf.(*buffer.Grid)
 	cols, rows := g.Size()
-	if rows < 4 {
-		t.Fatalf("boxed welcome should have >=4 rows, got %d", rows)
+	if rows < 3 {
+		t.Fatalf("logo welcome should have >=3 rows, got %d", rows)
 	}
-	top := gridRow(t, buf, 0)
-	bottom := gridRow(t, buf, rows-1)
-	// top has rounded corners + title; bottom has rounded corners.
-	if !strings.HasPrefix(top, "╭") || !strings.Contains(top, "✻ Welcome to opendbx") {
-		t.Errorf("top = %q; want ╭...✻ Welcome to opendbx...", top)
+	// row 0 starts with the opendbx logo mark (left column), text follows.
+	if got := g.Cell(0, 0).Ch; got != []rune(welcomeMark[0])[0] {
+		t.Errorf("row0 col0 = %q; want logo mark glyph %q", got, []rune(welcomeMark[0])[0])
 	}
-	if !strings.HasPrefix(bottom, "╰") || !strings.HasSuffix(bottom, "╯") {
-		t.Errorf("bottom = %q; want ╰...╯", bottom)
-	}
-	// body carries version, cwd, tip, and the shortcuts hint.
+	// the headline / version / cwd / tip appear in the text column.
 	all := ""
 	for y := 0; y < rows; y++ {
 		all += gridRow(t, buf, y) + "\n"
 	}
-	for _, want := range []string{"v0.49.0", "~/opendbx", "为什么这条 SQL 慢", "? for shortcuts"} {
+	for _, want := range []string{"opendbx", "v0.49.0", "✻ Welcome to opendbx!", "cwd: ~/opendbx", "为什么这条 SQL 慢"} {
 		if !strings.Contains(all, want) {
-			t.Errorf("welcome box missing %q; got:\n%s", want, all)
+			t.Errorf("welcome logo missing %q; got:\n%s", want, all)
 		}
+	}
+	// "? for shortcuts" is NOT in the welcome (it lives in the input bottom rule).
+	if strings.Contains(all, "? for shortcuts") {
+		t.Errorf("welcome must NOT carry '? for shortcuts' (input footer owns it); got:\n%s", all)
 	}
 	// no row exceeds Cols (rule 20 Layer 1 invariant)
 	for y := 0; y < rows; y++ {
-		if w := width.Width(gridRow(t, buf, y)); w > cols {
-			t.Errorf("row %d width %d exceeds cols %d", y, w, cols)
+		if rw := width.Width(gridRow(t, buf, y)); rw > cols {
+			t.Errorf("row %d width %d exceeds cols %d", y, rw, cols)
 		}
 	}
 }
