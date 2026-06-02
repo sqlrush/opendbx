@@ -39,29 +39,39 @@ func gridRow(t *testing.T, buf buffer.Buffer, y int) string {
 }
 
 func TestWelcome_CCMascotRender(t *testing.T) {
-	w := NewWelcome("v0.49.0", "~/opendbx", "Try \"为什么这条 SQL 慢\"")
-	buf, err := w.Render(Context{Cols: 80, Rows: 30})
+	w := NewWelcome("v0.49.0", "~/opendbx", "为什么这条 SQL 慢")
+	w.Model = "deepseek-v4-pro"
+	buf, err := w.Render(Context{Cols: 120, Rows: 30})
 	if err != nil {
 		t.Fatalf("Render err: %v", err)
 	}
 	g := buf.(*buffer.Grid)
 	cols, rows := g.Size()
-	if rows < len(welcomeArt) {
-		t.Fatalf("mascot welcome should have >= %d rows, got %d", len(welcomeArt), rows)
+	if rows < 6 {
+		t.Fatalf("two-panel welcome should have several rows, got %d", rows)
 	}
 	all := ""
 	for y := 0; y < rows; y++ {
 		all += gridRow(t, buf, y) + "\n"
 	}
-	// title + version + footer (cwd / tip) present
-	for _, want := range []string{"Welcome to opendbx", "v0.49.0", "cwd: ~/opendbx", "为什么这条 SQL 慢"} {
+	// rounded box corners + two-panel content
+	if g.Cell(0, 0).Ch != '╭' || g.Cell(cols-1, 0).Ch != '╮' {
+		t.Errorf("top corners = %q/%q; want ╭/╮", g.Cell(0, 0).Ch, g.Cell(cols-1, 0).Ch)
+	}
+	for _, want := range []string{
+		"opendbx", "v0.49.0", // title
+		"Welcome to opendbx!",          // left greeting
+		"deepseek-v4-pro", "~/opendbx", // left model + cwd
+		"Tips for getting started", // right header
+		"为什么这条 SQL 慢",              // right tip
+	} {
 		if !strings.Contains(all, want) {
 			t.Errorf("welcome missing %q; got:\n%s", want, all)
 		}
 	}
-	// the clawd mascot body glyphs appear (CC-clone fidelity)
-	if !strings.ContainsRune(all, '█') || !strings.ContainsRune(all, '░') {
-		t.Errorf("welcome missing mascot glyphs █/░; got:\n%s", all)
+	// the sparkle mascot quadrant glyphs appear
+	if !strings.ContainsRune(all, '▗') || !strings.ContainsRune(all, '▘') {
+		t.Errorf("welcome missing sparkle mascot ▗/▘; got:\n%s", all)
 	}
 	// no row exceeds Cols (rule 20 Layer 1 invariant)
 	for y := 0; y < rows; y++ {
@@ -94,9 +104,9 @@ func TestWelcome_NarrowFallbackSingleLine(t *testing.T) {
 
 func TestWelcome_MeasureOnly(t *testing.T) {
 	w := NewWelcome("v0.49.0", "~/opendbx", "tip")
-	full, _ := w.Render(Context{Cols: 80, Rows: 24})
+	full, _ := w.Render(Context{Cols: 120, Rows: 30})
 	_, wantRows := full.(*buffer.Grid).Size()
-	mo, err := w.Render(Context{Cols: 80, Rows: 24, MeasureOnly: true})
+	mo, err := w.Render(Context{Cols: 120, Rows: 30, MeasureOnly: true})
 	if err != nil {
 		t.Fatalf("MeasureOnly err: %v", err)
 	}
