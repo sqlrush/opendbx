@@ -4,7 +4,7 @@
 
 // Package block defines the RenderNode interface for all user-visible
 // rendered blocks (message / toolcall / toolresult / compact / markdown /
-// code / diff / thinking / banner / progress) and the remaining unsupported stubs.
+// code / diff / thinking / welcome / progress) and the remaining unsupported stubs.
 //
 // Each stub Render() returns (nil, ErrUnsupportedNode) — spec-1.7+
 // fills the real implementation per block type. Renaming this from R1's
@@ -97,5 +97,5 @@ type RenderNode interface {
 var ErrUnsupportedNode = errcode.Register(
 	"RENDER.UNSUPPORTED_NODE",
 	"block.Render called on unimplemented block type",
-	"this block type is not yet implemented; see spec-1.7+ block-type specs (message / toolcall / toolresult / compact / markdown / code / diff / thinking already implemented; banner / progress pending)",
+	"this block type is not yet implemented; see spec-1.7+ block-type specs (message / toolcall / toolresult / compact / markdown / code / diff / thinking / welcome already implemented; progress pending)",
 )

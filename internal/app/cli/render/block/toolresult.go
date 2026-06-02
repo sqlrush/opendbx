@@ -174,7 +174,19 @@ func (t ToolResult) Render(ctx Context) (buffer.Buffer, error) {
 		return resultErrorPlaceholder(ctx, theme, t.ToolName)
 	}
 
-	renderRows := expandToolResultRows(ctx, rows)
+	// spec-1.25 D-6: render result rows under a "  ⎿ " connector (CC tree
+	// style, GrepTool/UI.tsx:66). Content is hanging-indented by connWidth so
+	// wrapped continuation lines align under the result text; the connector
+	// glyph occupies only the first row's gutter. When the terminal is too
+	// narrow for the connector, fall back to the un-indented spec-1.9b layout.
+	indentCtx := ctx
+	indent := toolResultConnWidth
+	if ctx.Cols <= indent {
+		indent = 0 // too narrow for the connector; render flush-left
+	} else {
+		indentCtx.Cols = ctx.Cols - indent
+	}
+	renderRows := expandToolResultRows(indentCtx, rows)
 	if len(renderRows) == 0 {
 		// CC null-return path: Success with no adapter rows → 0 rows.
 		return measureOnlyBuf(ctx.Cols, 0), nil
@@ -187,10 +199,22 @@ func (t ToolResult) Render(ctx Context) (buffer.Buffer, error) {
 		return measureOnlyBuf(ctx.Cols, len(renderRows)), nil
 	}
 	for y, r := range renderRows {
-		writeTextRow(buf, 0, y, r.text, theme.Style(r.style), ctx.Cols)
+		writeTextRow(buf, indent, y, r.text, theme.Style(r.style), ctx.Cols)
+	}
+	if indent > 0 {
+		// "  ⎿ " connector in the first row's gutter (cols 0..3 blank except ⎿).
+		buf.SetCell(2, 0, buffer.Cell{Ch: toolResultConnector, St: theme.Style(StyleDimmed)})
 	}
 	return buf, nil
 }
+
+// toolResultConnWidth is the gutter reserved for the "  ⎿ " tree connector
+// (2 spaces + ⎿ + space). spec-1.25 D-6.
+const toolResultConnWidth = 4
+
+// toolResultConnector is the CC tree connector rune joining a ToolUse header
+// to its result (GrepTool/UI.tsx:66 dim "  ⎿  ").
+const toolResultConnector = '⎿'
 
 // collectRows builds the logical rows per state, then appends the spec-1.22
 // dedup "(cached)" marker when the result was served from cache. The marker is

@@ -338,12 +338,68 @@ func (p *Program) renderFn(next *buffer.Grid) {
 		im, hasInp = v, true
 		state = v.InputState()
 	}
-	if r := layout.InputRow(); r >= 0 {
-		p.paintInputRow(next, r, im, state, hasInp)
-	}
+	p.paintInputBox(next, layout, im, state, hasInp)
 	if r := layout.StatusLine(); r >= 0 {
 		p.paintStatusLine(next, r, im, state, hasInp)
 	}
+}
+
+// inputBoxHint is the CC borderText hint embedded in the bottom rule
+// (CC PromptInputFooterLeftSide.tsx:411 "? for shortcuts"). spec-1.25 D-3.
+const inputBoxHint = "? for shortcuts"
+
+// inputBoxRune is the horizontal rule rune for the top/bottom input
+// borders. spec-1.25 D-3: CC PromptInput.tsx:2268 uses borderStyle="round"
+// with borderLeft/Right=false — i.e. top + bottom rules, no side walls.
+const inputBoxRule = '─'
+
+// paintInputBox renders the spec-1.25 D-3 input region. In box mode
+// (Layout.BoxMode) it draws a top rule, the content row (reusing
+// paintInputRow so spec-1.16 mode/cursor/placeholder logic is unchanged),
+// and a bottom rule carrying the CC borderText hint. Below the N=5 floor
+// it degrades to a single content row (spec-1.16 parity). Painting nothing
+// when the content row is absent (tiny terminal).
+func (p *Program) paintInputBox(grid *buffer.Grid, layout Layout, im InputModel, state InputState, hasInput bool) {
+	content := layout.InputRow()
+	if content < 0 {
+		return
+	}
+	if !layout.BoxMode() {
+		p.paintInputRow(grid, content, im, state, hasInput)
+		return
+	}
+	cols, _ := grid.Size()
+	dim := style.Style{FG: style.Palette(8)} // terminal-relative grey (R-10)
+	if top := layout.InputBoxTop(); top >= 0 {
+		paintInputRule(grid, top, "", dim, cols)
+	}
+	p.paintInputRow(grid, content, im, state, hasInput)
+	if bottom := layout.InputBoxBottom(); bottom >= 0 {
+		paintInputRule(grid, bottom, inputBoxHint, dim, cols)
+	}
+}
+
+// paintInputRule fills row y with the horizontal rule rune across cols
+// and, when hint is non-empty, overlays " <hint> " near the right end
+// (CC borderText). The surrounding spaces punch a gap in the rule so the
+// hint reads as "──── ? for shortcuts ─". Rule-only when too narrow for
+// the hint. spec-1.25 D-3.
+func paintInputRule(grid *buffer.Grid, y int, hint string, st style.Style, cols int) {
+	if cols <= 0 || y < 0 {
+		return
+	}
+	for x := 0; x < cols; x++ {
+		grid.SetCell(x, y, buffer.Cell{Ch: inputBoxRule, St: st})
+	}
+	if hint == "" {
+		return
+	}
+	label := " " + hint + " "
+	start := cols - width.Width(label) - 1 // keep 1 trailing rule cell
+	if start < 0 {
+		return // too narrow: rule only
+	}
+	paintTextAt(grid, label, start, y, st, cols)
 }
 
 // paintInputRow renders the input row at the given grid row.
@@ -423,17 +479,21 @@ func (p *Program) paintStatusLine(grid *buffer.Grid, row int, _ InputModel, stat
 		mode := input.DeriveMode(state.Buffer)
 		segs = append(segs, StatusSegment{Text: mode.String()})
 	}
+	// spec-1.25 D-4: dim " · " separator BETWEEN segments (CC PromptInputFooter
+	// parity), not a trailing space after the last (codex D4-MED-1).
+	sep := style.Style{FG: style.Palette(8)}
 	x := 0
-	for _, seg := range segs {
+	for i, seg := range segs {
 		if x >= cols {
 			break
 		}
-		x = paintTextAt(grid, seg.Text, x, row, seg.Style, cols)
-		// segment separator
-		if x < cols {
-			grid.SetCell(x, row, buffer.Cell{Ch: ' '})
-			x++
+		if i > 0 {
+			x = paintTextAt(grid, " · ", x, row, sep, cols)
+			if x >= cols {
+				break
+			}
 		}
+		x = paintTextAt(grid, seg.Text, x, row, seg.Style, cols)
 	}
 }
 

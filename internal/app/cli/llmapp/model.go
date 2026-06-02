@@ -65,6 +65,17 @@ type Options struct {
 	// Options keeps spec-1.21 behavior; production turns it on via config.
 	DedupEnabled bool
 	DedupWindow  int
+
+	// spec-1.25 chrome fields. Welcome gates the startup welcome panel seed
+	// (D-2: option-gated so only the interactive bootstrap path seeds it —
+	// headless / error-fallback / test constructions leave it false). Cwd
+	// (already ~-abbreviated) + GitBranch feed the rich status bar
+	// (D-4 StatusSegments); both are read ONCE by the caller (no per-frame
+	// filesystem IO) and cached on the Model.
+	Welcome   bool
+	Cwd       string
+	Version   string
+	GitBranch string
 }
 
 // Model is the spec-1.20 production chat Model (replaces demoapp); under
@@ -93,6 +104,13 @@ type Model struct {
 	sawThinking bool   // any thinking-channel token this turn (spec-1.20.2 D-5)
 	thinkingBuf string // accumulated thinking text when strip_think=false
 
+	// assistantBulletPending marks that the current assistant turn has not yet
+	// emitted its ⏺ speaker bullet (spec-1.25 D-5 / CRIT-A). Set at submit;
+	// the first drained content Message of the turn consumes it (per-turn, not
+	// per-line). render/streaming stays neutral — the bullet is a post-drain
+	// render-only decoration applied here in llmapp.
+	assistantBulletPending bool
+
 	// toolUseNames joins ToolResult.ToolUseID → ToolUse.Name within a
 	// single submit (spec-1.21 D-6 / spec-1.9b R3 HIGH-3: rendering a
 	// ToolResult requires the peer ToolUse.Name; empty → skip render
@@ -105,6 +123,12 @@ type Model struct {
 	// captured by the snapshotBuilder and sealed at EventFinish. /report reads
 	// it (spec-1.23 D-3/D-4). nil until the first completed run.
 	lastSnapshot *report.RunSnapshot
+
+	// spec-1.25 D-4 cached status fields (read once at New; StatusSegments
+	// reads these on every frame with zero filesystem IO). cwd is already
+	// ~-abbreviated; gitBranch is "" when not in a git repo / detached.
+	cwd       string
+	gitBranch string
 }
 
 var (
@@ -141,7 +165,7 @@ func New(provider llm.Provider, opts Options) *Model {
 		// at wiring time; tests would catch this immediately.
 		panic("llmapp.New: " + err.Error())
 	}
-	return &Model{
+	m := &Model{
 		provider:       provider,
 		loop:           loop,
 		modelName:      opts.ModelName,
@@ -151,8 +175,26 @@ func New(provider llm.Provider, opts Options) *Model {
 		stripThink:     opts.StripThink,
 		thinkingMode:   opts.ThinkingMode,
 		thinkingBudget: opts.ThinkingBudget,
+		cwd:            opts.Cwd,
+		gitBranch:      opts.GitBranch,
 	}
+	// spec-1.25 D-2: option-gated welcome seed at scrollback head. Only the
+	// interactive bootstrap path sets Welcome=true (Q6 ★A construct-time seed:
+	// deterministic, no first-frame gap, no Cmd timing). The welcome is a
+	// plain render-only node that scrolls with history and is NOT re-seeded
+	// on /clear (Q-life ★A CC parity).
+	if opts.Welcome {
+		m.scrollback = []block.RenderNode{
+			block.NewWelcome(opts.Version, opts.Cwd, welcomeTip),
+		}
+	}
+	return m
 }
+
+// welcomeTip is the single static onboarding tip shown in the welcome
+// panel (spec-1.25 D-1; non-random so the render is replayable). DB-flavored
+// and capability-honest (no reference to unbuilt slash commands).
+const welcomeTip = "提示:直接用自然语言描述你的数据库问题即可开始诊断"
 
 // Init has no startup Cmd.
 func (m *Model) Init() scheduler.Cmd { return nil }
@@ -198,6 +240,7 @@ func (m *Model) Update(msg scheduler.Msg) (program.Model, scheduler.Cmd) {
 			if nodes := next.stream.Drain(); len(nodes) > 0 {
 				nodes = filterThinkingOnlyEmpty(nodes, next.sawThinking, next.sawContent)
 				if len(nodes) > 0 {
+					nodes, next.assistantBulletPending = markAssistantBullet(nodes, next.assistantBulletPending)
 					next.scrollback = appendNodes(next.scrollback, nodes)
 				}
 			}
@@ -208,6 +251,7 @@ func (m *Model) Update(msg scheduler.Msg) (program.Model, scheduler.Cmd) {
 		next.streaming = false
 		next.sawThinking = false
 		next.thinkingBuf = ""
+		next.assistantBulletPending = false // turn over; do not leak bullet
 		return &next, nil
 	}
 	return m, nil
@@ -243,7 +287,11 @@ func (m *Model) handleAction(msg program.KeyActionMsg) (program.Model, scheduler
 		// guard at the top of handleAction already blocks any submit mid-run,
 		// so /report cannot race a live diagnosis.)
 		if isReportCommand(next.buffer) {
-			return &next, next.dispatchReport()
+			next.buffer = ""
+			next.cursor = 0
+			nodes, cmd := next.dispatchReport()
+			next.scrollback = appendNodes(next.scrollback, nodes)
+			return &next, cmd
 		}
 		return next.submit()
 	case keybindings.ActionCancel:
@@ -281,7 +329,11 @@ func (m *Model) submit() (program.Model, scheduler.Cmd) {
 		Role:    llm.RoleUser,
 		Content: []llm.ContentBlock{{Type: llm.BlockText, Text: userText}},
 	}, m.maxHistory)
-	next.scrollback = appendNode(m.scrollback, block.Message{Text: "> " + userText})
+	// spec-1.25 D-5: user echo is plain (no "> " prefix — CC parity), tagged
+	// SpeakerUser. Starting the assistant turn arms the ⏺ bullet for the first
+	// content node drained (CRIT-A per-turn).
+	next.scrollback = appendNode(m.scrollback, block.Message{Text: userText, Speaker: block.SpeakerUser})
+	next.assistantBulletPending = true
 	next.toolUseNames = map[string]string{} // reset per submit (spec-1.21 D-6)
 
 	return &next, loopStartCmd(ctx, m.loop, req, userText, ts, ctrl, m.stripThink)
@@ -330,6 +382,16 @@ func (m *Model) handleControl(msg streamControlMsg) (program.Model, scheduler.Cm
 			next.thinkingBuf += msg.ThinkingToken
 		}
 	case msg.ToolUse != nil:
+		// spec-1.25 D-5 / codex D5-HIGH-1 (DEFERRED): draining pending stream
+		// text here to order assistant prose before the tool node is NOT done —
+		// the TokenStream is shared across all loop turns and the loop goroutine
+		// can race ahead, so a boundary drain pulls FUTURE-turn text before this
+		// tool node (proven by TestModel_LoopAppendsToolBlocks failing under CI
+		// timing). A correct fix needs producer-side ordering (per-turn stream
+		// boundary or text-via-ordered-channel) — tracked as a spec-1.21
+		// follow-up. The ⏺ bullet still attaches correctly via markAssistantBullet
+		// at the View/streamDoneMsg drain.
+		//
 		// Mutate the per-submit map in place — next is already a shallow
 		// copy and toolUseNames is owned by this in-flight submit.
 		if next.toolUseNames == nil {
@@ -469,6 +531,7 @@ func (m *Model) View(cols, rows int) buffer.Buffer {
 	if m.stream != nil {
 		if nodes := m.stream.Drain(); len(nodes) > 0 {
 			nodes = filterThinkingOnlyEmpty(nodes, m.sawThinking, m.sawContent)
+			nodes, m.assistantBulletPending = markAssistantBullet(nodes, m.assistantBulletPending)
 			m.scrollback = append(m.scrollback, nodes...)
 		}
 	}
@@ -497,13 +560,26 @@ func (m *Model) InputState() program.InputState {
 	return program.InputState{Buffer: m.buffer, Cursor: m.cursor}
 }
 
-// StatusSegments shows the model name + a streaming indicator.
+// StatusSegments shows model · cwd · git-branch + a streaming indicator
+// (spec-1.25 D-4, CC PromptInputFooter parity). cwd + gitBranch are cached
+// at New (read once from the filesystem by the interactive bootstrap) — this
+// method performs NO filesystem IO, since it runs on every render frame.
+// token/context values are intentionally absent until spec-3.8/3.10 wire
+// them (原则 3: no fake values). The mode segment is appended by
+// program.paintStatusLine (spec-1.16 D-5 append-only contract).
 func (m *Model) StatusSegments() []program.StatusSegment {
 	name := m.modelName
 	if name == "" {
 		name = m.provider.Name()
 	}
+	dim := style.Style{FG: style.Palette(8)} // terminal-relative grey (R-10)
 	segs := []program.StatusSegment{{Text: name}}
+	if m.cwd != "" {
+		segs = append(segs, program.StatusSegment{Text: m.cwd, Style: dim})
+	}
+	if m.gitBranch != "" {
+		segs = append(segs, program.StatusSegment{Text: m.gitBranch, Style: dim})
+	}
 	if m.streaming {
 		segs = append(segs, program.StatusSegment{Text: "●", Style: style.Style{Bold: true}})
 	}
@@ -549,6 +625,30 @@ func appendNodes(sb []block.RenderNode, nodes []block.RenderNode) []block.Render
 	next = append(next, sb...)
 	next = append(next, nodes...)
 	return next
+}
+
+// markAssistantBullet tags the FIRST content Message in nodes with
+// SpeakerAssistant when a bullet is pending, returning the (possibly
+// modified) nodes and the still-pending flag (spec-1.25 D-5 / CRIT-A).
+// Per-turn: only the first assistant content node of a turn carries the ⏺
+// bullet (CC AssistantTextMessage is per-message, not per-line). When no
+// content Message is found (e.g. thinking-only / tool-only drain), the
+// bullet stays pending for a later drain in the same turn. nodes are
+// replaced by value (block.Message is a value type), not mutated in place.
+func markAssistantBullet(nodes []block.RenderNode, pending bool) ([]block.RenderNode, bool) {
+	if !pending {
+		return nodes, false
+	}
+	for i, n := range nodes {
+		msg, ok := n.(block.Message)
+		if !ok || msg.Text == "" || msg.Empty {
+			continue
+		}
+		msg.Speaker = block.SpeakerAssistant
+		nodes[i] = msg
+		return nodes, false // consumed
+	}
+	return nodes, true // still pending
 }
 
 func filterThinkingOnlyEmpty(nodes []block.RenderNode, sawThinking, sawContent bool) []block.RenderNode {

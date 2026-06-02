@@ -16,8 +16,8 @@ import (
 // Promoted to production so far: Message (spec-1.7) / ToolUse (spec-1.9)
 // / ToolResult (spec-1.9b) / CompactSummary (spec-1.10) / Markdown
 // (spec-1.11) / Code (spec-1.12) / Diff (spec-1.13) / Thinking
-// (spec-1.20.2). Remaining 2 stubs
-// (Banner/Progress) preserve the spec-0.13 stub contract.
+// (spec-1.20.2) / Welcome (spec-1.25, was Banner). Remaining 1 stub
+// (Progress) preserves the spec-0.13 stub contract.
 //
 // spec-1.12 R2 codex L1: Code removed from stub list (promoted to
 // production). renderCodeBlock helper remains in code.go alongside
@@ -28,7 +28,6 @@ func TestNonProductionStubs_ReturnUnsupported(t *testing.T) {
 		name string
 		node RenderNode
 	}{
-		{"banner", Banner{}},
 		{"progress", Progress{}},
 	}
 	for _, c := range cases {
