@@ -14,6 +14,7 @@ import (
 // the speaker bullet and hanging-indents wrapped continuation lines by 2,
 // while the glyph appears only ONCE (per-message, not per-line).
 func TestMessage_AssistantBullet(t *testing.T) {
+	t.Parallel()
 	// Force a wrap: narrow cols so the text spans >1 line.
 	m := Message{Text: "alpha beta gamma delta", Speaker: SpeakerAssistant}
 	buf, err := m.Render(Context{Cols: 12, Rows: 24, Wrap: WrapSoft})
@@ -44,6 +45,7 @@ func TestMessage_AssistantBullet(t *testing.T) {
 // TestMessage_UserAndNonePlain: SpeakerUser / SpeakerNone render identically
 // (plain text, no bullet, no "> " prefix).
 func TestMessage_UserAndNonePlain(t *testing.T) {
+	t.Parallel()
 	for _, sp := range []SpeakerKind{SpeakerNone, SpeakerUser} {
 		m := Message{Text: "hello", Speaker: sp}
 		buf, _ := m.Render(Context{Cols: 40, Rows: 24})
@@ -57,11 +59,20 @@ func TestMessage_UserAndNonePlain(t *testing.T) {
 // TestMessage_AssistantBulletEmptyNoOrphan: an empty-text assistant message
 // renders 0 rows (no orphan bullet on a blank line).
 func TestMessage_AssistantBulletEmptyNoOrphan(t *testing.T) {
-	buf, err := Message{Text: "", Speaker: SpeakerAssistant}.Render(Context{Cols: 40, Rows: 24})
-	if err != nil {
-		t.Fatalf("render err: %v", err)
+	t.Parallel()
+	// Both empty-text AND Empty=true (thinking placeholder) must yield 0 rows
+	// — no orphan ⏺ bullet (go-reviewer M-3 / code-reviewer MED-2).
+	cases := []Message{
+		{Text: "", Speaker: SpeakerAssistant},
+		{Empty: true, Speaker: SpeakerAssistant},
 	}
-	if _, rows := buf.Size(); rows != 0 {
-		t.Errorf("empty assistant msg rows = %d; want 0", rows)
+	for _, m := range cases {
+		buf, err := m.Render(Context{Cols: 40, Rows: 24})
+		if err != nil {
+			t.Fatalf("render err: %v", err)
+		}
+		if _, rows := buf.Size(); rows != 0 {
+			t.Errorf("%+v rows = %d; want 0 (no orphan bullet)", m, rows)
+		}
 	}
 }

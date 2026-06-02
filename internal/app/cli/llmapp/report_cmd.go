@@ -44,25 +44,25 @@ func isReportCommand(buffer string) bool {
 		input.ValueWithoutPrefix(buffer) == reportCommandName
 }
 
-// dispatchReport consumes a "/report" submission on the receiver (a *Model copy
-// owned by handleAction). It clears the input, renders the report into
-// scrollback (pure), and returns a Cmd that writes the file (IO deferred to the
-// Cmd). A nil lastSnapshot yields a friendly note and no Cmd.
-func (m *Model) dispatchReport() scheduler.Cmd {
-	m.buffer = ""
-	m.cursor = 0
+// dispatchReport renders a "/report" submission into scrollback NODES and a
+// file-write Cmd, WITHOUT mutating the receiver (go-reviewer H-1 / code-reviewer
+// MED-1: keep the Update-path immutability discipline compile-visible — the
+// caller, holding its own *Model copy, clears the input and appends the nodes).
+// A nil lastSnapshot yields a friendly note and no Cmd.
+func (m *Model) dispatchReport() ([]block.RenderNode, scheduler.Cmd) {
 	if m.lastSnapshot == nil {
-		m.scrollback = appendNode(m.scrollback, block.Message{Text: reportNoDiagnosisMsg})
-		return nil
+		return []block.RenderNode{block.Message{Text: reportNoDiagnosisMsg}}, nil
 	}
 	now := time.Now()
 	md := report.Generate(*m.lastSnapshot, now)
 	// spec-1.25 D-7: prepend a SpeakerAssistant header so the ⏺ bullet sits on
 	// the title and the Markdown body indents naturally beneath it (Markdown
 	// has no Speaker field; a header Message is the composition seam).
-	m.scrollback = appendNode(m.scrollback, block.Message{Text: reportHeaderTitle, Speaker: block.SpeakerAssistant})
-	m.scrollback = appendNode(m.scrollback, block.NewMarkdown(md))
-	return writeReportCmd(md, now)
+	nodes := []block.RenderNode{
+		block.Message{Text: reportHeaderTitle, Speaker: block.SpeakerAssistant},
+		block.NewMarkdown(md),
+	}
+	return nodes, writeReportCmd(md, now)
 }
 
 // writeReportCmd performs the (blocking) file write off the pure Update path.

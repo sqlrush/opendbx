@@ -479,17 +479,21 @@ func (p *Program) paintStatusLine(grid *buffer.Grid, row int, _ InputModel, stat
 		mode := input.DeriveMode(state.Buffer)
 		segs = append(segs, StatusSegment{Text: mode.String()})
 	}
+	// spec-1.25 D-4: dim " · " separator BETWEEN segments (CC PromptInputFooter
+	// parity), not a trailing space after the last (codex D4-MED-1).
+	sep := style.Style{FG: style.Palette(8)}
 	x := 0
-	for _, seg := range segs {
+	for i, seg := range segs {
 		if x >= cols {
 			break
 		}
-		x = paintTextAt(grid, seg.Text, x, row, seg.Style, cols)
-		// segment separator
-		if x < cols {
-			grid.SetCell(x, row, buffer.Cell{Ch: ' '})
-			x++
+		if i > 0 {
+			x = paintTextAt(grid, " · ", x, row, sep, cols)
+			if x >= cols {
+				break
+			}
 		}
+		x = paintTextAt(grid, seg.Text, x, row, seg.Style, cols)
 	}
 }
 

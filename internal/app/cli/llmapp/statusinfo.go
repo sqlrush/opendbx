@@ -19,6 +19,8 @@ import (
 // AbbrevCwd returns a compact display form of dir for the status bar:
 // "~/sub/path" when dir is under home, "~" for home itself, otherwise the
 // basename. Empty dir → "". spec-1.25 D-4 (NIT: exact cwd formatting).
+// os.PathSeparator is '/' on the supported darwin/linux platforms (CLAUDE.md
+// § 0 + CI matrix); the "~/sub" join below assumes that.
 func AbbrevCwd(dir, home string) string {
 	if dir == "" {
 		return ""

@@ -70,6 +70,9 @@ func (w Welcome) Render(ctx Context) (buffer.Buffer, error) {
 		return measureOnlyBuf(ctx.Cols, rows), nil
 	}
 	theme := themeOrDefault(ctx.Theme)
+	// The frame is left-aligned: cols [boxW, ctx.Cols) stay blank (terminal
+	// default). This is intentional (spec-1.25 §1.1 boxed-form scope), not a
+	// missing right margin (code-reviewer LOW-1).
 	buf, err := buffer.NewGrid(ctx.Cols, rows)
 	if err != nil {
 		return measureOnlyBuf(ctx.Cols, rows), nil
@@ -126,7 +129,10 @@ func (w Welcome) renderFallback(ctx Context) buffer.Buffer {
 // single line). The frame must satisfy both the title rule (>= title+5:
 // ╭─ title ─╮) and the widest body row (>= body+4: │ body │).
 func boxWidth(body []string, cols int) (int, bool) {
-	titleMin := width.Width(welcomeTitle) + 5
+	// +6 = ╭ ─ space title space ─ ╮ : guarantees at least one trailing "─"
+	// after the title so the top renders ╭─ ✻ ... ─╮ (codex D1-LOW-1), not
+	// ╭─ ✻ ... ╮.
+	titleMin := width.Width(welcomeTitle) + 6
 	bodyMin := 0
 	for _, l := range body {
 		if bw := width.Width(l) + 4; bw > bodyMin {

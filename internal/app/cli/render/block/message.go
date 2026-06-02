@@ -122,6 +122,13 @@ func (m Message) Render(ctx Context) (buffer.Buffer, error) {
 // line — not per wrapped line). Empty content renders 0 rows (no orphan
 // bullet). spec-1.25 D-5.
 func (m Message) renderWithBullet(ctx Context) (buffer.Buffer, error) {
+	if m.Empty {
+		// A thinking-only placeholder must never carry the speaker bullet
+		// (go-reviewer M-3 / code-reviewer MED-2). markAssistantBullet already
+		// skips Empty nodes in production; this guards the public Message type
+		// against an orphan ⏺ on "(no output)" from any other construction site.
+		return measureOnlyBuf(ctx.Cols, 0), nil
+	}
 	inner := m
 	inner.Speaker = SpeakerNone
 	innerCtx := ctx
