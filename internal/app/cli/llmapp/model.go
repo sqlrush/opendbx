@@ -65,6 +65,17 @@ type Options struct {
 	// Options keeps spec-1.21 behavior; production turns it on via config.
 	DedupEnabled bool
 	DedupWindow  int
+
+	// spec-1.25 chrome fields. Welcome gates the startup welcome panel seed
+	// (D-2: option-gated so only the interactive bootstrap path seeds it —
+	// headless / error-fallback / test constructions leave it false). Cwd
+	// (already ~-abbreviated) + GitBranch feed the rich status bar
+	// (D-4 StatusSegments); both are read ONCE by the caller (no per-frame
+	// filesystem IO) and cached on the Model.
+	Welcome   bool
+	Cwd       string
+	Version   string
+	GitBranch string
 }
 
 // Model is the spec-1.20 production chat Model (replaces demoapp); under
@@ -105,6 +116,12 @@ type Model struct {
 	// captured by the snapshotBuilder and sealed at EventFinish. /report reads
 	// it (spec-1.23 D-3/D-4). nil until the first completed run.
 	lastSnapshot *report.RunSnapshot
+
+	// spec-1.25 D-4 cached status fields (read once at New; StatusSegments
+	// reads these on every frame with zero filesystem IO). cwd is already
+	// ~-abbreviated; gitBranch is "" when not in a git repo / detached.
+	cwd       string
+	gitBranch string
 }
 
 var (
@@ -141,7 +158,7 @@ func New(provider llm.Provider, opts Options) *Model {
 		// at wiring time; tests would catch this immediately.
 		panic("llmapp.New: " + err.Error())
 	}
-	return &Model{
+	m := &Model{
 		provider:       provider,
 		loop:           loop,
 		modelName:      opts.ModelName,
@@ -151,8 +168,26 @@ func New(provider llm.Provider, opts Options) *Model {
 		stripThink:     opts.StripThink,
 		thinkingMode:   opts.ThinkingMode,
 		thinkingBudget: opts.ThinkingBudget,
+		cwd:            opts.Cwd,
+		gitBranch:      opts.GitBranch,
 	}
+	// spec-1.25 D-2: option-gated welcome seed at scrollback head. Only the
+	// interactive bootstrap path sets Welcome=true (Q6 ★A construct-time seed:
+	// deterministic, no first-frame gap, no Cmd timing). The welcome is a
+	// plain render-only node that scrolls with history and is NOT re-seeded
+	// on /clear (Q-life ★A CC parity).
+	if opts.Welcome {
+		m.scrollback = []block.RenderNode{
+			block.NewWelcome(opts.Version, opts.Cwd, welcomeTip),
+		}
+	}
+	return m
 }
+
+// welcomeTip is the single static onboarding tip shown in the welcome
+// panel (spec-1.25 D-1; non-random so the render is replayable). DB-flavored
+// and capability-honest (no reference to unbuilt slash commands).
+const welcomeTip = "提示:直接用自然语言描述你的数据库问题即可开始诊断"
 
 // Init has no startup Cmd.
 func (m *Model) Init() scheduler.Cmd { return nil }
@@ -497,13 +532,26 @@ func (m *Model) InputState() program.InputState {
 	return program.InputState{Buffer: m.buffer, Cursor: m.cursor}
 }
 
-// StatusSegments shows the model name + a streaming indicator.
+// StatusSegments shows model · cwd · git-branch + a streaming indicator
+// (spec-1.25 D-4, CC PromptInputFooter parity). cwd + gitBranch are cached
+// at New (read once from the filesystem by the interactive bootstrap) — this
+// method performs NO filesystem IO, since it runs on every render frame.
+// token/context values are intentionally absent until spec-3.8/3.10 wire
+// them (原则 3: no fake values). The mode segment is appended by
+// program.paintStatusLine (spec-1.16 D-5 append-only contract).
 func (m *Model) StatusSegments() []program.StatusSegment {
 	name := m.modelName
 	if name == "" {
 		name = m.provider.Name()
 	}
+	dim := style.Style{FG: style.Palette(8)} // terminal-relative grey (R-10)
 	segs := []program.StatusSegment{{Text: name}}
+	if m.cwd != "" {
+		segs = append(segs, program.StatusSegment{Text: m.cwd, Style: dim})
+	}
+	if m.gitBranch != "" {
+		segs = append(segs, program.StatusSegment{Text: m.gitBranch, Style: dim})
+	}
 	if m.streaming {
 		segs = append(segs, program.StatusSegment{Text: "●", Style: style.Style{Bold: true}})
 	}

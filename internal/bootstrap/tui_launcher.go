@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"sync"
 
 	"github.com/gdamore/tcell/v2"
@@ -22,6 +23,7 @@ import (
 	"github.com/sqlrush/opendbx/internal/domain/llm/fake"
 	"github.com/sqlrush/opendbx/internal/platform/config"
 	"github.com/sqlrush/opendbx/internal/platform/logger"
+	"github.com/sqlrush/opendbx/internal/platform/version"
 )
 
 // newScreenFn is the screen factory for the program.Run production path
@@ -153,10 +155,32 @@ func newChatModel() program.Model {
 		DedupWindow:  cfg.Diagnose.DedupWindow,
 	}
 	if perr != nil {
-		// Principle 3: explicit error, no demoapp fallback.
+		// Principle 3: explicit error, no demoapp fallback. Chrome (welcome
+		// + status cwd/git) is NOT seeded on the error path (spec-1.25 D-2:
+		// only the healthy interactive construction seeds it).
 		return llmapp.New(fake.New().WithStartErr(perr), opts)
 	}
+	// spec-1.25 D-2/D-4: seed the welcome panel + rich status bar on the
+	// healthy interactive path. cwd + git branch are read ONCE here (never on
+	// the render frame; R-3). os.Getwd failure simply omits the cwd line.
+	applyChromeOptions(&opts)
 	return llmapp.New(provider, opts)
+}
+
+// applyChromeOptions populates the spec-1.25 chrome fields on opts for the
+// interactive TUI path: enables the welcome seed and reads cwd + git branch
+// once (stdlib only, no shell — see llmapp.GitBranch). Kept off the
+// error-fallback / headless paths so the welcome appears only on a healthy
+// interactive launch (D-2 canary).
+func applyChromeOptions(opts *llmapp.Options) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = ""
+	}
+	opts.Welcome = true
+	opts.Version = version.String()
+	opts.Cwd = llmapp.AbbrevCwd(cwd, os.Getenv("HOME"))
+	opts.GitBranch = llmapp.GitBranch(cwd)
 }
 
 // stripThinkMigrationNoticeOnce is a per-process latch — the
