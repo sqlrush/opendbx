@@ -95,21 +95,21 @@ type Model struct {
 	buffer string
 	cursor int
 
-	history     []llm.Message          // bounded FIFO (R2 MED-4)
-	stream      *streaming.TokenStream // in-flight render stream (nil = idle)
-	control     chan streamControlMsg  // Loop emit → Update (spec-1.21 D-6; legacy R2.2 shape preserved)
-	cancel      context.CancelFunc     // cancels in-flight stream (Cmd/Cleanup)
-	streaming   bool
-	sawContent  bool   // any visible content this turn (R2 H-5 / R2.2 HIGH-2)
-	sawThinking bool   // any thinking-channel token this turn (spec-1.20.2 D-5)
-	thinkingBuf string // accumulated thinking text when strip_think=false
-
-	// assistantBulletPending marks that the current assistant turn has not yet
-	// emitted its ⏺ speaker bullet (spec-1.25 D-5 / CRIT-A). Set at submit;
-	// the first drained content Message of the turn consumes it (per-turn, not
-	// per-line). render/streaming stays neutral — the bullet is a post-drain
-	// render-only decoration applied here in llmapp.
-	assistantBulletPending bool
+	history      []llm.Message          // bounded FIFO (R2 MED-4)
+	stream       *streaming.TokenStream // in-flight preview stream (nil = idle)
+	control      chan streamControlMsg  // Loop emit → Update (spec-1.21 D-6; legacy R2.2 shape preserved)
+	previewNodes []block.RenderNode     // in-flight visible text preview; never committed to scrollback
+	cancel       context.CancelFunc     // cancels in-flight stream (Cmd/Cleanup)
+	streaming    bool
+	sawContent   bool   // any visible content this turn (R2 H-5 / R2.2 HIGH-2)
+	sawThinking  bool   // any thinking-channel token this turn (spec-1.20.2 D-5)
+	thinkingBuf  string // accumulated thinking text when strip_think=false
+	// finishHandled marks that a terminal Finish control was processed this
+	// turn (spec-1.21.1 R-fix H-1). When false at streamDoneMsg, the stream
+	// ended abruptly (user cancel mid-segment: diagnose Loop breaks on emit
+	// error without emitting EventFinish) — streamDoneMsg then recovers the
+	// residual partial text + annotates the cancel.
+	finishHandled bool
 
 	// toolUseNames joins ToolResult.ToolUseID → ToolUse.Name within a
 	// single submit (spec-1.21 D-6 / spec-1.9b R3 HIGH-3: rendering a
@@ -117,7 +117,8 @@ type Model struct {
 	// per CC null-return). Reset on every submit.
 	toolUseNames map[string]string
 
-	scrollback []block.RenderNode
+	scrollback      []block.RenderNode
+	sealedTruncated bool // current run sealed its final text with Message.Truncated
 
 	// lastSnapshot is the most recent completed (non-cancelled) diagnosis run,
 	// captured by the snapshotBuilder and sealed at EventFinish. /report reads
@@ -228,30 +229,43 @@ func (m *Model) Update(msg scheduler.Msg) (program.Model, scheduler.Cmd) {
 		return m.handleReportWriteFailed(v)
 	case streamDoneMsg:
 		next := *m
-		// T-10a HIGH-3: the TokenStream contract requires a Drain AFTER Close
-		// to collect final blocks (Close flushes the last partial into
-		// emitted but does not consume it). loopStartCmd closes the
-		// TokenStream before closing ctrl, so by now the final blocks are
-		// flushed — drain them once more before discarding the stream,
-		// else the last tokens
-		// are dropped. Update/View share the scheduler goroutine, so this
-		// Drain is race-free (same single-owner as the View Drain).
+		// spec-1.21.1 R-fix H-1 — final flush. On the normal path the
+		// authoritative text was committed via SealedText (which cleared
+		// previewNodes + drain-discarded the TokenStream), so both are empty here.
+		// On a cancel/error path where the seal + EventFinish were lost to ctx
+		// cancellation (diagnose loop.go breaks on emit error WITHOUT emitting
+		// EventFinish), the partial assistant text survives in previewNodes (the
+		// PreviewTick-accumulated cache) + a possible final partial line flushed
+		// by TokenStream.Close — commit it so it is not lost (restores the
+		// pre-1.21.1 final-drain-preserves-text behavior; codex H-1). The
+		// recovered segment keeps its ⏺ bullet.
+		var residual []block.RenderNode
+		residual = append(residual, next.previewNodes...)
 		if next.stream != nil {
-			if nodes := next.stream.Drain(); len(nodes) > 0 {
-				nodes = filterThinkingOnlyEmpty(nodes, next.sawThinking, next.sawContent)
-				if len(nodes) > 0 {
-					nodes, next.assistantBulletPending = markAssistantBullet(nodes, next.assistantBulletPending)
-					next.scrollback = appendNodes(next.scrollback, nodes)
-				}
-			}
+			residual = append(residual, next.stream.Drain()...)
 		}
+		residual = filterThinkingOnlyEmpty(residual, next.sawThinking, next.sawContent)
+		if len(residual) > 0 {
+			markFirstAssistant(residual)
+			next.scrollback = appendNodes(next.scrollback, residual)
+			next.sawContent = true
+		}
+		if !next.finishHandled {
+			// No terminal Finish was processed → the stream ended abruptly
+			// (user cancel mid-segment). Annotate so the screen is not silently
+			// truncated (the [已取消] marker would otherwise be lost with the
+			// dropped EventFinish; codex H-1).
+			next.scrollback = appendNode(next.scrollback, block.Message{Text: "[已取消]"})
+		}
+		next.previewNodes = nil
 		next.stream = nil
 		next.control = nil
 		next.cancel = nil
 		next.streaming = false
 		next.sawThinking = false
 		next.thinkingBuf = ""
-		next.assistantBulletPending = false // turn over; do not leak bullet
+		next.sealedTruncated = false
+		next.finishHandled = false
 		return &next, nil
 	}
 	return m, nil
@@ -325,15 +339,17 @@ func (m *Model) submit() (program.Model, scheduler.Cmd) {
 	next.sawContent = false
 	next.sawThinking = false
 	next.thinkingBuf = ""
+	next.previewNodes = nil
+	next.sealedTruncated = false
+	next.finishHandled = false // spec-1.21.1 R-fix H-1
 	next.history = appendBounded(m.history, llm.Message{
 		Role:    llm.RoleUser,
 		Content: []llm.ContentBlock{{Type: llm.BlockText, Text: userText}},
 	}, m.maxHistory)
 	// spec-1.25 D-5: user echo is plain (no "> " prefix — CC parity), tagged
-	// SpeakerUser. Starting the assistant turn arms the ⏺ bullet for the first
-	// content node drained (CRIT-A per-turn).
+	// SpeakerUser. Assistant bullets are attached when each sealed text segment
+	// is committed through the ctrl FIFO (spec-1.21.1).
 	next.scrollback = appendNode(m.scrollback, block.Message{Text: userText, Speaker: block.SpeakerUser})
-	next.assistantBulletPending = true
 	next.toolUseNames = map[string]string{} // reset per submit (spec-1.21 D-6)
 
 	return &next, loopStartCmd(ctx, m.loop, req, userText, ts, ctrl, m.stripThink)
@@ -367,8 +383,9 @@ func (m *Model) buildRequest(userText string) llm.Request {
 //     name in next.toolUseNames for the matching ToolResult.
 //   - ToolResult != nil → append block.ToolResult (joined name lookup;
 //     empty name → skip render per CC null-return / spec-1.9b R3 HIGH-3).
+//   - PreviewTick      → drain TokenStream into previewNodes only.
+//   - SealedText       → append authoritative assistant Message segment.
 //   - Finish terminal  → appendFinishNode (TermCode-aware DIAGNOSE.*).
-//   - otherwise        → text variant; accumulate sawContent only.
 //
 // Every branch re-arms the reader so the next ctrl msg (or done signal)
 // is pulled — including the terminal finish, which depends on the close
@@ -376,24 +393,36 @@ func (m *Model) buildRequest(userText string) llm.Request {
 func (m *Model) handleControl(msg streamControlMsg) (program.Model, scheduler.Cmd) {
 	next := *m
 	switch {
+	case msg.PreviewTick:
+		if next.stream != nil {
+			if nodes := next.stream.Drain(); len(nodes) > 0 {
+				nodes = filterThinkingOnlyEmpty(nodes, next.sawThinking, next.sawContent)
+				if len(nodes) > 0 {
+					next.previewNodes = appendNodes(next.previewNodes, nodes)
+				}
+			}
+		}
+	case msg.SealedText != "":
+		next.sawContent = true
+		next.sealedTruncated = msg.SealedTruncated
+		next.scrollback = appendNode(m.scrollback, block.Message{
+			Text:      msg.SealedText,
+			Truncated: msg.SealedTruncated,
+			Speaker:   block.SpeakerAssistant,
+		})
+		// The matching TokenStream content was preview-only. Discard any
+		// residual blocks and clear cached preview so the sealed segment is not
+		// rendered twice.
+		if next.stream != nil {
+			_ = next.stream.Drain()
+		}
+		next.previewNodes = nil
 	case msg.Thinking:
 		next.sawThinking = true
 		if msg.ThinkingToken != "" {
 			next.thinkingBuf += msg.ThinkingToken
 		}
 	case msg.ToolUse != nil:
-		// spec-1.25 D-5 / codex D5-HIGH-1 (DEFERRED): draining pending stream
-		// text here to order assistant prose before the tool node is NOT done —
-		// the TokenStream is shared across all loop turns and the loop goroutine
-		// can race ahead, so a boundary drain pulls FUTURE-turn text before this
-		// tool node (proven by TestModel_LoopAppendsToolBlocks failing under CI
-		// timing). A correct fix needs producer-side ordering (per-turn stream
-		// boundary or text-via-ordered-channel) — tracked as a spec-1.21
-		// follow-up. The ⏺ bullet still attaches correctly via markAssistantBullet
-		// at the View/streamDoneMsg drain.
-		//
-		// Mutate the per-submit map in place — next is already a shallow
-		// copy and toolUseNames is owned by this in-flight submit.
 		if next.toolUseNames == nil {
 			next.toolUseNames = map[string]string{}
 		}
@@ -409,12 +438,6 @@ func (m *Model) handleControl(msg streamControlMsg) (program.Model, scheduler.Cm
 			// (spec-1.9b R3 HIGH-3).
 			break
 		}
-		// codex T-10a P2-1 absorb: transition the matching block.ToolUse
-		// from StateRunning to StateResolved/StateError so the UI does
-		// not show the tool as "Running" forever once its result has
-		// arrived. Spec-1.9 toolcall.go:62-64 contract: caller owns the
-		// transition. spec-1.21 D-6 specifies this exact hand-off:
-		// "EventToolResult → 转 Resolved/Error".
 		targetState := block.StateResolved
 		if msg.ToolResult.IsError {
 			targetState = block.StateError
@@ -426,16 +449,22 @@ func (m *Model) handleControl(msg streamControlMsg) (program.Model, scheduler.Cm
 		tr.Cached = msg.Cached
 		next.scrollback = appendNode(sb, tr)
 	case msg.Finish.Terminal():
-		next.sawContent = m.sawContent || msg.VisibleContent
+		next.sawContent = m.sawContent
+		next.finishHandled = true // spec-1.21.1 R-fix H-1
 		next.scrollback = next.appendFinishNode(msg)
+		if next.stream != nil {
+			_ = next.stream.Drain()
+		}
+		next.previewNodes = nil
 		// spec-1.23 D-3: adopt the sealed run snapshot for /report. A cancelled
 		// run does NOT overwrite a prior good snapshot ("last completed", not
-		// "last attempted" — architect L-2).
-		if msg.Snapshot != nil && msg.Finish != llm.FinishCancelled {
+		// "last attempted" — architect L-2). spec-1.21.1 R-fix H-2: use the
+		// SAME cancel predicate as the marker render (appendFinishNode) so a
+		// FinishError+context.Canceled shape — which renders [已取消] — also does
+		// not overwrite the snapshot (previously only FinishCancelled was excluded).
+		if msg.Snapshot != nil && !isCancelledFinish(msg) {
 			next.lastSnapshot = msg.Snapshot
 		}
-	default:
-		next.sawContent = m.sawContent || msg.VisibleContent
 	}
 	return &next, m.armReader()
 }
@@ -443,6 +472,34 @@ func (m *Model) handleControl(msg streamControlMsg) (program.Model, scheduler.Cm
 // armReader returns a Cmd that emits readControlMsg so Update re-pulls.
 func (m *Model) armReader() scheduler.Cmd {
 	return func() scheduler.Msg { return readControlMsg{} }
+}
+
+// isCancelledFinish reports whether a finish control message represents a
+// user/context cancellation. Both a literal FinishCancelled AND a
+// FinishError wrapping context.Canceled count (some providers surface a
+// cancel as the latter). spec-1.21.1 R-fix H-2: the marker render
+// (appendFinishNode) and the /report snapshot-adoption guard MUST use this
+// same predicate, else a FinishError+context.Canceled renders [已取消] yet
+// still overwrites lastSnapshot, breaking "last completed not last attempted".
+func isCancelledFinish(msg streamControlMsg) bool {
+	return msg.Finish == llm.FinishCancelled ||
+		(msg.Finish == llm.FinishError && errors.Is(msg.Err, context.Canceled))
+}
+
+// markFirstAssistant tags the first visible-content Message in nodes with
+// SpeakerAssistant so a residual (un-sealed) text segment recovered at
+// streamDoneMsg still carries the ⏺ bullet on its first line. spec-1.21.1
+// R-fix H-1. Replaces the element by value (Message is a value type).
+func markFirstAssistant(nodes []block.RenderNode) {
+	for i, n := range nodes {
+		msg, ok := n.(block.Message)
+		if !ok || msg.Text == "" || msg.Empty {
+			continue
+		}
+		msg.Speaker = block.SpeakerAssistant
+		nodes[i] = msg
+		return
+	}
 }
 
 // appendFinishNode appends a terminal status/marker node for the finish
@@ -481,11 +538,12 @@ func (m *Model) appendFinishNode(msg streamControlMsg) []block.RenderNode {
 	// for a genuinely empty non-Stop end (R2.2 case-order fix — the
 	// !sawContent fallback must not shadow Error/Length).
 	switch {
-	case msg.Finish == llm.FinishCancelled || (msg.Finish == llm.FinishError && errors.Is(msg.Err, context.Canceled)):
+	case isCancelledFinish(msg):
 		// T-10a MED: a deliberate user cancel gets its own marker so it is
 		// not silently blank nor mislabeled STREAM_EMPTY (checked before the
 		// !sawContent fallback). msg.Err.Error() is NOT rendered here — the
-		// cancel is expected, not an error to surface.
+		// cancel is expected, not an error to surface. spec-1.21.1 R-fix H-2:
+		// shared predicate with snapshot adoption.
 		return appendNode(base, block.Message{Text: "[已取消]"})
 	case msg.Finish == llm.FinishError && msg.Err != nil:
 		// NB: the SDK's apierror.Error() formats METHOD/URL/STATUS/body only —
@@ -502,7 +560,12 @@ func (m *Model) appendFinishNode(msg streamControlMsg) []block.RenderNode {
 		// thinking-only truncation reports empty, not "[截断]".
 		return appendNode(base, block.Message{Text: "[LLM.STREAM_EMPTY: 无可见输出]"})
 	case msg.Finish == llm.FinishLength:
-		// Had visible content but hit the token cap.
+		// Had visible content but hit the token cap. If the final visible
+		// segment was sealed with Message.Truncated, the inline marker already
+		// carries the truncation signal; otherwise add an explicit terminal node.
+		if m.sealedTruncated {
+			return base
+		}
 		return appendNode(base, block.Message{Text: "[截断: 达到 max_tokens]"})
 	}
 	return base
@@ -524,26 +587,25 @@ func (m *Model) handleCancel() (program.Model, scheduler.Cmd) {
 	}
 }
 
-// View renders scrollback + the in-flight stream. Per spec-1.6 main-loop
-// bridge (Q11 Drain-in-View): Drain the active stream into scrollback each
-// frame (View runs on the scheduler goroutine, single-owner of m).
+// View renders committed scrollback plus the in-flight preview. The
+// TokenStream is NOT drained here: spec-1.21.1 makes handleControl the
+// sole owner of permanent scrollback writes, while PreviewTick updates
+// previewNodes inside Update. This keeps View read-only and removes the
+// old View-vs-control ordering race.
 func (m *Model) View(cols, rows int) buffer.Buffer {
-	if m.stream != nil {
-		if nodes := m.stream.Drain(); len(nodes) > 0 {
-			nodes = filterThinkingOnlyEmpty(nodes, m.sawThinking, m.sawContent)
-			nodes, m.assistantBulletPending = markAssistantBullet(nodes, m.assistantBulletPending)
-			m.scrollback = append(m.scrollback, nodes...)
-		}
-	}
 	g, err := buffer.NewGrid(cols, rows)
 	if err != nil {
 		return nil
 	}
+	nodes := m.scrollback
+	if len(m.previewNodes) > 0 {
+		nodes = appendNodes(m.scrollback, m.previewNodes)
+	}
 	// Paint the most recent nodes bottom-up.
 	ctx := block.Context{Cols: cols, Rows: rows}
 	y := rows - 1
-	for i := len(m.scrollback) - 1; i >= 0 && y >= 0; i-- {
-		nb, rerr := m.scrollback[i].Render(ctx)
+	for i := len(nodes) - 1; i >= 0 && y >= 0; i-- {
+		nb, rerr := nodes[i].Render(ctx)
 		if rerr != nil || nb == nil {
 			continue
 		}
@@ -625,30 +687,6 @@ func appendNodes(sb []block.RenderNode, nodes []block.RenderNode) []block.Render
 	next = append(next, sb...)
 	next = append(next, nodes...)
 	return next
-}
-
-// markAssistantBullet tags the FIRST content Message in nodes with
-// SpeakerAssistant when a bullet is pending, returning the (possibly
-// modified) nodes and the still-pending flag (spec-1.25 D-5 / CRIT-A).
-// Per-turn: only the first assistant content node of a turn carries the ⏺
-// bullet (CC AssistantTextMessage is per-message, not per-line). When no
-// content Message is found (e.g. thinking-only / tool-only drain), the
-// bullet stays pending for a later drain in the same turn. nodes are
-// replaced by value (block.Message is a value type), not mutated in place.
-func markAssistantBullet(nodes []block.RenderNode, pending bool) ([]block.RenderNode, bool) {
-	if !pending {
-		return nodes, false
-	}
-	for i, n := range nodes {
-		msg, ok := n.(block.Message)
-		if !ok || msg.Text == "" || msg.Empty {
-			continue
-		}
-		msg.Speaker = block.SpeakerAssistant
-		nodes[i] = msg
-		return nodes, false // consumed
-	}
-	return nodes, true // still pending
 }
 
 func filterThinkingOnlyEmpty(nodes []block.RenderNode, sawThinking, sawContent bool) []block.RenderNode {

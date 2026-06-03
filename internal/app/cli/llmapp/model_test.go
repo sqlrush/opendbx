@@ -6,6 +6,7 @@ package llmapp
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -77,7 +78,7 @@ func TestModel_SubmitClearsBuffer(t *testing.T) {
 	if final.streaming {
 		t.Errorf("still streaming after drain; want idle")
 	}
-	// scrollback has the user echo + assistant text drained.
+	// scrollback has the user echo + sealed assistant text.
 	if len(final.scrollback) == 0 {
 		t.Errorf("scrollback empty after stream")
 	}
@@ -124,8 +125,8 @@ func TestModel_SawContent_TextThenLength(t *testing.T) {
 	if hasNode(final, "STREAM_EMPTY") {
 		t.Errorf("text+Length wrongly produced STREAM_EMPTY")
 	}
-	if !hasNode(final, "截断") {
-		t.Errorf("text+Length should show truncation marker")
+	if !hasTruncatedMessage(final) {
+		t.Errorf("text+Length should mark the sealed assistant segment truncated")
 	}
 }
 
@@ -378,6 +379,165 @@ func TestModel_LoopAppendsToolBlocks(t *testing.T) {
 	}
 }
 
+func TestModel_LoopTextToolTextOrderAndBullets(t *testing.T) {
+	t.Parallel()
+	reg, err := diagnose.NewRegistry(diagnose.EchoTool{})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	prov := fake.NewScriptedTurns(
+		fake.Turn{
+			Text:     "before tool",
+			ToolUses: []llm.ToolUse{{ID: "c1", Name: "echo", Input: map[string]any{"msg": "ping"}}},
+			Finish:   llm.FinishToolUse,
+		},
+		fake.Turn{Text: "after tool", Finish: llm.FinishStop},
+	)
+	m := New(prov, Options{ModelName: "loop", MaxTokens: 1024, Registry: reg})
+	m = typeAndModel(t, m, "go")
+	final := runStream(t, m)
+
+	want := []string{"message:go", "assistant:before tool", "tooluse", "toolresult", "assistant:after tool"}
+	if got := scrollbackShape(final); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("scrollback order = %v; want %v", got, want)
+	}
+}
+
+func TestModel_PreviewTickViewBetweenDoesNotCommit(t *testing.T) {
+	t.Parallel()
+	m := New(fake.New(), Options{ModelName: "fake"})
+	m.stream = streaming.NewTokenStream(context.Background())
+	if err := m.stream.AppendChunk(streaming.Chunk{Token: "preview\n"}); err != nil {
+		t.Fatalf("AppendChunk: %v", err)
+	}
+
+	mm, _ := m.Update(streamControlMsg{PreviewTick: true})
+	withPreview := mm.(*Model)
+	if len(withPreview.previewNodes) == 0 {
+		t.Fatalf("PreviewTick did not cache preview nodes")
+	}
+	if len(withPreview.scrollback) != 0 {
+		t.Fatalf("PreviewTick must not commit to scrollback; got %d nodes", len(withPreview.scrollback))
+	}
+	if txt := gridText(withPreview.View(80, 6)); !strings.Contains(txt, "preview") {
+		t.Fatalf("View did not render cached preview: %q", txt)
+	}
+	if len(withPreview.scrollback) != 0 {
+		t.Fatalf("View must be read-only; scrollback mutated to %d nodes", len(withPreview.scrollback))
+	}
+
+	mm, _ = withPreview.Update(streamControlMsg{SealedText: "preview\n"})
+	sealed := mm.(*Model)
+	if len(sealed.previewNodes) != 0 {
+		t.Fatalf("SealedText should clear preview nodes; got %d", len(sealed.previewNodes))
+	}
+	if got := scrollbackShape(sealed); strings.Join(got, "|") != "assistant:preview\n" {
+		t.Fatalf("sealed scrollback = %v", got)
+	}
+}
+
+func TestModel_ClosedBeforeControlsKeepsSealedOrder(t *testing.T) {
+	t.Parallel()
+	m := New(fake.New(), Options{ModelName: "fake"})
+	m.stream = streaming.NewTokenStream(context.Background())
+	if err := m.stream.AppendChunk(streaming.Chunk{Token: "stale-from-stream\n"}); err != nil {
+		t.Fatalf("AppendChunk: %v", err)
+	}
+	if err := m.stream.Close(); err != nil && !errors.Is(err, streaming.ErrStreamCancelled) {
+		t.Fatalf("Close: %v", err)
+	}
+
+	controls := []streamControlMsg{
+		{SealedText: "before"},
+		{ToolUse: &llm.ToolUse{ID: "c1", Name: "echo"}},
+		{ToolResult: &llm.ToolResult{ToolUseID: "c1", Content: "ok"}},
+		{SealedText: "after"},
+		{Finish: llm.FinishStop},
+	}
+	cur := program.Model(m)
+	for _, c := range controls {
+		next, _ := cur.Update(c)
+		cur = next
+	}
+	next, _ := cur.Update(streamDoneMsg{})
+	final := next.(*Model)
+
+	want := []string{"assistant:before", "tooluse", "toolresult", "assistant:after"}
+	if got := scrollbackShape(final); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("scrollback order = %v; want %v", got, want)
+	}
+	if hasNode(final, "stale-from-stream") {
+		t.Fatalf("closed TokenStream content leaked into authoritative scrollback: %v", nodeTexts(final))
+	}
+}
+
+// TestModel_CancelMidSegmentRecoversPartial — spec-1.21.1 R-fix H-1: on a user
+// cancel mid-segment the diagnose Loop breaks on emit error WITHOUT emitting
+// EventFinish, so the seal + [已取消] controls are lost. The partial assistant
+// text survives in previewNodes (PreviewTick cache); streamDoneMsg must recover
+// it into permanent scrollback (not lose it) + annotate the cancel.
+func TestModel_CancelMidSegmentRecoversPartial(t *testing.T) {
+	t.Parallel()
+	m := New(fake.New(), Options{ModelName: "fake"})
+	m.stream = streaming.NewTokenStream(context.Background())
+	if err := m.stream.AppendChunk(streaming.Chunk{Token: "partial answer\n"}); err != nil {
+		t.Fatalf("AppendChunk: %v", err)
+	}
+	// PreviewTick caches the partial into previewNodes (TokenStream now drained).
+	mm, _ := m.Update(streamControlMsg{PreviewTick: true})
+	mid := mm.(*Model)
+	if len(mid.previewNodes) == 0 {
+		t.Fatalf("PreviewTick should cache the partial")
+	}
+	// Abrupt end with NO terminal Finish (cancel mid-segment).
+	mm, _ = mid.Update(streamDoneMsg{})
+	final := mm.(*Model)
+
+	if !hasNode(final, "partial answer") {
+		t.Errorf("cancel-mid-segment LOST partial assistant text: %v", nodeTexts(final))
+	}
+	if !hasNode(final, "[已取消]") {
+		t.Errorf("cancel without Finish should annotate [已取消]: %v", nodeTexts(final))
+	}
+	if len(final.previewNodes) != 0 {
+		t.Errorf("streamDone should clear previewNodes; got %d", len(final.previewNodes))
+	}
+	if got := strings.Join(scrollbackShape(final), "|"); !strings.Contains(got, "assistant:") {
+		t.Errorf("recovered partial should carry SpeakerAssistant bullet; shape=%v", got)
+	}
+}
+
+// TestModel_NormalFinishNoSpuriousCancelMarker — guard the H-1 fix does NOT add
+// a spurious [已取消] or duplicate text on the normal (Finish-handled) path.
+func TestModel_NormalFinishNoSpuriousCancelMarker(t *testing.T) {
+	t.Parallel()
+	m := New(fake.New(), Options{ModelName: "fake"})
+	m.stream = streaming.NewTokenStream(context.Background())
+	cur := program.Model(m)
+	for _, c := range []streamControlMsg{
+		{SealedText: "answer"},
+		{Finish: llm.FinishStop},
+	} {
+		next, _ := cur.Update(c)
+		cur = next
+	}
+	next, _ := cur.Update(streamDoneMsg{})
+	final := next.(*Model)
+	if hasNode(final, "[已取消]") {
+		t.Errorf("normal finish must NOT add [已取消]: %v", nodeTexts(final))
+	}
+	// exactly one "answer" node (no duplicate from a spurious final flush)
+	n := 0
+	for _, txt := range nodeTexts(final) {
+		if strings.Contains(txt, "answer") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("expected exactly 1 'answer' node, got %d: %v", n, nodeTexts(final))
+	}
+}
+
 func TestModel_StatusSegments(t *testing.T) {
 	t.Parallel()
 	m := newFakeModel(fake.New())
@@ -400,16 +560,15 @@ func TestModel_HistoryBounded(t *testing.T) {
 	}
 }
 
-// TestModel_AssistantTextDrained is the T-10a HIGH-3 regression: the
-// assistant text must reach scrollback even though the final Drain happens
-// only after the stream is Closed. runStream never calls View, so this
-// fails if the streamDoneMsg handler does not Drain before nil-ing stream.
-func TestModel_AssistantTextDrained(t *testing.T) {
+// TestModel_AssistantTextCommitted is the spec-1.21.1 regression: assistant
+// text must reach scrollback through SealedText control messages even when
+// runStream never calls View.
+func TestModel_AssistantTextCommitted(t *testing.T) {
 	t.Parallel()
 	m := typeAndModel(t, newFakeModel(fake.Scripted("hello world", llm.FinishStop)), "q")
 	final := runStream(t, m)
 	if !hasNode(final, "hello world") {
-		t.Errorf("assistant text not drained into scrollback (HIGH-3); got %v", nodeTexts(final))
+		t.Errorf("assistant text not committed into scrollback; got %v", nodeTexts(final))
 	}
 }
 
@@ -549,6 +708,36 @@ func messageNodeContains(m *Model, substr string) bool {
 		}
 	}
 	return false
+}
+
+func hasTruncatedMessage(m *Model) bool {
+	for _, n := range m.scrollback {
+		if msg, ok := n.(block.Message); ok && msg.Truncated {
+			return true
+		}
+	}
+	return false
+}
+
+func scrollbackShape(m *Model) []string {
+	out := make([]string, 0, len(m.scrollback))
+	for _, n := range m.scrollback {
+		switch v := n.(type) {
+		case block.Message:
+			if v.Speaker == block.SpeakerAssistant {
+				out = append(out, "assistant:"+v.Text)
+			} else {
+				out = append(out, "message:"+v.Text)
+			}
+		case block.ToolUse:
+			out = append(out, "tooluse")
+		case block.ToolResult:
+			out = append(out, "toolresult")
+		case block.Thinking:
+			out = append(out, "thinking")
+		}
+	}
+	return out
 }
 
 func blockCtx() block.Context { return block.Context{Cols: 200, Rows: 10} }
