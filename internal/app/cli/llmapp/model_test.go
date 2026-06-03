@@ -471,6 +471,73 @@ func TestModel_ClosedBeforeControlsKeepsSealedOrder(t *testing.T) {
 	}
 }
 
+// TestModel_CancelMidSegmentRecoversPartial — spec-1.21.1 R-fix H-1: on a user
+// cancel mid-segment the diagnose Loop breaks on emit error WITHOUT emitting
+// EventFinish, so the seal + [已取消] controls are lost. The partial assistant
+// text survives in previewNodes (PreviewTick cache); streamDoneMsg must recover
+// it into permanent scrollback (not lose it) + annotate the cancel.
+func TestModel_CancelMidSegmentRecoversPartial(t *testing.T) {
+	t.Parallel()
+	m := New(fake.New(), Options{ModelName: "fake"})
+	m.stream = streaming.NewTokenStream(context.Background())
+	if err := m.stream.AppendChunk(streaming.Chunk{Token: "partial answer\n"}); err != nil {
+		t.Fatalf("AppendChunk: %v", err)
+	}
+	// PreviewTick caches the partial into previewNodes (TokenStream now drained).
+	mm, _ := m.Update(streamControlMsg{PreviewTick: true})
+	mid := mm.(*Model)
+	if len(mid.previewNodes) == 0 {
+		t.Fatalf("PreviewTick should cache the partial")
+	}
+	// Abrupt end with NO terminal Finish (cancel mid-segment).
+	mm, _ = mid.Update(streamDoneMsg{})
+	final := mm.(*Model)
+
+	if !hasNode(final, "partial answer") {
+		t.Errorf("cancel-mid-segment LOST partial assistant text: %v", nodeTexts(final))
+	}
+	if !hasNode(final, "[已取消]") {
+		t.Errorf("cancel without Finish should annotate [已取消]: %v", nodeTexts(final))
+	}
+	if len(final.previewNodes) != 0 {
+		t.Errorf("streamDone should clear previewNodes; got %d", len(final.previewNodes))
+	}
+	if got := strings.Join(scrollbackShape(final), "|"); !strings.Contains(got, "assistant:") {
+		t.Errorf("recovered partial should carry SpeakerAssistant bullet; shape=%v", got)
+	}
+}
+
+// TestModel_NormalFinishNoSpuriousCancelMarker — guard the H-1 fix does NOT add
+// a spurious [已取消] or duplicate text on the normal (Finish-handled) path.
+func TestModel_NormalFinishNoSpuriousCancelMarker(t *testing.T) {
+	t.Parallel()
+	m := New(fake.New(), Options{ModelName: "fake"})
+	m.stream = streaming.NewTokenStream(context.Background())
+	cur := program.Model(m)
+	for _, c := range []streamControlMsg{
+		{SealedText: "answer"},
+		{Finish: llm.FinishStop},
+	} {
+		next, _ := cur.Update(c)
+		cur = next
+	}
+	next, _ := cur.Update(streamDoneMsg{})
+	final := next.(*Model)
+	if hasNode(final, "[已取消]") {
+		t.Errorf("normal finish must NOT add [已取消]: %v", nodeTexts(final))
+	}
+	// exactly one "answer" node (no duplicate from a spurious final flush)
+	n := 0
+	for _, txt := range nodeTexts(final) {
+		if strings.Contains(txt, "answer") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("expected exactly 1 'answer' node, got %d: %v", n, nodeTexts(final))
+	}
+}
+
 func TestModel_StatusSegments(t *testing.T) {
 	t.Parallel()
 	m := newFakeModel(fake.New())

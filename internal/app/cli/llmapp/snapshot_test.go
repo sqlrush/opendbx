@@ -8,6 +8,7 @@
 package llmapp
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -67,6 +68,22 @@ func TestModel_CancelledRun_KeepsPriorSnapshot(t *testing.T) {
 	out, _ := m.handleControl(streamControlMsg{Finish: llm.FinishCancelled, Snapshot: &report.RunSnapshot{Prompt: "cancelled"}})
 	if got := out.(*Model).lastSnapshot; got != good {
 		t.Errorf("cancelled run overwrote snapshot: %+v", got)
+	}
+
+	// spec-1.21.1 R-fix H-2: a FinishError wrapping context.Canceled is ALSO a
+	// cancel (it renders [已取消]) and must NOT overwrite the snapshot either —
+	// the marker render + snapshot guard share isCancelledFinish.
+	outC, _ := m.handleControl(streamControlMsg{
+		Finish:   llm.FinishError,
+		Err:      context.Canceled,
+		Snapshot: &report.RunSnapshot{Prompt: "err-cancelled"},
+	})
+	mc := outC.(*Model)
+	if got := mc.lastSnapshot; got != good {
+		t.Errorf("FinishError+context.Canceled overwrote snapshot: %+v", got)
+	}
+	if !hasNode(mc, "[已取消]") {
+		t.Errorf("FinishError+context.Canceled should render [已取消]: %v", nodeTexts(mc))
 	}
 
 	out2, _ := m.handleControl(streamControlMsg{Finish: llm.FinishStop, Snapshot: &report.RunSnapshot{Prompt: "done"}})

@@ -104,6 +104,12 @@ type Model struct {
 	sawContent   bool   // any visible content this turn (R2 H-5 / R2.2 HIGH-2)
 	sawThinking  bool   // any thinking-channel token this turn (spec-1.20.2 D-5)
 	thinkingBuf  string // accumulated thinking text when strip_think=false
+	// finishHandled marks that a terminal Finish control was processed this
+	// turn (spec-1.21.1 R-fix H-1). When false at streamDoneMsg, the stream
+	// ended abruptly (user cancel mid-segment: diagnose Loop breaks on emit
+	// error without emitting EventFinish) — streamDoneMsg then recovers the
+	// residual partial text + annotates the cancel.
+	finishHandled bool
 
 	// toolUseNames joins ToolResult.ToolUseID → ToolUse.Name within a
 	// single submit (spec-1.21 D-6 / spec-1.9b R3 HIGH-3: rendering a
@@ -223,11 +229,33 @@ func (m *Model) Update(msg scheduler.Msg) (program.Model, scheduler.Cmd) {
 		return m.handleReportWriteFailed(v)
 	case streamDoneMsg:
 		next := *m
-		// spec-1.21.1: authoritative text is committed via SealedText
-		// control messages. A final Drain here is cleanup only, so a closed
-		// TokenStream cannot append stale or reordered blocks into scrollback.
+		// spec-1.21.1 R-fix H-1 — final flush. On the normal path the
+		// authoritative text was committed via SealedText (which cleared
+		// previewNodes + drain-discarded the TokenStream), so both are empty here.
+		// On a cancel/error path where the seal + EventFinish were lost to ctx
+		// cancellation (diagnose loop.go breaks on emit error WITHOUT emitting
+		// EventFinish), the partial assistant text survives in previewNodes (the
+		// PreviewTick-accumulated cache) + a possible final partial line flushed
+		// by TokenStream.Close — commit it so it is not lost (restores the
+		// pre-1.21.1 final-drain-preserves-text behavior; codex H-1). The
+		// recovered segment keeps its ⏺ bullet.
+		var residual []block.RenderNode
+		residual = append(residual, next.previewNodes...)
 		if next.stream != nil {
-			_ = next.stream.Drain()
+			residual = append(residual, next.stream.Drain()...)
+		}
+		residual = filterThinkingOnlyEmpty(residual, next.sawThinking, next.sawContent)
+		if len(residual) > 0 {
+			markFirstAssistant(residual)
+			next.scrollback = appendNodes(next.scrollback, residual)
+			next.sawContent = true
+		}
+		if !next.finishHandled {
+			// No terminal Finish was processed → the stream ended abruptly
+			// (user cancel mid-segment). Annotate so the screen is not silently
+			// truncated (the [已取消] marker would otherwise be lost with the
+			// dropped EventFinish; codex H-1).
+			next.scrollback = appendNode(next.scrollback, block.Message{Text: "[已取消]"})
 		}
 		next.previewNodes = nil
 		next.stream = nil
@@ -237,6 +265,7 @@ func (m *Model) Update(msg scheduler.Msg) (program.Model, scheduler.Cmd) {
 		next.sawThinking = false
 		next.thinkingBuf = ""
 		next.sealedTruncated = false
+		next.finishHandled = false
 		return &next, nil
 	}
 	return m, nil
@@ -312,6 +341,7 @@ func (m *Model) submit() (program.Model, scheduler.Cmd) {
 	next.thinkingBuf = ""
 	next.previewNodes = nil
 	next.sealedTruncated = false
+	next.finishHandled = false // spec-1.21.1 R-fix H-1
 	next.history = appendBounded(m.history, llm.Message{
 		Role:    llm.RoleUser,
 		Content: []llm.ContentBlock{{Type: llm.BlockText, Text: userText}},
@@ -420,6 +450,7 @@ func (m *Model) handleControl(msg streamControlMsg) (program.Model, scheduler.Cm
 		next.scrollback = appendNode(sb, tr)
 	case msg.Finish.Terminal():
 		next.sawContent = m.sawContent
+		next.finishHandled = true // spec-1.21.1 R-fix H-1
 		next.scrollback = next.appendFinishNode(msg)
 		if next.stream != nil {
 			_ = next.stream.Drain()
@@ -427,8 +458,11 @@ func (m *Model) handleControl(msg streamControlMsg) (program.Model, scheduler.Cm
 		next.previewNodes = nil
 		// spec-1.23 D-3: adopt the sealed run snapshot for /report. A cancelled
 		// run does NOT overwrite a prior good snapshot ("last completed", not
-		// "last attempted" — architect L-2).
-		if msg.Snapshot != nil && msg.Finish != llm.FinishCancelled {
+		// "last attempted" — architect L-2). spec-1.21.1 R-fix H-2: use the
+		// SAME cancel predicate as the marker render (appendFinishNode) so a
+		// FinishError+context.Canceled shape — which renders [已取消] — also does
+		// not overwrite the snapshot (previously only FinishCancelled was excluded).
+		if msg.Snapshot != nil && !isCancelledFinish(msg) {
 			next.lastSnapshot = msg.Snapshot
 		}
 	}
@@ -438,6 +472,34 @@ func (m *Model) handleControl(msg streamControlMsg) (program.Model, scheduler.Cm
 // armReader returns a Cmd that emits readControlMsg so Update re-pulls.
 func (m *Model) armReader() scheduler.Cmd {
 	return func() scheduler.Msg { return readControlMsg{} }
+}
+
+// isCancelledFinish reports whether a finish control message represents a
+// user/context cancellation. Both a literal FinishCancelled AND a
+// FinishError wrapping context.Canceled count (some providers surface a
+// cancel as the latter). spec-1.21.1 R-fix H-2: the marker render
+// (appendFinishNode) and the /report snapshot-adoption guard MUST use this
+// same predicate, else a FinishError+context.Canceled renders [已取消] yet
+// still overwrites lastSnapshot, breaking "last completed not last attempted".
+func isCancelledFinish(msg streamControlMsg) bool {
+	return msg.Finish == llm.FinishCancelled ||
+		(msg.Finish == llm.FinishError && errors.Is(msg.Err, context.Canceled))
+}
+
+// markFirstAssistant tags the first visible-content Message in nodes with
+// SpeakerAssistant so a residual (un-sealed) text segment recovered at
+// streamDoneMsg still carries the ⏺ bullet on its first line. spec-1.21.1
+// R-fix H-1. Replaces the element by value (Message is a value type).
+func markFirstAssistant(nodes []block.RenderNode) {
+	for i, n := range nodes {
+		msg, ok := n.(block.Message)
+		if !ok || msg.Text == "" || msg.Empty {
+			continue
+		}
+		msg.Speaker = block.SpeakerAssistant
+		nodes[i] = msg
+		return
+	}
 }
 
 // appendFinishNode appends a terminal status/marker node for the finish
@@ -476,11 +538,12 @@ func (m *Model) appendFinishNode(msg streamControlMsg) []block.RenderNode {
 	// for a genuinely empty non-Stop end (R2.2 case-order fix — the
 	// !sawContent fallback must not shadow Error/Length).
 	switch {
-	case msg.Finish == llm.FinishCancelled || (msg.Finish == llm.FinishError && errors.Is(msg.Err, context.Canceled)):
+	case isCancelledFinish(msg):
 		// T-10a MED: a deliberate user cancel gets its own marker so it is
 		// not silently blank nor mislabeled STREAM_EMPTY (checked before the
 		// !sawContent fallback). msg.Err.Error() is NOT rendered here — the
-		// cancel is expected, not an error to surface.
+		// cancel is expected, not an error to surface. spec-1.21.1 R-fix H-2:
+		// shared predicate with snapshot adoption.
 		return appendNode(base, block.Message{Text: "[已取消]"})
 	case msg.Finish == llm.FinishError && msg.Err != nil:
 		// NB: the SDK's apierror.Error() formats METHOD/URL/STATUS/body only —

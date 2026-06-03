@@ -23,6 +23,7 @@ package llmapp
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/sqlrush/opendbx/internal/app/cli/render/scheduler"
@@ -53,13 +54,13 @@ func makeEmit(ts *streaming.TokenStream, ctrl chan<- streamControlMsg, stripThin
 	// diagnose.Loop producer goroutine in event order, so segBuf is
 	// intentionally goroutine-local and unsynchronized. Do not reuse this
 	// closure from multiple producers without re-specifying ordering.
-	var segBuf string
+	var segBuf strings.Builder // spec-1.21.1 R-fix MED-1: O(n) accumulation (was string concat)
 	seal := func(ctx context.Context, truncated bool) error {
-		if segBuf == "" {
+		if segBuf.Len() == 0 {
 			return nil
 		}
-		text := segBuf
-		segBuf = ""
+		text := segBuf.String()
+		segBuf.Reset()
 		return send(ctx, streamControlMsg{SealedText: text, SealedTruncated: truncated})
 	}
 
@@ -76,7 +77,7 @@ func makeEmit(ts *streaming.TokenStream, ctrl chan<- streamControlMsg, stripThin
 			if e.Text == "" {
 				return nil
 			}
-			segBuf += e.Text
+			segBuf.WriteString(e.Text)
 			_ = ts.AppendChunk(streaming.Chunk{Token: e.Text})
 			sb.addText(e.Text) // spec-1.23 D-3: accumulate the visible final answer
 			return send(ctx, streamControlMsg{PreviewTick: true})
@@ -117,9 +118,10 @@ func makeEmit(ts *streaming.TokenStream, ctrl chan<- streamControlMsg, stripThin
 // loopStartCmd launches a diagnose.Loop.Run on the worker pool. The
 // goroutine drains the loop to terminal, then closes ctrl and ts so the
 // reader-Cmd observes a done signal (mirrors the spec-1.20 consumeStream
-// teardown order — close ts BEFORE ctrl is the convention so the
-// streamDoneMsg only performs cleanup; authoritative text has already
-// travelled through ctrl as SealedText.
+// teardown order — close ts BEFORE ctrl is the convention). On the normal
+// path authoritative text has already travelled through ctrl as SealedText, so
+// streamDoneMsg only performs cleanup; on a cancel mid-segment streamDoneMsg
+// recovers the residual partial text from previewNodes (spec-1.21.1 R-fix H-1).
 func loopStartCmd(
 	ctx context.Context,
 	loop *diagnose.Loop,
