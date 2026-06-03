@@ -2,16 +2,17 @@
 //
 // Author: sqlrush
 
-// File loop_adapter.go — bridges diagnose.Loop events into the existing
-// llmapp control plumbing (streamControlMsg + readControlMsg + ctrl
-// channel), preserving the spec-1.20 R2 CRIT-2 token-vs-control split:
+// File loop_adapter.go — bridges diagnose.Loop events into llmapp's
+// control plumbing (streamControlMsg + readControlMsg + ctrl channel).
+// spec-1.21.1 fixes the old token-vs-control merge race by making text
+// authoritative through the same ctrl FIFO as tool events:
 //
-//   - EventText visible  → TokenStream.AppendChunk + streamControlMsg
+//   - EventText visible  → segBuf + TokenStream preview + PreviewTick
 //   - EventText thinking → streamControlMsg{ThinkingToken}, never TokenStream
-//   - EventToolCall  → streamControlMsg carrying *llm.ToolUse
-//   - EventToolResult → streamControlMsg carrying *llm.ToolResult
-//   - EventFinish    → streamControlMsg carrying Finish + TermCode + Err
-//   - EventTurnStart → no-op on the UI (turn boundaries are not yet
+//   - EventToolCall     → seal visible segBuf, then *llm.ToolUse
+//   - EventToolResult   → seal visible segBuf, then *llm.ToolResult
+//   - EventFinish       → seal visible segBuf, then Finish + TermCode + Err
+//   - EventTurnStart    → no-op on the UI (turn boundaries are not yet
 //     rendered; reserved for future progress indicators)
 //
 // Backpressure parity (spec-1.21 T-2.1 HIGH-2 / D-6): every ctrl send
@@ -47,6 +48,21 @@ func makeEmit(ts *streaming.TokenStream, ctrl chan<- streamControlMsg, stripThin
 			return ctx.Err()
 		}
 	}
+
+	// spec-1.21.1 segment-mode contract: makeEmit is called by the
+	// diagnose.Loop producer goroutine in event order, so segBuf is
+	// intentionally goroutine-local and unsynchronized. Do not reuse this
+	// closure from multiple producers without re-specifying ordering.
+	var segBuf string
+	seal := func(ctx context.Context, truncated bool) error {
+		if segBuf == "" {
+			return nil
+		}
+		text := segBuf
+		segBuf = ""
+		return send(ctx, streamControlMsg{SealedText: text, SealedTruncated: truncated})
+	}
+
 	return func(ctx context.Context, e diagnose.Event) error {
 		switch e.Kind {
 		case diagnose.EventText:
@@ -57,27 +73,29 @@ func makeEmit(ts *streaming.TokenStream, ctrl chan<- streamControlMsg, stripThin
 				}
 				return send(ctx, msg)
 			}
-			visible := e.Text != ""
-			if visible {
-				_ = ts.AppendChunk(streaming.Chunk{Token: e.Text})
-				sb.addText(e.Text) // spec-1.23 D-3: accumulate the visible final answer
+			if e.Text == "" {
+				return nil
 			}
-			return send(ctx, streamControlMsg{VisibleContent: visible})
+			segBuf += e.Text
+			_ = ts.AppendChunk(streaming.Chunk{Token: e.Text})
+			sb.addText(e.Text) // spec-1.23 D-3: accumulate the visible final answer
+			return send(ctx, streamControlMsg{PreviewTick: true})
 		case diagnose.EventToolCall:
+			if err := seal(ctx, false); err != nil {
+				return err
+			}
 			sb.addToolCall(e.ToolUse) // spec-1.23 D-3
 			return send(ctx, streamControlMsg{ToolUse: e.ToolUse})
 		case diagnose.EventToolResult:
+			if err := seal(ctx, false); err != nil {
+				return err
+			}
 			sb.addToolResult(e.ToolResult, e.Cached) // spec-1.23 D-3
 			return send(ctx, streamControlMsg{ToolResult: e.ToolResult, Cached: e.Cached})
 		case diagnose.EventFinish:
-			// Push a terminal chunk so the TokenStream's per-finish
-			// branches (Length truncation marker / cancel state) keep
-			// working under the new emit path (spec-1.6 R2.2 / spec-1.20
-			// thinking-only Empty placeholder).
-			_ = ts.AppendChunk(streaming.Chunk{
-				FinishReason: mapToRender(e.Finish),
-				Err:          e.Err,
-			})
+			if err := seal(ctx, e.Finish == llm.FinishLength); err != nil {
+				return err
+			}
 			// spec-1.23 D-3: seal the run snapshot atomically with the finish
 			// and ride it on this same control msg — no separate post-Run send,
 			// so no channel-close race (three-route T-2 收敛 fix).
@@ -100,7 +118,8 @@ func makeEmit(ts *streaming.TokenStream, ctrl chan<- streamControlMsg, stripThin
 // goroutine drains the loop to terminal, then closes ctrl and ts so the
 // reader-Cmd observes a done signal (mirrors the spec-1.20 consumeStream
 // teardown order — close ts BEFORE ctrl is the convention so the
-// streamDoneMsg drain sees a fully-flushed TokenStream).
+// streamDoneMsg only performs cleanup; authoritative text has already
+// travelled through ctrl as SealedText.
 func loopStartCmd(
 	ctx context.Context,
 	loop *diagnose.Loop,

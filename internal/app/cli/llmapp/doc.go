@@ -14,11 +14,12 @@
 // ctrl chan (pure) and returns loopStartCmd; the goroutine + diagnose.
 // Loop.Run + provider IO + cancel fire live in Cmds / Cleanup.
 //
-// text/control split (R2 CRIT-2 + spec-1.21 D-6 union extension):
-// renderable text → TokenStream (Drained in View); control
-// (VisibleContent / ThinkingToken + *llm.ToolUse / *llm.ToolResult / Finish +
-// TermCode) → ctrl chan → reader-Cmd → Update. Thinking / tool events
-// never enter the FROZEN streaming.Chunk.
+// text/control split (R2 CRIT-2 + spec-1.21.1 ordering fix):
+// renderable text is previewed through TokenStream but committed through
+// sealed text control messages in the same ctrl FIFO as tool events.
+// PreviewTick wakes Update to refresh previewNodes; ThinkingToken,
+// *llm.ToolUse, *llm.ToolResult, Finish and TermCode remain control-only.
+// Thinking / tool events never enter the FROZEN streaming.Chunk.
 //
 // cli-tree root (peer to cmd/opendbx); not part of the §3.1 render DAG.
 package llmapp

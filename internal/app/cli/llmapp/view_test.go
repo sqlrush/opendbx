@@ -45,15 +45,15 @@ func TestModel_View_PreservesWideRunes(t *testing.T) {
 	}
 }
 
-func TestModel_View_DrainsInFlight(t *testing.T) {
+func TestModel_View_InFlightPreviewNoPanic(t *testing.T) {
 	t.Parallel()
 	// Submit with a no-finish chunk so a stream is in flight; View should
-	// Drain it without panic.
+	// render without mutating or draining preview state.
 	m := typeAndModel(t, newFakeModel(fake.New(llm.Chunk{Token: "x"})), "q")
 	mm, cmd := m.Update(keyAction(terminal.KeyEnter, 0))
 	_ = cmd
 	streamingModel := mm.(*Model)
-	_ = streamingModel.View(80, 10) // exercises the Drain-in-View path
+	_ = streamingModel.View(80, 10)
 }
 
 func TestModel_View_SmallGrid(t *testing.T) {
