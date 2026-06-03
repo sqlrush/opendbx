@@ -26,6 +26,7 @@ import (
 
 	// Side-effect imports: load every package that calls errcode.Register
 	// so the registry is populated before we read it.
+	_ "github.com/sqlrush/opendbx/internal/app/skills" // spec-2.1 D-6: SKILL.* codes
 	_ "github.com/sqlrush/opendbx/internal/entrypoints"
 	"github.com/sqlrush/opendbx/internal/platform/errcode"
 	_ "github.com/sqlrush/opendbx/internal/platform/logger"
