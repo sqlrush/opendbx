@@ -139,6 +139,20 @@
       "expiry": "2026-08-14",
       "reason": "Go stdlib vuln advisory landed 2026-05-15 (post spec-0.11 FROZEN). opendbx Stage 0 locks Go 1.23 per spec-0.9 R2. Triage and patch-bump at Stage 1 toolchain review; reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
       "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-05-15)"
+    },
+    {
+      "osv_id": "GO-2026-5037",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory surfaced in govulncheck on 2026-06-03 against the project-pinned Go 1.24 toolchain. This PR does not change stdlib/toolchain use; triage and patch-bump at the next toolchain review. Reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-06-03; PR #91 security job)"
+    },
+    {
+      "osv_id": "GO-2026-5039",
+      "module": "stdlib",
+      "expiry": "2026-08-14",
+      "reason": "Go stdlib vuln advisory surfaced in govulncheck on 2026-06-03 against the project-pinned Go 1.24 toolchain. This PR does not change stdlib/toolchain use; triage and patch-bump at the next toolchain review. Reachability not verified for this code path. Batch exemption window matches GO-2026-4602.",
+      "spec_ref": "spec-0.9-ci-github-actions.md § 3.1 T-3.5 (batch 2026-06-03; PR #91 security job)"
     }
   ]
 }
