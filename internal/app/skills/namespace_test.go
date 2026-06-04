@@ -101,6 +101,66 @@ func TestResolve_DoesNotMutateInput(t *testing.T) {
 	}
 }
 
+// TestResolve_OutputIsolatedFromInput — review HIGH: mutating a returned
+// Skill's Extra map must NOT reach back into the input slice.
+func TestResolve_OutputIsolatedFromInput(t *testing.T) {
+	t.Parallel()
+	input := []Skill{
+		{Schema: Schema{Name: "a", Description: "d", Extra: map[string]any{"k": map[string]any{"deep": 1}}}, Source: SkillSource{Precedence: 2}},
+		{Schema: Schema{Name: "a", Description: "d", Extra: map[string]any{"k": 9}}, Source: SkillSource{Precedence: 1}},
+	}
+	res := Resolve(input)
+	// Mutate the winner's Extra (top-level + nested) through the output.
+	res.Active[0].Schema.Extra["injected"] = 999
+	if nested, ok := res.Active[0].Schema.Extra["k"].(map[string]any); ok {
+		nested["deep"] = 42
+	}
+	// Mutate a shadowed copy too.
+	if len(res.Shadowed) > 0 {
+		res.Shadowed[0].Schema.Extra["injected2"] = 7
+	}
+	if _, leaked := input[0].Schema.Extra["injected"]; leaked {
+		t.Error("output mutation leaked into input[0].Extra (top-level)")
+	}
+	if nested, ok := input[0].Schema.Extra["k"].(map[string]any); ok {
+		if nested["deep"] != 1 {
+			t.Errorf("output mutation leaked into input nested Extra: %v", nested["deep"])
+		}
+	}
+	if _, leaked := input[1].Schema.Extra["injected2"]; leaked {
+		t.Error("shadowed mutation leaked into input[1].Extra")
+	}
+}
+
+func TestConflict_Err(t *testing.T) {
+	t.Parallel()
+	res := Resolve([]Skill{sk("dup", 5), sk("dup", 5)})
+	if len(res.Conflicts) != 1 {
+		t.Fatalf("want 1 conflict, got %d", len(res.Conflicts))
+	}
+	err := res.Conflicts[0].Err()
+	if err == nil {
+		t.Fatal("unresolvable conflict must yield an error")
+	}
+	var ec interface{ Code() string }
+	if !asCode(err, &ec) || ec.Code() != ErrNamespaceConflict.Code() {
+		t.Errorf("Conflict.Err code = %v; want %s", err, ErrNamespaceConflict.Code())
+	}
+	// A resolved shadow yields no error.
+	shadow := Resolve([]Skill{sk("x", 1), sk("x", 2)})
+	if shadow.Conflicts[0].Err() != nil {
+		t.Errorf("shadowed conflict must not error: %v", shadow.Conflicts[0].Err())
+	}
+}
+
+func asCode(err error, target *interface{ Code() string }) bool {
+	if c, ok := err.(interface{ Code() string }); ok {
+		*target = c
+		return true
+	}
+	return false
+}
+
 func deepCopySkills(in []Skill) []Skill {
 	out := make([]Skill, len(in))
 	for i, s := range in {

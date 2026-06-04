@@ -140,9 +140,42 @@ func TestParse_EmptyFrontmatter(t *testing.T) {
 
 func TestParse_ParseError(t *testing.T) {
 	t.Parallel()
-	// Invalid YAML: a mapping value that is also a key (tab indent / bad).
-	_, err := Parse([]byte("---\nname: : :\n  - broken\n---\n"), SkillSource{})
+	cases := map[string]string{
+		// Invalid YAML syntax (caught at yaml.Unmarshal).
+		"bad syntax": "---\nname: : :\n  - broken\n---\n",
+		// Valid YAML but not a mapping root (caught at root.Decode).
+		"sequence not mapping": "---\n- a\n- b\n---\n",
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := Parse([]byte(in), SkillSource{})
+			assertCode(t, err, ErrParseError.Code())
+		})
+	}
+}
+
+// TestParse_ExtraDecodeError — review HIGH: an undecodable extra-field value
+// (e.g. invalid !!binary) must NOT be silently dropped; Parse returns
+// SKILL.PARSE_ERROR (Q6 preservation / 规则 7 non-silent).
+func TestParse_ExtraDecodeError(t *testing.T) {
+	t.Parallel()
+	content := "---\nname: x\ndescription: d\nbad: !!binary \"not-valid-base64\"\n---\nbody\n"
+	_, err := Parse([]byte(content), SkillSource{})
 	assertCode(t, err, ErrParseError.Code())
+}
+
+// TestParse_FenceTrailingWhitespace — a closing fence with trailing spaces/
+// tabs still closes (review: `---  ` is valid); leading whitespace does not.
+func TestParse_FenceTrailingWhitespace(t *testing.T) {
+	t.Parallel()
+	sk, err := Parse([]byte("---\nname: x\ndescription: d\n---  \t\nbody\n"), SkillSource{})
+	if err != nil {
+		t.Fatalf("trailing-ws fence should close: %v", err)
+	}
+	if sk.Schema.Name != "x" || sk.Body != "body\n" {
+		t.Errorf("unexpected parse: name=%q body=%q", sk.Schema.Name, sk.Body)
+	}
 }
 
 func TestParse_TooLarge(t *testing.T) {

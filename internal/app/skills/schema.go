@@ -47,10 +47,14 @@ func (s Schema) AllowedToolsList() []string {
 	return out
 }
 
+// knownKeys is the set of frontmatter keys that map to an explicit Schema
+// field, computed once at init (review MED: was recomputed per Parse).
+var knownKeys = knownSchemaKeys()
+
 // knownSchemaKeys returns the set of yaml frontmatter keys that map to an
 // explicit Schema field. Derived via reflection over the yaml struct tags so
-// it cannot drift from the struct definition (review HIGH-1: drift-proof
-// known-key set). The yaml:"-" Extra field is excluded.
+// it cannot drift from the struct definition (review: drift-proof known-key
+// set). The yaml:"-" Extra field is excluded.
 func knownSchemaKeys() map[string]bool {
 	t := reflect.TypeOf(Schema{})
 	keys := make(map[string]bool, t.NumField())

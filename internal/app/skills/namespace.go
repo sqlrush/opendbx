@@ -19,7 +19,11 @@
 
 package skills
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/sqlrush/opendbx/internal/platform/errcode"
+)
 
 // ConflictKind distinguishes a legal shadow from an unresolvable duplicate.
 type ConflictKind int
@@ -39,6 +43,17 @@ type Conflict struct {
 	Shadowed []Skill // the losers (Shadowed) or the full ambiguous set (Unresolvable)
 }
 
+// Err returns a SKILL.NAMESPACE_CONFLICT error for an unresolvable conflict,
+// or nil for a legally resolved shadow. spec-2.2 calls this when it chooses to
+// fail on ambiguous skills (spec-2.1 only reports them as data).
+func (c Conflict) Err() error {
+	if c.Kind != ConflictUnresolvable {
+		return nil
+	}
+	return errcode.Newf(ErrNamespaceConflict.Code(),
+		"skill %q is defined %d times at the same precedence", c.Name, len(c.Shadowed))
+}
+
 // Resolution is the outcome of Resolve.
 type Resolution struct {
 	Active    []Skill    // one winner per name (sorted by name)
@@ -54,7 +69,7 @@ func Resolve(skills []Skill) Resolution {
 	for _, name := range order {
 		group := groups[name]
 		if len(group) == 1 {
-			res.Active = append(res.Active, group[0])
+			res.Active = append(res.Active, cloneSkill(group[0]))
 			continue
 		}
 		top, tie := topByPrecedence(group)
@@ -64,15 +79,15 @@ func Resolve(skills []Skill) Resolution {
 				Name:     name,
 				Kind:     ConflictUnresolvable,
 				Winner:   nil,
-				Shadowed: cloneSkills(group),
+				Shadowed: cloneSkillSlice(group),
 			})
 			continue
 		}
-		winner := group[top]
+		winner := cloneSkill(group[top])
 		losers := make([]Skill, 0, len(group)-1)
 		for i, s := range group {
 			if i != top {
-				losers = append(losers, s)
+				losers = append(losers, cloneSkill(s))
 			}
 		}
 		res.Active = append(res.Active, winner)
@@ -130,10 +145,47 @@ func topByPrecedence(group []Skill) (idx int, tie bool) {
 	return best, count > 1
 }
 
-// cloneSkills returns a shallow copy of the slice (new backing array). Skill
-// values are copied; their Extra maps are shared but never mutated here.
-func cloneSkills(in []Skill) []Skill {
+// cloneSkillSlice deep-copies every Skill so the result shares no Extra map
+// with the input (review HIGH: Resolve output must not alias caller input).
+func cloneSkillSlice(in []Skill) []Skill {
 	out := make([]Skill, len(in))
-	copy(out, in)
+	for i, s := range in {
+		out[i] = cloneSkill(s)
+	}
 	return out
+}
+
+// cloneSkill returns a copy of s with a deep-copied Schema.Extra so a caller
+// mutating the returned skill cannot reach back into the input (规则 12).
+func cloneSkill(s Skill) Skill {
+	s.Schema.Extra = deepCopyExtra(s.Schema.Extra)
+	return s
+}
+
+// deepCopyExtra recursively copies a frontmatter Extra map (values are the
+// map[string]any / []any / scalar shapes yaml.Node.Decode produces).
+func deepCopyExtra(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = deepCopyValue(v)
+	}
+	return out
+}
+
+func deepCopyValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		return deepCopyExtra(t)
+	case []any:
+		s := make([]any, len(t))
+		for i, e := range t {
+			s[i] = deepCopyValue(e)
+		}
+		return s
+	default:
+		return v // scalars are immutable
+	}
 }

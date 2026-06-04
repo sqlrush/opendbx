@@ -57,14 +57,16 @@ func Parse(content []byte, src SkillSource) (Skill, error) {
 		return Skill{}, errcode.Wrap(ErrParseError.Code(), uerr, "", "")
 	}
 
+	// Depth check on the full document node (its DocumentNode branch recurses
+	// into Content); reject anti-bomb nesting before any further work.
+	if depth := yamlNodeDepth(&node); depth >= maxYAMLDepth {
+		return Skill{}, errcode.Newf(ErrTooDeep.Code(),
+			"frontmatter YAML nesting depth %d >= %d", depth, maxYAMLDepth)
+	}
+
 	root := &node
 	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
 		root = node.Content[0]
-	}
-
-	if depth := yamlNodeDepth(root); depth >= maxYAMLDepth {
-		return Skill{}, errcode.Newf(ErrTooDeep.Code(),
-			"frontmatter YAML nesting depth %d >= %d", depth, maxYAMLDepth)
 	}
 
 	var schema Schema
@@ -73,7 +75,12 @@ func Parse(content []byte, src SkillSource) (Skill, error) {
 			return Skill{}, errcode.Wrap(ErrParseError.Code(), derr, "", "")
 		}
 	}
-	schema.Extra = collectExtra(root)
+	extra, eerr := collectExtra(root)
+	if eerr != nil {
+		// errcode-lint:exempt -- spec-2.1 R-fix: collectExtra returns SKILL.PARSE_ERROR errcode.
+		return Skill{}, eerr
+	}
+	schema.Extra = extra
 
 	return Skill{Schema: schema, Body: string(body), Source: src}, nil
 }
@@ -113,36 +120,42 @@ func readLine(b []byte, off int) (line []byte, next int) {
 	return b[off : off+rel], off + rel + 1
 }
 
-// isFence reports whether line is exactly "---" at column 0 (CRLF tolerated).
-// Any leading whitespace makes it != "---", so the column-0 guard is implicit.
+// isFence reports whether line is the "---" fence at column 0. Trailing
+// whitespace and CR are tolerated (review: `---  ` is a valid close), but
+// LEADING whitespace is not — that keeps the column-0 guard that prevents a
+// `---` inside an (always-indented) block scalar from false-matching. Note:
+// opendbx recognises only the literal `---` fence (the SKILL.md frontmatter
+// convention), not the YAML `...` document-end marker or `--- # comment`.
 func isFence(line []byte) bool {
-	return bytes.Equal(bytes.TrimSuffix(line, []byte{'\r'}), fenceLine)
+	return bytes.Equal(bytes.TrimRight(line, " \t\r"), fenceLine)
 }
 
 // collectExtra gathers every top-level frontmatter key that does NOT map to an
-// explicit Schema field into a map (forward-compat; never dropped, review
-// HIGH-1). Returns nil when there are no extra keys.
-func collectExtra(root *yaml.Node) map[string]any {
+// explicit Schema field into a map (forward-compat; never dropped — Q6=B /
+// 规则 7). A value that cannot decode is a malformed frontmatter and returns
+// SKILL.PARSE_ERROR rather than being silently dropped (review HIGH: silent
+// data loss). Returns (nil, nil) when there are no extra keys.
+func collectExtra(root *yaml.Node) (map[string]any, error) {
+	var extra map[string]any // nil when there are no extra keys (not nilnil: paired with a typed value)
 	if root == nil || root.Kind != yaml.MappingNode {
-		return nil
+		return extra, nil
 	}
-	known := knownSchemaKeys()
-	var extra map[string]any
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		key := root.Content[i].Value
-		if known[key] {
+		if knownKeys[key] {
 			continue
 		}
 		var v any
 		if err := root.Content[i+1].Decode(&v); err != nil {
-			continue // best-effort: a value we cannot decode is simply skipped
+			return nil, errcode.Wrap(ErrParseError.Code(), err,
+				"frontmatter field "+key+" has an undecodable value", "")
 		}
 		if extra == nil {
 			extra = make(map[string]any)
 		}
 		extra[key] = v
 	}
-	return extra
+	return extra, nil
 }
 
 // yamlNodeDepth returns the maximum container-nesting depth of the node tree.
