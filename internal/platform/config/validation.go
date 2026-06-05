@@ -92,6 +92,7 @@ func validateCrossField(cfg *Config, errs *ValidationErrors) {
 	}
 
 	validateConnections(cfg, errs)
+	validatePlugins(cfg, errs) // spec-2.2 D-6: skill search path traversal + count guard
 }
 
 // validateConnections enforces the spec-1.19 ConnectionConfig cross-field

@@ -85,4 +85,27 @@ var (
 		"SKILL.md failed one or more validation rules",
 		"fix the reported field violations; see the wrapped details for each",
 	)
+
+	// --- spec-2.2 discovery (filesystem I/O) ---
+
+	// ErrRootUnreadable — a skill root directory could not be read (permission,
+	// is-a-symlink, is-a-file, or a Required root is absent).
+	ErrRootUnreadable = errcode.Register(
+		"SKILL.ROOT_UNREADABLE",
+		"skill root directory is not readable",
+		"check the directory exists and is a non-symlink dir with read permission; or remove it from skill_search_paths",
+	)
+	// ErrFileUnreadable — a SKILL.md file could not be stat'd or read.
+	ErrFileUnreadable = errcode.Register(
+		"SKILL.FILE_UNREADABLE",
+		"SKILL.md file could not be read",
+		"check the file permissions; or remove the file",
+	)
+	// ErrRootTooManyFiles — a skill root holds more files than the scan cap;
+	// the extra files were skipped (DoS guard).
+	ErrRootTooManyFiles = errcode.Register(
+		"SKILL.ROOT_TOO_MANY_FILES",
+		"skill root has more files than the scan limit",
+		"reduce the number of skill files in the directory; the cap is a DoS guard",
+	)
 )

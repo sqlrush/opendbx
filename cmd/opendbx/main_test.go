@@ -145,6 +145,22 @@ func TestGolden(t *testing.T) {
 	}
 }
 
+// TestPluginListRunsDiscovery — `plugin list` runs a real (spec-2.2) skill
+// discovery and renders the summary, not a stub. The "active (" header is
+// always present regardless of how many skills exist in the environment.
+func TestPluginListRunsDiscovery(t *testing.T) {
+	stdout, _, err := runCmd(t, "plugin", "list")
+	if err != nil {
+		t.Fatalf("plugin list: %v", err)
+	}
+	if !strings.Contains(stdout, "active (") {
+		t.Errorf("plugin list should render a discovery summary, got: %q", stdout)
+	}
+	if strings.Contains(stdout, "not yet implemented") {
+		t.Errorf("plugin list is implemented now; got stub: %q", stdout)
+	}
+}
+
 func TestSubcommandStubs(t *testing.T) {
 	subs := []struct {
 		args []string
@@ -154,7 +170,6 @@ func TestSubcommandStubs(t *testing.T) {
 		{[]string{"cluster"}, "spec-9.X"},
 		{[]string{"admin", "migrate"}, "spec-4.8-version-migrations"},
 		{[]string{"mcp", "list"}, "spec-2.5"},
-		{[]string{"plugin", "list"}, "spec-2.1-skill-md-format"},
 		{[]string{"auth", "status"}, "Stage 2+"},
 		{[]string{"doctor"}, "Stage 4+"},
 		{[]string{"update"}, "spec-4.7-install"},
