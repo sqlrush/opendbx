@@ -8,7 +8,7 @@ Aliases:
 
 Available Commands:
   add         Add a plugin
-  list        List installed plugins
+  list        List discovered skills (active / shadowed / conflicts / errors)
   remove      Remove a plugin
 
 Flags:

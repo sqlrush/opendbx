@@ -38,6 +38,7 @@ type Config struct {
 	Trace     TraceConfig     `yaml:"trace" json:"trace"`
 	Scheduler SchedulerConfig `yaml:"scheduler" json:"scheduler"`
 	Diagnose  DiagnoseConfig  `yaml:"diagnose" json:"diagnose"`
+	Plugins   PluginsConfig   `yaml:"plugins" json:"plugins"` // spec-2.2 skill discovery
 
 	// DefaultConnection selects the active connection by alias when no
 	// --connection-alias CLI flag is given (spec-1.19 D-1/D-6).

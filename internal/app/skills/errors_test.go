@@ -17,6 +17,8 @@ func allSkillSentinels() []errcode.Sentinel {
 		ErrNoFrontmatter, ErrUnterminatedFrontmatter, ErrParseError,
 		ErrTooLarge, ErrTooDeep, ErrMissingName, ErrInvalidName,
 		ErrMissingDescription, ErrNamespaceConflict, ErrValidationFailed,
+		// spec-2.2 discovery
+		ErrRootUnreadable, ErrFileUnreadable, ErrRootTooManyFiles,
 	}
 }
 
@@ -37,7 +39,7 @@ func TestErrorsRegistered(t *testing.T) {
 		}
 		seen[s.Code()] = true
 	}
-	if len(seen) != 10 {
-		t.Errorf("expected 10 SKILL.* codes, got %d", len(seen))
+	if len(seen) != 13 {
+		t.Errorf("expected 13 SKILL.* codes, got %d", len(seen))
 	}
 }
