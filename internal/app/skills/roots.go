@@ -72,9 +72,10 @@ type DiscoverOptions struct {
 
 // AssignPrecedence ranks specs into SkillRoots with a dense injective
 // Precedence. Order key: (Band, SubOrder, Dir) — Dir is the final tiebreak so
-// the ranking is deterministic regardless of input order. Two specs sharing
-// all three keys (the same directory listed twice) collapse to the SAME
-// Precedence, which is correct: a single root is one precedence level.
+// the ranking is deterministic regardless of input order. The same directory
+// listed under more than one spec is DEDUPED to its highest-ranked occurrence
+// (review: a dir must not shadow itself), so every returned root has a distinct
+// Dir and a distinct Precedence.
 func AssignPrecedence(specs []RootSpec) []SkillRoot {
 	ordered := make([]RootSpec, len(specs))
 	copy(ordered, specs)
@@ -88,8 +89,24 @@ func AssignPrecedence(specs []RootSpec) []SkillRoot {
 		}
 		return a.Dir < b.Dir
 	})
-	out := make([]SkillRoot, len(ordered))
-	for i, s := range ordered {
+
+	// Dedup by Dir, keeping the highest-ranked occurrence (last in ascending
+	// order). Walk descending, keep first-seen, then restore ascending order.
+	seen := make(map[string]bool, len(ordered))
+	deduped := make([]RootSpec, 0, len(ordered))
+	for i := len(ordered) - 1; i >= 0; i-- {
+		if seen[ordered[i].Dir] {
+			continue
+		}
+		seen[ordered[i].Dir] = true
+		deduped = append(deduped, ordered[i])
+	}
+	for l, r := 0, len(deduped)-1; l < r; l, r = l+1, r-1 {
+		deduped[l], deduped[r] = deduped[r], deduped[l]
+	}
+
+	out := make([]SkillRoot, len(deduped))
+	for i, s := range deduped {
 		out[i] = SkillRoot{
 			Kind:       s.Kind,
 			Precedence: i, // dense, injective; higher index = higher precedence

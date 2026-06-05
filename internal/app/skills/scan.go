@@ -14,12 +14,18 @@
 package skills
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 )
 
 const skillFileName = "SKILL.md"
+
+// scanBatch is how many directory entries are read per ReadDir call. Streaming
+// in batches bounds memory on a pathological directory (a million-entry dir is
+// never materialized at once; review HIGH: ReadDir OOM guard).
+const scanBatch = 256
 
 // scanRoot lists the SKILL.md files under one root: flat-form `<name>.md`
 // directly in the root, and dir-form `<name>/SKILL.md` one level down. It does
@@ -43,33 +49,64 @@ func scanRoot(root SkillRoot, maxFiles int) (files []string, err error) {
 		return nil, rootUnreadable(&os.PathError{Op: "scan", Path: root.Dir, Err: errNotDir})
 	}
 
-	entries, rerr := os.ReadDir(root.Dir)
-	if rerr != nil {
-		return nil, rootUnreadable(rerr)
+	d, oerr := os.Open(root.Dir)
+	if oerr != nil {
+		return nil, rootUnreadable(oerr)
 	}
+	defer func() { _ = d.Close() }()
 
-	for _, e := range entries {
-		if e.Type()&os.ModeSymlink != 0 {
-			continue // never follow symlinked entries
-		}
-		switch {
-		case e.IsDir():
-			// dir-form: <name>/SKILL.md (regular, non-symlink).
-			p := filepath.Join(root.Dir, e.Name(), skillFileName)
-			if isRegularFile(p) {
-				files = append(files, p)
+	// Stream entries in batches so a huge directory is never fully materialized;
+	// stop early once maxFiles skill files have been collected.
+	overLimit := false
+	for !overLimit {
+		batch, rerr := d.ReadDir(scanBatch)
+		for _, e := range batch {
+			p, ok := classifyEntry(root.Dir, e)
+			if !ok {
+				continue
 			}
-		case filepath.Ext(e.Name()) == ".md":
-			files = append(files, filepath.Join(root.Dir, e.Name()))
+			if maxFiles > 0 && len(files) >= maxFiles {
+				overLimit = true
+				break
+			}
+			files = append(files, p)
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			return files, rootUnreadable(rerr)
 		}
 	}
 
 	sort.Strings(files)
-
-	if maxFiles > 0 && len(files) > maxFiles {
-		return files[:maxFiles], errcodeTooManyFiles(root.Dir, len(files), maxFiles)
+	if overLimit {
+		return files, errcodeTooManyFiles(root.Dir, maxFiles, maxFiles)
 	}
 	return files, nil
+}
+
+// classifyEntry maps a directory entry to a skill file path, or (._, false) if
+// it is not a skill file. Symlinks and non-regular files are rejected: the
+// d_type symlink check is a fast path, and isRegularFile (Lstat-based) is the
+// reliable backstop for filesystems that return DT_UNKNOWN.
+func classifyEntry(dir string, e os.DirEntry) (string, bool) {
+	if e.Type()&os.ModeSymlink != 0 {
+		return "", false // never follow symlinked entries
+	}
+	switch {
+	case e.IsDir():
+		p := filepath.Join(dir, e.Name(), skillFileName)
+		if isRegularFile(p) {
+			return p, true
+		}
+	case filepath.Ext(e.Name()) == ".md":
+		p := filepath.Join(dir, e.Name())
+		if isRegularFile(p) { // backstop: rejects DT_UNKNOWN symlinks / FIFO / device
+			return p, true
+		}
+	}
+	return "", false
 }
 
 // isRegularFile reports whether p exists and is a regular, non-symlink file.

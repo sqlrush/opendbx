@@ -16,6 +16,7 @@ package bootstrap
 import (
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/sqlrush/opendbx/internal/app/skills"
 	"github.com/sqlrush/opendbx/internal/platform/config"
@@ -55,7 +56,17 @@ func BuildSkillRoots(in SkillPathInputs, cfg config.PluginsConfig) skills.Discov
 		})
 	}
 
-	for i, pd := range in.PluginDirs {
+	// Sort plugins by ID (then Dir) so SubOrder — and thus cross-plugin
+	// same-name precedence — is deterministic regardless of caller order
+	// (locked Q8). A copy keeps the input slice immutable.
+	plugins := append([]PluginDir(nil), in.PluginDirs...)
+	sort.Slice(plugins, func(i, j int) bool {
+		if plugins[i].ID != plugins[j].ID {
+			return plugins[i].ID < plugins[j].ID
+		}
+		return plugins[i].Dir < plugins[j].Dir
+	})
+	for i, pd := range plugins {
 		specs = append(specs, skills.RootSpec{
 			Kind: skills.SourcePluginCache, Band: skills.BandPlugin, SubOrder: i,
 			Dir: pd.Dir, PluginID: pd.ID,
@@ -100,6 +111,11 @@ func BuildSkillRoots(in SkillPathInputs, cfg config.PluginsConfig) skills.Discov
 // DiscoverSkills resolves the real home/cwd anchors and runs a one-shot
 // discovery (spec-2.2 D-7 wiring; v1 has no builtin/plugin roots). It is the
 // runnable entry the /debug-style lister calls.
+//
+// A failed UserHomeDir/Getwd yields an empty anchor: the corresponding default
+// roots are simply skipped (they are optional, so absent → empty), and any
+// relative skill_search_paths then become unanchored Required roots that
+// surface as SKILL.ROOT_UNREADABLE in the result — observable, not silent.
 func DiscoverSkills(cfg *config.Config) skills.DiscoveryResult {
 	home, _ := os.UserHomeDir()
 	cwd, _ := os.Getwd()

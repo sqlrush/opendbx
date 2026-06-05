@@ -60,6 +60,26 @@ func TestAssignPrecedence_Order(t *testing.T) {
 	}
 }
 
+// TestAssignPrecedence_DedupsDir — the same dir under two specs collapses to
+// one root (highest-ranked), so a dir cannot shadow itself (review codex).
+func TestAssignPrecedence_DedupsDir(t *testing.T) {
+	t.Parallel()
+	specs := []RootSpec{
+		{Band: BandUser, SubOrder: 0, Dir: "/shared/skills"},
+		{Band: BandSearchPath, SubOrder: 0, Dir: "/shared/skills", Required: true}, // same dir, higher band
+		{Band: BandProject, SubOrder: 0, Dir: "/proj/skills"},
+	}
+	roots := AssignPrecedence(specs)
+	if len(roots) != 2 {
+		t.Fatalf("duplicate dir should collapse to 1 root: %d roots %+v", len(roots), roots)
+	}
+	for _, r := range roots {
+		if r.Dir == "/shared/skills" && !r.Required {
+			t.Errorf("dedup should keep the highest-ranked (Required) occurrence: %+v", r)
+		}
+	}
+}
+
 // TestAssignPrecedence_Deterministic — input order does not change the result.
 func TestAssignPrecedence_Deterministic(t *testing.T) {
 	t.Parallel()

@@ -29,9 +29,17 @@ type PluginsConfig struct {
 	DisabledSkills []string `yaml:"disabled_skills,omitempty" json:"disabled_skills,omitempty"`
 }
 
-// validatePlugins checks the plugin/skill discovery config. Rejects path
-// traversal (a `..` component) in search paths and caps their count. Path
-// canonicalisation (Abs/Clean) happens later in bootstrap with the real cwd.
+// validatePlugins checks the plugin/skill discovery config. Rejects lexical
+// path traversal (a `..` component that escapes after Clean) in search paths
+// and caps their count. Path canonicalisation (Abs/Clean) happens later in
+// bootstrap with the real cwd, and discovery rejects a symlinked root dir
+// (scanRoot Lstat).
+//
+// v1 scope (single-user): this lexical guard + the symlink-root rejection
+// cover the realistic threats. Full realpath containment (EvalSymlinks +
+// cwd-subtree enforcement for project-sourced paths, blocking intermediate
+// symlink components) is deferred to the enterprise/multi-user deployment
+// (spec-3.9), where untrusted shared config is the threat model.
 func validatePlugins(cfg *Config, errs *ValidationErrors) {
 	if cfg == nil {
 		return

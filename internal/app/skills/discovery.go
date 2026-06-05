@@ -15,7 +15,10 @@
 
 package skills
 
-import "os"
+import (
+	"io"
+	"os"
+)
 
 // Discover scans every root, isolates per-file failures into Errors, and
 // resolves the surviving skills by precedence. It never aborts on a bad file
@@ -65,20 +68,51 @@ func Discover(opts DiscoverOptions) DiscoveryResult {
 	return res
 }
 
-// loadSkill stat-checks the size cap, reads the file, and parses it. Returns an
-// errcode error on stat/size/read/parse failure.
+// loadSkill safely reads and parses one skill file (review HIGH: fs safety).
+// Defense in depth against symlink/device targets and unbounded reads:
+//   - Lstat + IsRegular rejects a symlink/FIFO/socket/device at the path before
+//     it is opened (covers DT_UNKNOWN filesystems where the scan's d_type check
+//     is unreliable).
+//   - After Open, f.Stat + IsRegular re-checks (guards a TOCTOU swap-to-device).
+//   - io.LimitReader bounds the read to maxSkillSize+1 so even a TOCTOU swap to
+//     a huge regular file cannot OOM — it surfaces as SKILL.TOO_LARGE.
+//
+// Residual: a TOCTOU swap to a <1 MiB regular file outside the root could be
+// read; closing that needs O_NOFOLLOW (non-portable) and is deferred. The scan
+// is a one-shot over the user's own dirs, so the race window is negligible.
 func loadSkill(path string, root SkillRoot) (Skill, error) {
 	info, lerr := os.Lstat(path)
 	if lerr != nil {
 		return Skill{}, fileUnreadable(lerr)
 	}
-	if info.Size() > maxSkillSize {
-		return Skill{}, tooLargeErr(info.Size()) // size cap BEFORE read
+	if !info.Mode().IsRegular() {
+		return Skill{}, notRegularErr(path)
 	}
-	content, ferr := os.ReadFile(path) //nolint:gosec // spec-2.2 D-3: path is a scanned, non-symlink, size-capped (stat-before-read) skill file
-	if ferr != nil {
-		return Skill{}, fileUnreadable(ferr)
+	f, oerr := os.Open(path) //nolint:gosec // spec-2.2 D-3: path is a scanned skill file; Lstat-IsRegular above + f.Stat below + LimitReader bound the read.
+	if oerr != nil {
+		return Skill{}, fileUnreadable(oerr)
 	}
+	defer func() { _ = f.Close() }()
+
+	fi, serr := f.Stat()
+	if serr != nil {
+		return Skill{}, fileUnreadable(serr)
+	}
+	if !fi.Mode().IsRegular() {
+		return Skill{}, notRegularErr(path)
+	}
+	if fi.Size() > maxSkillSize {
+		return Skill{}, tooLargeErr(fi.Size())
+	}
+
+	content, rerr := io.ReadAll(io.LimitReader(f, maxSkillSize+1))
+	if rerr != nil {
+		return Skill{}, fileUnreadable(rerr)
+	}
+	if int64(len(content)) > maxSkillSize {
+		return Skill{}, tooLargeErr(int64(len(content)))
+	}
+
 	src := SkillSource{Kind: root.Kind, Precedence: root.Precedence, Path: path, PluginID: root.PluginID}
 	return Parse(content, src)
 }

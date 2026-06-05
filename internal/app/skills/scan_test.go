@@ -10,8 +10,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
-
-	"github.com/sqlrush/opendbx/internal/platform/errcode"
 )
 
 func writeSkill(t *testing.T, path, name string) {
@@ -116,10 +114,7 @@ func TestScanRoot_MaxFilesTruncates(t *testing.T) {
 	}
 	files, err := scanRoot(root(dir), 2)
 	if !errors.Is(err, ErrRootTooManyFiles) {
-		var ec errcode.Error
-		if !errors.As(err, &ec) || ec.Code() != ErrRootTooManyFiles.Code() {
-			t.Fatalf("want ROOT_TOO_MANY_FILES, got %v", err)
-		}
+		t.Fatalf("want ROOT_TOO_MANY_FILES, got %v", err)
 	}
 	if len(files) != 2 {
 		t.Errorf("truncated to %d; want 2", len(files))

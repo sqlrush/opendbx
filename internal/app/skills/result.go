@@ -16,15 +16,17 @@ package skills
 
 import (
 	"errors"
+	"os"
 
 	"github.com/sqlrush/opendbx/internal/platform/errcode"
 )
 
-// Sentinel causes for ROOT_UNREADABLE, carried as the PathError root cause so
-// the wrapped message is descriptive.
+// Sentinel causes carried as the PathError root cause so the wrapped message
+// is descriptive.
 var (
 	errSymlinkRoot = errors.New("skill root is a symlink (not followed)")
 	errNotDir      = errors.New("skill root is not a directory")
+	errNotRegular  = errors.New("not a regular file (symlink/device/fifo not followed)")
 )
 
 // DiscoveryError is one filesystem/parse/validate failure, isolated so the
@@ -103,6 +105,13 @@ func rootUnreadable(err error) error {
 func tooLargeErr(size int64) error {
 	return errcode.Newf(ErrTooLarge.Code(),
 		"SKILL.md is %d bytes, exceeds the %d byte limit", size, maxSkillSize)
+}
+
+// notRegularErr reports a path that is not a regular file (symlink, FIFO,
+// socket, device) and so must not be read (review HIGH: fs safety).
+func notRegularErr(path string) error {
+	return errcode.Wrap(ErrFileUnreadable.Code(),
+		&os.PathError{Op: "load", Path: path, Err: errNotRegular}, "", "")
 }
 
 // errcodeTooManyFiles reports a root whose file count exceeded the cap.

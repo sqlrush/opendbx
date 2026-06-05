@@ -7,6 +7,7 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -179,6 +180,51 @@ func TestDiscover_ExtraRoundTrip(t *testing.T) {
 	if !ok || len(dbs) != 2 {
 		t.Errorf("Extra round-trip broken: %+v", res.Active[0].Schema.Extra)
 	}
+}
+
+// TestDiscover_WarningsAndFatalSameFile — a file that both warns (non-kebab +
+// unknown field) AND fatally fails validation (missing description) contributes
+// to BOTH Warnings and Errors, and is not Active (review RC-4 / codex).
+func TestDiscover_WarningsAndFatalSameFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	content := "---\nname: Not_Kebab\nopendbx_extra: x\n---\nbody\n" // no description → fatal
+	_ = os.WriteFile(filepath.Join(dir, "both.md"), []byte(content), 0o644)
+	res := Discover(DiscoverOptions{Roots: []SkillRoot{root(dir)}})
+	if len(res.Warnings) < 2 {
+		t.Errorf("warnings must survive a fatal validate error, got %+v", res.Warnings)
+	}
+	if len(res.Errors) != 1 || ClassifyError(res.Errors[0]) != ErrValidationFailed.Code() {
+		t.Errorf("want 1 VALIDATION_FAILED, got %+v", res.Errors)
+	}
+	if len(res.Active) != 0 {
+		t.Errorf("fatally invalid skill must not be active: %+v", res.Active)
+	}
+}
+
+// TestLoadSkill_RejectsSymlink — loadSkill refuses a symlinked file even if the
+// scan's d_type missed it (DT_UNKNOWN backstop / TOCTOU).
+func TestLoadSkill_RejectsSymlink(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink semantics differ on windows")
+	}
+	target := filepath.Join(t.TempDir(), "target.md")
+	writeSkill(t, target, "tgt")
+	link := filepath.Join(t.TempDir(), "link.md")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	_, err := loadSkill(link, root(filepath.Dir(link)))
+	assertCode(t, err, ErrFileUnreadable.Code())
+}
+
+// TestLoadSkill_MissingFile — a file removed between scan and load is isolated
+// as FILE_UNREADABLE (TOCTOU error path).
+func TestLoadSkill_MissingFile(t *testing.T) {
+	t.Parallel()
+	_, err := loadSkill(filepath.Join(t.TempDir(), "gone.md"), root(t.TempDir()))
+	assertCode(t, err, ErrFileUnreadable.Code())
 }
 
 func TestSummarizeDiscovery_Renders(t *testing.T) {
