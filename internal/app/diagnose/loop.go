@@ -159,6 +159,13 @@ func (l *Loop) Run(ctx context.Context, req llm.Request, emit EmitFunc) (Result,
 		tools = append(tools, l.registry.Schemas()...)
 	}
 
+	// Run-local allowed-tools scope (spec-2.3 D-3). nil = no scope. Set
+	// from a successful ToolOutput.ToolFilter (fresh OR cached — never
+	// gated on !cached); replaced wholesale by the next one; dies with
+	// this Run. v1 enforcement covers registry-dispatchable tools only
+	// (production req.Tools is nil; spec-2.3 ❌-11).
+	var activeFilter []string
+
 	result := Result{}
 
 	// Per-Run dedup cache (spec-1.22 D-1/D-2). Lifetime == this Run; not
@@ -174,10 +181,12 @@ func (l *Loop) Run(ctx context.Context, req llm.Request, emit EmitFunc) (Result,
 			return finalize(result, msgs, fr, "", ferr), ferr
 		}
 
-		// Per-turn provider call.
+		// Per-turn provider call. The advertised tool set is re-derived
+		// every turn so a scope entered mid-run narrows the next turn's
+		// offer (spec-2.3 D-3; nil filter → same slice, zero-cost).
 		turnReq := req
 		turnReq.Messages = msgs
-		turnReq.Tools = tools
+		turnReq.Tools = applyFilter(tools, activeFilter)
 		turnCtx, cancelTurn := context.WithTimeout(totalCtx, l.reqTimeout)
 		stream, perr := l.provider.Stream(turnCtx, turnReq)
 		if perr != nil {
@@ -337,6 +346,29 @@ func (l *Loop) Run(ctx context.Context, req llm.Request, emit EmitFunc) (Result,
 				tu := &toolUses[i]
 				exec, _ := lookup(l.registry, tu.Name)
 
+				// spec-2.3 D-3 dispatch guard — AFTER the registry lookup
+				// (unknown names already went terminal above) and BEFORE
+				// dedup (a denied call must not touch the cache). The
+				// denied tool still gets a full recoverable tool_result so
+				// the Phase 1 EventToolCall is paired (UI never stuck
+				// Running) and the paired commit keeps its shape. Scope
+				// entered earlier in THIS same Phase 2 applies immediately
+				// (Q12 user decision: minimal scope beats advertised-
+				// earlier permissiveness).
+				if scopeDenied(activeFilter, tu.Name) {
+					results = append(results, llm.ToolResult{
+						ToolUseID: tu.ID,
+						Content:   scopeDeniedContent(tu.Name, activeFilter),
+						IsError:   true,
+					})
+					if eerr := emit(ctx, Event{Kind: EventToolResult, Turn: turn, ToolResult: &results[len(results)-1]}); eerr != nil {
+						fr, ferr := classifyEmitErr(eerr)
+						// errcode-lint:exempt -- spec-1.21 D-4: emit-error pass-through (EventToolResult variant).
+						return finalize(result, msgs, fr, "", ferr), ferr
+					}
+					continue
+				}
+
 				// spec-1.22 D-2: dedup interception. dKey is "" when the tool
 				// is non-cacheable / dedup disabled / key derivation failed
 				// (invariant #5: such a call derives no key, never stores).
@@ -365,6 +397,14 @@ func (l *Loop) Run(ctx context.Context, req llm.Request, emit EmitFunc) (Result,
 					_ = emit(ctx, Event{Kind: EventFinish, Turn: turn, Finish: fr, TermCode: code, Err: ferr})
 					// errcode-lint:exempt -- spec-1.21 D-4: ferr is a registered DIAGNOSE.TOTAL_TIMEOUT sentinel or ctx.Canceled from classifyToolErr; pass-through.
 					return finalize(result, msgs, fr, code, ferr), ferr
+				}
+				// spec-2.3 D-3 scope update — reads the raw `out` (NOT tr:
+				// classifyToolErr copies Content/IsError only, which is
+				// also what keeps ToolFilter off the wire). Gated on
+				// success alone — never on !cached, so a dedup replay
+				// re-applies its filter identically (spec-2.3 DoD).
+				if execErr == nil && !out.IsError && out.ToolFilter != nil {
+					activeFilter = normalizeFilter(out.ToolFilter)
 				}
 				// spec-1.22 R-4: store ONLY a freshly-executed success
 				// (execErr==nil && !IsError). A hit is not re-stored; an

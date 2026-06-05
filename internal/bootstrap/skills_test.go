@@ -6,6 +6,7 @@ package bootstrap
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sqlrush/opendbx/internal/app/skills"
@@ -141,4 +142,72 @@ func keys(m map[string]skills.SkillRoot) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// mkActiveSkill builds a minimal valid active Skill for skillsForChat tests
+// (spec-2.3 D-5).
+func mkActiveSkill(name string) skills.Skill {
+	return skills.Skill{
+		Schema: skills.Schema{Name: name, Description: "Test skill."},
+		Body:   "body of " + name,
+	}
+}
+
+// TestSkillsForChat_ZeroActive — no active skills → no executor, no
+// system-prompt section (spec-2.3 Q6: the Skill wire surface is absent).
+func TestSkillsForChat_ZeroActive(t *testing.T) {
+	t.Parallel()
+	execs, prompt := skillsForChat(skills.DiscoveryResult{})
+	if execs != nil || prompt != "" {
+		t.Errorf("skillsForChat(empty) = %v, %q; want nil, empty", execs, prompt)
+	}
+}
+
+// TestSkillsForChat_Active — active skills yield exactly one executor
+// (wire name "Skill") plus the prompt section listing each skill.
+func TestSkillsForChat_Active(t *testing.T) {
+	t.Parallel()
+	res := skills.DiscoveryResult{Active: []skills.Skill{mkActiveSkill("alpha"), mkActiveSkill("beta")}}
+	execs, prompt := skillsForChat(res)
+	if len(execs) != 1 || execs[0].Name() != "Skill" {
+		t.Fatalf("execs = %v; want one executor named Skill", execs)
+	}
+	for _, want := range []string{"## Available skills", "- alpha:", "- beta:"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt %q missing %q", prompt, want)
+		}
+	}
+}
+
+// TestSkillsForChat_ContractViolation_LogSkipNoPanic — a duplicate Key in
+// Active (upstream spec-2.2 contract violation) must be skipped, never
+// panic: interact continues without skills (user decision 4/4 2026-06-05).
+func TestSkillsForChat_ContractViolation_LogSkipNoPanic(t *testing.T) {
+	t.Parallel()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("skillsForChat panicked on contract violation: %v", r)
+		}
+	}()
+	res := skills.DiscoveryResult{Active: []skills.Skill{mkActiveSkill("dup"), mkActiveSkill("dup")}}
+	execs, prompt := skillsForChat(res)
+	if execs != nil || prompt != "" {
+		t.Errorf("contract violation must skip skills entirely, got %v, %q", execs, prompt)
+	}
+}
+
+// TestDiagnoseRegistryWith_SkillTool — the registry composes clock + echo
+// + the extra executor; the no-extra form matches the legacy default.
+func TestDiagnoseRegistryWith_SkillTool(t *testing.T) {
+	t.Parallel()
+	execs, _ := skillsForChat(skills.DiscoveryResult{Active: []skills.Skill{mkActiveSkill("alpha")}})
+	reg := diagnoseRegistryWith(execs...)
+	for _, want := range []string{"Skill", "clock", "echo"} {
+		if _, ok := reg.Get(want); !ok {
+			t.Errorf("registry missing %q", want)
+		}
+	}
+	if names := defaultDiagnoseRegistry().Names(); len(names) != 2 {
+		t.Errorf("default registry = %v; want clock+echo only", names)
+	}
 }

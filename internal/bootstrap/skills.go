@@ -18,8 +18,11 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/sqlrush/opendbx/internal/app/diagnose"
 	"github.com/sqlrush/opendbx/internal/app/skills"
+	"github.com/sqlrush/opendbx/internal/app/skills/invoke"
 	"github.com/sqlrush/opendbx/internal/platform/config"
+	"github.com/sqlrush/opendbx/internal/platform/logger"
 )
 
 // PluginDir is one installed plugin's skills directory + its stable ID.
@@ -129,4 +132,63 @@ func DiscoverSkills(cfg *config.Config) skills.DiscoveryResult {
 // not (layer rule).
 func DiscoverSkillsSummary(cfg *config.Config) string {
 	return skills.SummarizeDiscovery(DiscoverSkills(cfg))
+}
+
+// bodySizeWarnBytes is the soft warning threshold for a skill body
+// injected into the transcript (spec-2.3 R-7: a huge body eats the
+// context budget on a single invoke; the hard cutoff is spec-3.10).
+const bodySizeWarnBytes = 64 << 10
+
+// skillsForChat adapts a discovery result for the chat model (spec-2.3
+// D-5): the SkillTool executor plus the system-prompt skills section.
+//
+// Failure model (user decision 4/4, 2026-06-05): a NewSkillTool error —
+// an upstream spec-2.2 contract violation — is LOGGED and skills are
+// skipped for the session; interact always continues. Never panics.
+// 0 active skills → no executor, no prompt section (spec-2.3 Q6).
+func skillsForChat(res skills.DiscoveryResult) (execs []diagnose.ToolExecutor, systemPrompt string) {
+	logSkillDiscovery(res)
+	if len(res.Active) == 0 {
+		return nil, ""
+	}
+	st, err := invoke.NewSkillTool(res.Active)
+	if err != nil {
+		logger.WarnForceFile(
+			"skill tool construction failed; skills are disabled for this session",
+			"spec", "2.3", "deliverable", "D-5", "err", err.Error(),
+		)
+		return nil, ""
+	}
+	section := skills.PromptSection(res.Active)
+	logger.WarnForceFile(
+		"skills active for this session",
+		"spec", "2.3", "active", len(res.Active), "prompt_section_bytes", len(section),
+	)
+	return []diagnose.ToolExecutor{st}, section
+}
+
+// logSkillDiscovery surfaces discovery problems and per-skill trust
+// warnings in the debug log (规则 7 — never silent; file-only so the
+// TUI cell grid is not torn). Covers spec-2.3 R-10 (plugin-cache
+// provenance) and R-7/R-11 (oversized body) at startup — v1 discovery
+// runs once, so bodies and sources are static for the session.
+func logSkillDiscovery(res skills.DiscoveryResult) {
+	if n := len(res.Errors); n > 0 {
+		logger.WarnForceFile("skill discovery reported errors (run /debug skills)",
+			"spec", "2.3", "errors", n)
+	}
+	if n := len(res.Warnings); n > 0 {
+		logger.WarnForceFile("skill discovery reported warnings (run /debug skills)",
+			"spec", "2.3", "warnings", n)
+	}
+	for _, sk := range res.Active {
+		if sk.Source.Kind == skills.SourcePluginCache {
+			logger.WarnForceFile("active skill comes from the plugin cache; its body enters the model context verbatim",
+				"spec", "2.3", "risk", "R-10", "skill", sk.Key(), "plugin", sk.Source.PluginID, "path", sk.Source.Path)
+		}
+		if len(sk.Body) > bodySizeWarnBytes {
+			logger.WarnForceFile("active skill body exceeds the 64KiB soft cap; one invoke will consume significant context",
+				"spec", "2.3", "risk", "R-7", "skill", sk.Key(), "body_bytes", len(sk.Body))
+		}
+	}
 }

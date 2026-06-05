@@ -17,6 +17,8 @@
 package diagnose
 
 import (
+	"strings"
+
 	"github.com/sqlrush/opendbx/internal/platform/errcode"
 )
 
@@ -60,4 +62,26 @@ var (
 		"收到非预期 pause_turn (spec-1.21 未启用 server tool)",
 		"server-side tool 是未来 spec; 检查 model/请求未启用 server tool",
 	)
+	// ErrScopeToolDenied — the model called a registered tool that the
+	// active skill scope filters out (spec-2.3 D-3 dispatch guard).
+	// Feedback class — written into ToolResult.Content with IsError=true;
+	// the model self-corrects. NOT terminal. Registered here (not in
+	// app/skills/invoke, which owns the other two spec-2.3 codes) because
+	// the Loop composes the denial text and diagnose cannot import invoke
+	// (cycle); same placement precedent as DIAGNOSE.TOOL_TIMEOUT.
+	ErrScopeToolDenied = errcode.Register(
+		"SKILL.SCOPE_TOOL_DENIED",
+		"tool is not allowed in the active skill scope",
+		"use an allowed tool or invoke another skill",
+	)
 )
+
+// scopeDeniedContent composes the recoverable ToolResult.Content for a
+// scope-filtered tool call (spec-2.3 D-6 template). allowed is the active
+// normalized filter ("Skill" is implicitly retained and therefore listed
+// separately in the fixed "(+ Skill)" suffix).
+func scopeDeniedContent(tool string, allowed []string) string {
+	return "[" + ErrScopeToolDenied.Code() + "] tool \"" + tool +
+		"\" is not allowed in the active skill scope. Allowed: [" +
+		strings.Join(allowed, ", ") + "] (+ Skill). Hint: " + ErrScopeToolDenied.Hint() + "."
+}

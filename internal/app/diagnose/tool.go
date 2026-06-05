@@ -38,6 +38,14 @@ import (
 type ToolOutput struct {
 	Content string
 	IsError bool
+	// ToolFilter, when non-nil, REPLACES the execution-tool scope for the
+	// remainder of the current Run (spec-2.3 allowed-tools enforcement).
+	// nil = no scope change (inherit current scope). "Skill" is implicitly
+	// retained by the Loop as the scope-control verb (spec-2.3 Q13) — it
+	// never needs to be listed. The field is orchestration-control only:
+	// classifyToolErr copies Content/IsError exclusively, so ToolFilter is
+	// NEVER serialized to the provider wire or the transcript.
+	ToolFilter []string
 }
 
 // ToolExecutor is implemented by every diagnose-loop-callable tool.
