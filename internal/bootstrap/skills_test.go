@@ -99,6 +99,33 @@ func TestBuildSkillRoots_Plugins(t *testing.T) {
 	}
 }
 
+// TestBuildSkillRoots_PluginsSortedByID — cross-plugin precedence is by sorted
+// PluginID regardless of input order (locked Q8; codex PREC-HIGH-01).
+func TestBuildSkillRoots_PluginsSortedByID(t *testing.T) {
+	t.Parallel()
+	base := SkillPathInputs{HomeDir: "/h", CWD: "/c"}
+	forward := base
+	forward.PluginDirs = []PluginDir{{ID: "alpha", Dir: "/p/alpha"}, {ID: "beta", Dir: "/p/beta"}}
+	reverse := base
+	reverse.PluginDirs = []PluginDir{{ID: "beta", Dir: "/p/beta"}, {ID: "alpha", Dir: "/p/alpha"}}
+
+	precOf := func(in SkillPathInputs, dir string) int {
+		for _, r := range BuildSkillRoots(in, config.PluginsConfig{}).Roots {
+			if r.Dir == dir {
+				return r.Precedence
+			}
+		}
+		return -1
+	}
+	// alpha < beta by sorted ID, in BOTH input orders.
+	if precOf(forward, "/p/alpha") >= precOf(forward, "/p/beta") {
+		t.Error("alpha should outrank-less beta (forward order)")
+	}
+	if precOf(reverse, "/p/alpha") >= precOf(reverse, "/p/beta") {
+		t.Error("plugin precedence flipped with input order (not sorted by ID)")
+	}
+}
+
 func TestBuildSkillRoots_DisabledPassthrough(t *testing.T) {
 	t.Parallel()
 	opts := BuildSkillRoots(SkillPathInputs{HomeDir: "/h", CWD: "/c"},
