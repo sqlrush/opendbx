@@ -51,6 +51,52 @@ func TestForceFileBypassesDebugGateAndStderr(t *testing.T) {
 	}
 }
 
+// TestInfoForceFileKeepsInfoBand — InfoForceFile must write [INFO] (not
+// the forceFile WARN clamp), reach the file with debug disabled, and
+// never touch stderr (spec-2.3 post-impl codex MED).
+func TestInfoForceFileKeepsInfoBand(t *testing.T) {
+	// NOT t.Parallel: mutates logger globals and os.Stderr.
+	resetForTesting(t)
+	logPath := t.TempDir() + "/info-force.log"
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = oldStderr }()
+
+	// DebugEnabled false: the force-file family must still reach the file.
+	if err := Init(InitInput{SessionID: "info-force", LogPath: logPath, DisableSidecar: true}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	InfoForceFile("skills active for this session", "active", 3)
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stderr pipe writer: %v", err)
+	}
+	stderrRaw, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read stderr pipe: %v", err)
+	}
+	if strings.Contains(string(stderrRaw), "skills active") {
+		t.Fatalf("InfoForceFile wrote to stderr: %q", stderrRaw)
+	}
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read force log: %v", err)
+	}
+	got := string(raw)
+	if !strings.Contains(got, "[INFO] skills active for this session") || !strings.Contains(got, "active=3") {
+		t.Fatalf("info force log missing [INFO] message/attrs:\n%s", got)
+	}
+	if strings.Contains(got, "[WARN] skills active") {
+		t.Fatalf("InfoForceFile clamped to WARN band:\n%s", got)
+	}
+}
+
 func TestSlogHandlerLevelMapping(t *testing.T) {
 	// NOT t.Parallel: mutates logger globals.
 	resetForTesting(t)

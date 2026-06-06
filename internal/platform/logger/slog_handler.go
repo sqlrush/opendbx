@@ -26,6 +26,16 @@ func ErrorForceFile(msg string, kv ...any) {
 	forceFile(LevelError, msg, attrsFromKV(kv...))
 }
 
+// InfoForceFile writes an info record directly to the active debug file even
+// when debug logging is disabled. It never writes to stderr and no-ops before
+// Init. Use for normal-path startup telemetry that must not pollute the
+// warning band. Deliberately bypasses forceFile: forceFileAttrs clamps any
+// level below WARN up to WARN (the warn/error band normalizer), which would
+// re-label info records as [WARN] (spec-2.3 post-impl codex MED).
+func InfoForceFile(msg string, kv ...any) {
+	fileOnlyAttrs(LevelInfo, msg, attrsFromKV(kv...))
+}
+
 // NewSlogHandler returns a slog.Handler that routes stdlib slog records into
 // the platform logger's debug file only. All levels bypass the normal logger
 // writer so TUI-mode diagnostics are preserved without writing to stderr,

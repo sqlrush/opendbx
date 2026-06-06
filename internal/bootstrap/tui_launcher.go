@@ -134,13 +134,25 @@ func newChatModel() program.Model {
 	}
 	emitStripThinkMigrationNotice(cfg)
 	provider, perr := factory.New(*cfg)
+	// spec-2.3 D-5: one-shot skill discovery → SkillTool + system-prompt
+	// section. Production's FIRST SystemPrompt assignment — the request
+	// transitions empty→non-empty when skills are present (Q10). Failures
+	// log + skip; interact always starts (user decision 4/4 — no panic).
+	// Skipped on the provider-error path: the session cannot chat, so the
+	// filesystem scan would be wasted I/O (post-impl cr LOW-1).
+	var skillExecs []diagnose.ToolExecutor
+	var skillPrompt string
+	if perr == nil {
+		skillExecs, skillPrompt = skillsForChat(DiscoverSkills(cfg))
+	}
 	opts := llmapp.Options{
 		ModelName:      cfg.LLM.ActiveModel,
 		MaxHistory:     cfg.Session.MaxHistoryMessages,
 		StripThink:     cfg.LLM.StripThink,
 		ThinkingMode:   thinkingModeFromConfig(cfg.LLM.ThinkingMode),
 		ThinkingBudget: cfg.LLM.ThinkingBudget,
-		Registry:       defaultDiagnoseRegistry(),
+		Registry:       diagnoseRegistryWith(skillExecs...),
+		SystemPrompt:   skillPrompt,
 		// spec-1.21 D-6 user-config knobs reach the runtime here.
 		// Per-turn LLM timeout reuses LLMConfig.RequestTimeout per spec
 		// (NOT a duplicate Diagnose.* field) — the diagnose layer is
@@ -251,9 +263,20 @@ func emitStripThinkMigrationNotice(cfg *config.Config) {
 // errors (registry contract violations) and panic at startup so they
 // surface immediately rather than at first message.
 func defaultDiagnoseRegistry() *diagnose.Registry {
-	reg, err := diagnose.NewRegistry(diagnose.ClockTool{}, diagnose.EchoTool{})
+	return diagnoseRegistryWith()
+}
+
+// diagnoseRegistryWith builds the production registry (clock + echo)
+// plus any extra executors — in practice the spec-2.3 SkillTool, whose
+// construction errors were already handled (log + skip) by
+// skillsForChat before reaching here. The panic below therefore stays
+// the spec-1.21 programmer-error precedent (registry contract
+// violations: dup/empty names), unreachable from the skills path.
+func diagnoseRegistryWith(extra ...diagnose.ToolExecutor) *diagnose.Registry {
+	execs := append([]diagnose.ToolExecutor{diagnose.ClockTool{}, diagnose.EchoTool{}}, extra...)
+	reg, err := diagnose.NewRegistry(execs...)
 	if err != nil {
-		panic("bootstrap: defaultDiagnoseRegistry: " + err.Error())
+		panic("bootstrap: diagnoseRegistryWith: " + err.Error())
 	}
 	return reg
 }
