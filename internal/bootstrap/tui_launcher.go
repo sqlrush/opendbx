@@ -138,7 +138,13 @@ func newChatModel() program.Model {
 	// section. Production's FIRST SystemPrompt assignment — the request
 	// transitions empty→non-empty when skills are present (Q10). Failures
 	// log + skip; interact always starts (user decision 4/4 — no panic).
-	skillExecs, skillPrompt := skillsForChat(DiscoverSkills(cfg))
+	// Skipped on the provider-error path: the session cannot chat, so the
+	// filesystem scan would be wasted I/O (post-impl cr LOW-1).
+	var skillExecs []diagnose.ToolExecutor
+	var skillPrompt string
+	if perr == nil {
+		skillExecs, skillPrompt = skillsForChat(DiscoverSkills(cfg))
+	}
 	opts := llmapp.Options{
 		ModelName:      cfg.LLM.ActiveModel,
 		MaxHistory:     cfg.Session.MaxHistoryMessages,

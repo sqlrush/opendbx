@@ -39,6 +39,11 @@ func PromptSection(active []Skill) string {
 	byName := make(map[string]Skill, len(active))
 	for _, sk := range active {
 		key := sk.Key()
+		if _, dup := byName[key]; dup {
+			continue // defensive: Active guarantees unique keys (2.2);
+			// first occurrence wins so a contract break upstream cannot
+			// produce duplicate listing lines (post-impl cr NIT-1)
+		}
 		names = append(names, key)
 		byName[key] = sk
 	}

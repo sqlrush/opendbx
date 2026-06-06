@@ -124,6 +124,44 @@ func TestToolUseVisualGolden(t *testing.T) {
 				ToolUseState: "resolved",
 			},
 		},
+		// spec-2.3 D-4 (post-impl cr MED-2): Skill adapter Layer-2 cases.
+		{
+			name: "ToolUseRunningSkill",
+			tu: withState(block.NewToolUse("id8", "Skill", map[string]any{"skill": "code-reviewer"}),
+				block.StateRunning),
+			cols: 80,
+			meta: toolUseFixtureMetadata{
+				Adapter:      "skill",
+				Prompt:       "Invoke the code-reviewer skill and capture the running Skill tool use.",
+				ToolUseState: "running",
+			},
+		},
+		{
+			name: "ToolUseResolvedSkillArgs",
+			tu: withState(block.NewToolUse("id9", "Skill", map[string]any{
+				"skill": "topsql",
+				"args":  map[string]any{"db": "main", "limit": "10"},
+			}), block.StateResolved),
+			cols: 80,
+			meta: toolUseFixtureMetadata{
+				Adapter:      "skill",
+				Notes:        "Args render as the sorted compact k=v summary after Skill(<name>).",
+				Prompt:       "Invoke topsql with args and capture the resolved Skill tool use.",
+				ToolUseState: "resolved",
+			},
+		},
+		{
+			name: "ToolUseRunningSkillNoName",
+			tu: withState(block.NewToolUse("idA", "Skill", map[string]any{}),
+				block.StateRunning),
+			cols: 80,
+			meta: toolUseFixtureMetadata{
+				Adapter:      "skill",
+				Notes:        "Missing skill field renders the Skill(no skill) placeholder.",
+				Prompt:       "Mock a Skill call without a skill field (placeholder fallback).",
+				ToolUseState: "running",
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -242,6 +280,10 @@ func TestToolUseVisualGolden_ParkedFixtures(t *testing.T) {
 		"ToolUseWaitingPermission",
 		"ToolUseRunningBashWithProgress",
 		"ToolUseResolvedRead",
+		// spec-2.3 D-4 Skill adapter (capture pending per SOP).
+		"ToolUseRunningSkill",
+		"ToolUseResolvedSkillArgs",
+		"ToolUseRunningSkillNoName",
 	}
 	for _, name := range required {
 		path := visualFixturePath(t, name, "")

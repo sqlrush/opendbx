@@ -73,7 +73,13 @@ func TestApplyFilter_NilKeepsIdentity(t *testing.T) {
 	t.Parallel()
 	tools := []llm.ToolSchema{{Name: "clock"}, {Name: "echo"}}
 	got := applyFilter(tools, nil)
-	if &got[0] != &tools[0] || len(got) != 2 {
+	// Slice-header identity: same length/cap AND same backing array
+	// (element-0 address), guarded by the len check first (go LOW-3).
+	if len(got) != len(tools) || cap(got) != cap(tools) {
+		t.Fatalf("nil filter changed slice shape: len/cap %d/%d vs %d/%d",
+			len(got), cap(got), len(tools), cap(tools))
+	}
+	if len(tools) > 0 && &got[0] != &tools[0] {
 		t.Error("nil filter must return the original slice (identity; prompt-cache stability)")
 	}
 }

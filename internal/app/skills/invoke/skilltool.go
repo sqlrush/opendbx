@@ -62,7 +62,7 @@ type SkillTool struct {
 // not block interact; spec-2.3 user decision 4/4 2026-06-05).
 func NewSkillTool(active []skills.Skill) (*SkillTool, error) {
 	if len(active) == 0 {
-		return nil, errcode.Newf("SKILL.INVOKE_INVALID",
+		return nil, errcode.Newf(ErrInvokeInvalid.Code(),
 			"NewSkillTool requires a non-empty active skill set; skip construction when discovery yields none")
 	}
 	byKey := make(map[string]skills.Skill, len(active))
@@ -70,7 +70,9 @@ func NewSkillTool(active []skills.Skill) (*SkillTool, error) {
 	for _, sk := range active {
 		key := sk.Key()
 		if _, dup := byKey[key]; dup {
-			return nil, errcode.Newf("SKILL.NAMESPACE_CONFLICT",
+			// Sentinel reference (not a string literal) so a code rename
+			// breaks the build here, not at first runtime call (go MED-2).
+			return nil, errcode.Newf(skills.ErrNamespaceConflict.Code(),
 				"duplicate active skill key %q passed to NewSkillTool (spec-2.2 Active membership contract violated)", key)
 		}
 		byKey[key] = sk

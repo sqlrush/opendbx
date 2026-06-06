@@ -402,7 +402,9 @@ func (l *Loop) Run(ctx context.Context, req llm.Request, emit EmitFunc) (Result,
 				// classifyToolErr copies Content/IsError only, which is
 				// also what keeps ToolFilter off the wire). Gated on
 				// success alone — never on !cached, so a dedup replay
-				// re-applies its filter identically (spec-2.3 DoD).
+				// re-applies its filter identically (spec-2.3 DoD). A nil
+				// ToolFilter (fresh OR cached) means inherit: the current
+				// scope is left untouched, never cleared (Q4/go LOW-2).
 				if execErr == nil && !out.IsError && out.ToolFilter != nil {
 					activeFilter = normalizeFilter(out.ToolFilter)
 				}

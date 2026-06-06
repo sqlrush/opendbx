@@ -160,7 +160,7 @@ func skillsForChat(res skills.DiscoveryResult) (execs []diagnose.ToolExecutor, s
 		return nil, ""
 	}
 	section := skills.PromptSection(res.Active)
-	logger.WarnForceFile(
+	logger.InfoForceFile( // normal path — info band, not warn (post-impl 双路命中)
 		"skills active for this session",
 		"spec", "2.3", "active", len(res.Active), "prompt_section_bytes", len(section),
 	)
