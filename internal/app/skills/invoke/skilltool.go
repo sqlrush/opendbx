@@ -42,7 +42,7 @@ const ToolName = "Skill"
 
 // modelNoticeFmt is appended to the invoke Content when the skill's
 // frontmatter requests a model override (spec-2.3 Q7: v1 never switches
-// models; visible notice instead of silent ignore, 规则 7).
+// models; visible notice instead of silent ignore, Rule 7).
 const modelNoticeFmt = "\n\nNote: this skill requests model %q; per-skill model switching lands in spec-3.11."
 
 // SkillTool maps the validated active skill set (spec-2.2

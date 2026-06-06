@@ -160,7 +160,7 @@ func skillsForChat(res skills.DiscoveryResult) (execs []diagnose.ToolExecutor, s
 		return nil, ""
 	}
 	section := skills.PromptSection(res.Active)
-	logger.InfoForceFile( // normal path — info band, not warn (post-impl 双路命中)
+	logger.InfoForceFile( // normal path — info band, not warn (dual-route post-impl finding)
 		"skills active for this session",
 		"spec", "2.3", "active", len(res.Active), "prompt_section_bytes", len(section),
 	)
@@ -168,7 +168,7 @@ func skillsForChat(res skills.DiscoveryResult) (execs []diagnose.ToolExecutor, s
 }
 
 // logSkillDiscovery surfaces discovery problems and per-skill trust
-// warnings in the debug log (规则 7 — never silent; file-only so the
+// warnings in the debug log (Rule 7 — never silent; file-only so the
 // TUI cell grid is not torn). Covers spec-2.3 R-10 (plugin-cache
 // provenance) and R-7/R-11 (oversized body) at startup — v1 discovery
 // runs once, so bodies and sources are static for the session.

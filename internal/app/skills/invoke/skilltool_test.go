@@ -207,7 +207,7 @@ func TestExecute_NoFilterWhenNoAllowedTools(t *testing.T) {
 }
 
 // TestSkillTool_Immutable — Execute never mutates the tool's internal
-// state (规则 12 / spec-2.3 R-6: process-wide registry sharing).
+// state (Rule 12 / spec-2.3 R-6: process-wide registry sharing).
 func TestSkillTool_Immutable(t *testing.T) {
 	t.Parallel()
 	active := []skills.Skill{loadGolden(t), mkSkill("alpha", "b")}

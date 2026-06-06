@@ -91,7 +91,7 @@ func TestApplyFilter_NarrowsAndRetainsSkill(t *testing.T) {
 	if len(got) != 2 || got[0].Name != "clock" || got[1].Name != skillToolName {
 		t.Errorf("applyFilter = %v; want [clock %s] (Skill implicitly retained, Q13)", got, skillToolName)
 	}
-	// Original slice untouched (规则 12).
+	// Original slice untouched (Rule 12 immutability).
 	if len(tools) != 3 {
 		t.Error("applyFilter mutated its input")
 	}

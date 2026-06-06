@@ -3,7 +3,7 @@
 // Author: sqlrush
 
 // File errors.go — SKILL.* invoke-time errcode sentinels (spec-2.3 D-6;
-// 规则 7 三件套). Both codes are FEEDBACK class: their composed templates
+// Rule 7 Code/Message/Hint triple). Both codes are FEEDBACK class: their composed templates
 // are written into ToolOutput.Content with IsError=true so the model
 // self-corrects on the next turn — they never terminate the Run.
 //

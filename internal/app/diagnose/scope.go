@@ -30,7 +30,7 @@ const skillToolName = "Skill"
 // applyFilter narrows the advertised tool set to the active scope.
 // nil filter → tools returned unchanged (same slice identity, keeping
 // the no-skill path byte-stable for prompt caching). A non-nil filter
-// returns a NEW slice (规则 12 — the shared backing array is never
+// returns a NEW slice (Rule 12 immutability — the shared backing array is never
 // mutated) holding tools whose Name is in the filter, plus "Skill".
 func applyFilter(tools []llm.ToolSchema, filter []string) []llm.ToolSchema {
 	if filter == nil {

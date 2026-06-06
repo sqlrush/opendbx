@@ -11,7 +11,7 @@ import (
 	"github.com/sqlrush/opendbx/internal/platform/errcode"
 )
 
-// TestErrorsRegistered — both invoke-side sentinels carry the 规则 7
+// TestErrorsRegistered — both invoke-side sentinels carry the Rule 7
 // three-piece contract and the SKILL. prefix (spec-2.3 D-6).
 func TestErrorsRegistered(t *testing.T) {
 	t.Parallel()
@@ -20,7 +20,7 @@ func TestErrorsRegistered(t *testing.T) {
 			t.Errorf("code %q lacks SKILL. prefix", s.Code())
 		}
 		if s.Message() == "" || s.Hint() == "" {
-			t.Errorf("%s missing message/hint (规则 7 三件套)", s.Code())
+			t.Errorf("%s missing message/hint (Rule 7 triple)", s.Code())
 		}
 	}
 }
