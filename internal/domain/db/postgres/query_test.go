@@ -19,6 +19,12 @@ import (
 )
 
 // --- narrow fakes (embed the pgx interface; only override what Query uses) ---
+//
+// pgConn.Query touches only queryTx{Query, Rollback} and queryRows{
+// FieldDescriptions, Next, Values, Err, Close}. The embedded nil pgx.Tx /
+// pgx.Rows satisfy the wide interfaces at compile time; any OTHER method
+// would nil-panic, so adding a call in Query means overriding it here
+// (post-impl go LOW-1).
 
 type fakeTx struct {
 	pgx.Tx     // embedded nil interface — satisfies the type; unused methods unreached
@@ -160,9 +166,11 @@ func TestQuery_FormatCellTypeTable(t *testing.T) {
 		t.Fatalf("seed numeric: %v", err)
 	}
 	ts := time.Date(2026, 6, 8, 12, 30, 0, 0, time.UTC)
-	row := []any{nil, "hello", []byte{0x61, 0x62}, ts, true, int64(42), num}
+	// float64(3.6e6): must render as plain decimal, NOT "3.6e+06" (go MED-2 —
+	// pgx returns bare float64 for float8 columns like checkpoint_write_time).
+	row := []any{nil, "hello", []byte{0x61, 0x62}, ts, true, int64(42), num, float64(3.6e6), int32(7)}
 	rows := &fakeRows{
-		fields: cols("nullc", "str", "bytes", "tstamp", "flag", "num64", "numeric"),
+		fields: cols("nullc", "str", "bytes", "tstamp", "flag", "num64", "numeric", "f8", "i32"),
 		data:   [][]any{row},
 	}
 	conn, _, _ := newQueryConn(rows, nil, nil)
@@ -171,7 +179,7 @@ func TestQuery_FormatCellTypeTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := res.Rows[0]
-	want := []string{"NULL", "hello", "\\x6162", "2026-06-08T12:30:00Z", "true", "42", "12345.67"}
+	want := []string{"NULL", "hello", "\\x6162", "2026-06-08T12:30:00Z", "true", "42", "12345.67", "3600000", "7"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Errorf("cell[%d] = %q; want %q", i, got[i], want[i])

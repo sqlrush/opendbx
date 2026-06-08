@@ -221,3 +221,39 @@ func TestDBQuery_SkillScopeAllows(t *testing.T) {
 		t.Errorf("db_query should run inside the db-doctor scope: %+v", trs)
 	}
 }
+
+// TestDBQuery_SkillScopeDenied — a skill whose allowed-tools does NOT list
+// db_query keeps it OUT of scope: an attempt returns SCOPE_TOOL_DENIED, not
+// an execution (spec-2.3a D-6 / spec-2.3 ToolFilter regression).
+func TestDBQuery_SkillScopeDenied(t *testing.T) {
+	t.Parallel()
+	qc := &fakeQueryConn{result: db.QueryResult{Columns: []string{"c"}, Rows: [][]string{{"x"}}}}
+	skill := skills.Skill{
+		Schema: skills.Schema{Name: "clock-only", Description: "Time only.", AllowedTools: "clock"},
+		Body:   "Use clock.",
+	}
+	st, err := invoke.NewSkillTool([]skills.Skill{skill})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := diagnose.NewRegistry(st, newDBTool(qc, nil), diagnose.ClockTool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prov := fake.NewScriptedTurns(
+		fake.Turn{Finish: llm.FinishToolUse, ToolUses: []llm.ToolUse{
+			{ID: "c1", Name: "Skill", Input: map[string]any{"skill": "clock-only"}}}},
+		fake.Turn{Finish: llm.FinishToolUse, ToolUses: []llm.ToolUse{
+			{ID: "c2", Name: "db_query", Input: map[string]any{"sql": "SELECT 1"}}}},
+		fake.Turn{Text: "denied, ok", Finish: llm.FinishStop},
+	)
+	loop, _ := diagnose.NewLoop(diagnose.Options{Provider: prov, Registry: reg, MaxTurns: 5})
+	res, err := loop.Run(context.Background(), userReq("go"), func(context.Context, diagnose.Event) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	trs := toolResults(res.Messages)
+	if len(trs) != 2 || !trs[1].IsError || !strings.Contains(trs[1].Content, "SKILL.SCOPE_TOOL_DENIED") {
+		t.Errorf("db_query outside scope must be denied: %+v", trs)
+	}
+}

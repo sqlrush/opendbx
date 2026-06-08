@@ -7,6 +7,8 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -14,6 +16,7 @@ import (
 	// postgres driver is registered by the production drivers.go side-effect
 	// import (spec-1.19 R-fix); tests rely on that, not a test-only import.
 	"github.com/sqlrush/opendbx/internal/platform/config"
+	"github.com/sqlrush/opendbx/internal/platform/logger"
 )
 
 // noComposeDriver implements db.Driver but NOT db.DSNComposer.
@@ -191,5 +194,38 @@ func TestConnUnavailableReason(t *testing.T) {
 	}
 	if !strings.Contains(amb, "default_connection") {
 		t.Errorf("ambiguous reason should hint default_connection: %q", amb)
+	}
+}
+
+// TestWarnIfInsecureSSL_FileOnly — the warning must reach the debug file
+// only, never stderr, so it cannot tear the TUI cell grid under
+// --debug-to-stderr (spec-2.3a codex MED-3). NOT parallel: mutates
+// os.Stderr + the logger global.
+func TestWarnIfInsecureSSL_FileOnly(t *testing.T) {
+	logPath := t.TempDir() + "/ssl.log"
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = oldStderr }()
+
+	if err := logger.Init(logger.InitInput{SessionID: "ssl", LogPath: logPath, DebugToStderr: true}); err != nil {
+		t.Fatalf("logger.Init: %v", err)
+	}
+	warnIfInsecureSSL(config.ConnectionConfig{Alias: "a", SSLMode: "disable"})
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close pipe: %v", err)
+	}
+	stderrRaw, _ := io.ReadAll(r)
+	if strings.Contains(string(stderrRaw), "TLS") {
+		t.Errorf("insecure-SSL warning tore the TUI via stderr: %q", stderrRaw)
+	}
+	// It must still be recorded in the debug file.
+	fileRaw, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(fileRaw), "TLS") {
+		t.Errorf("warning missing from debug file:\n%s", fileRaw)
 	}
 }

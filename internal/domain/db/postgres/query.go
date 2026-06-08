@@ -66,7 +66,12 @@ func (c *pgConn) Query(ctx context.Context, sql string, opts db.QueryOptions) (d
 	// is the zero-effect close for the persistent-write/DDL set (residual
 	// session effects are documented, spec-2.3a R-5). Rollback after a
 	// committed/closed tx is a harmless no-op in pgx.
-	defer func() { _ = tx.Rollback(ctx) }()
+	//
+	// WithoutCancel: if the query was cancelled/timed-out, rolling back with
+	// the SAME cancelled ctx makes pgx fail the ROLLBACK wire send and HARD-
+	// CLOSE (die) the pooled conn, discarding it. A detached ctx lets ROLLBACK
+	// complete so the conn returns cleanly to the pool (post-impl go MED-1).
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	rawRows, err := tx.Query(ctx, sql)
 	if err != nil {
@@ -133,9 +138,12 @@ func formatCell(v any, maxRunes int) (text string, truncated bool) {
 	return s, false
 }
 
-// renderValue is the type table. driver.Valuer covers the pgtype family
-// (pgtype.Numeric.Value() → canonical decimal string, etc.) so numerics do
-// not print as Go struct literals (the fmt.Sprint trap, cr HIGH-2).
+// renderValue is the type table (spec-2.3a D-2 pinned; cr/codex HIGH-2).
+// Explicit scalar cases keep output byte-stable and avoid fmt.Sprint traps:
+// floats must NOT print in scientific notation (pgx returns bare float64 for
+// float8 — e.g. pg_stat checkpoint_write_time would render "3.6e+06" without
+// FormatFloat 'f', post-impl go MED-2). driver.Valuer covers the pgtype
+// family (pgtype.Numeric.Value() → canonical decimal string).
 func renderValue(v any) string {
 	switch x := v.(type) {
 	case nil:
@@ -148,6 +156,20 @@ func renderValue(v any) string {
 		return x.Format(time.RFC3339Nano)
 	case bool:
 		return strconv.FormatBool(x)
+	case int:
+		return strconv.FormatInt(int64(x), 10)
+	case int16:
+		return strconv.FormatInt(int64(x), 10)
+	case int32:
+		return strconv.FormatInt(int64(x), 10)
+	case int64:
+		return strconv.FormatInt(x, 10)
+	case uint32: // pgx OID type
+		return strconv.FormatUint(uint64(x), 10)
+	case float32:
+		return strconv.FormatFloat(float64(x), 'f', -1, 32)
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64) // "3600000" not "3.6e+06"
 	case driver.Valuer:
 		dv, err := x.Value()
 		if err != nil || dv == nil {
@@ -156,8 +178,11 @@ func renderValue(v any) string {
 		if b, ok := dv.([]byte); ok {
 			return "\\x" + hex.EncodeToString(b)
 		}
+		if s, ok := dv.(string); ok { // pgtype.Numeric → decimal string
+			return s
+		}
 		return fmt.Sprintf("%v", dv)
 	default:
-		return fmt.Sprintf("%v", v) // ints / floats / unknown — stable
+		return fmt.Sprintf("%v", v) // unknown — stable best-effort
 	}
 }
