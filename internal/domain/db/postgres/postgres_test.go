@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/sqlrush/opendbx/internal/domain/db"
 )
@@ -69,11 +70,19 @@ type fakePool struct {
 	pingErr error
 	row     pgx.Row
 	closes  int
+	// spec-2.3a D-2: read-only query path.
+	tx         pgx.Tx
+	beginErr   error
+	lastTxOpts pgx.TxOptions
 }
 
 func (p *fakePool) Ping(context.Context) error                       { return p.pingErr }
 func (p *fakePool) QueryRow(context.Context, string, ...any) pgx.Row { return p.row }
 func (p *fakePool) Close()                                           { p.closes++ }
+func (p *fakePool) BeginTx(_ context.Context, o pgx.TxOptions) (pgx.Tx, error) {
+	p.lastTxOpts = o
+	return p.tx, p.beginErr
+}
 
 func TestPgConnPing(t *testing.T) {
 	ok := &pgConn{pool: &fakePool{}}
@@ -168,5 +177,20 @@ func TestPgConnCloseIdempotent(t *testing.T) {
 	}
 	if fp.closes != 1 {
 		t.Errorf("pool.Close called %d times, want 1 (idempotent)", fp.closes)
+	}
+}
+
+// TestNewPoolUsesExtendedProtocol guards the spec-2.3a arch MED-2 invariant:
+// the pool must not use simple protocol, or the multi-statement rejection
+// gate (a secondary read-only defense) breaks. We parse a representative DSN
+// and assert the pgx default exec mode is not SimpleProtocol.
+func TestNewPoolUsesExtendedProtocol(t *testing.T) {
+	t.Parallel()
+	cfg, err := pgxpool.ParseConfig("postgres://u:p@127.0.0.1:5432/db")
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.ConnConfig.DefaultQueryExecMode == pgx.QueryExecModeSimpleProtocol {
+		t.Error("pool default exec mode is SimpleProtocol — multi-statement gate broken (spec-2.3a arch MED-2)")
 	}
 }

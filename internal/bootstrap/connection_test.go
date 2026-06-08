@@ -7,6 +7,8 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -14,6 +16,7 @@ import (
 	// postgres driver is registered by the production drivers.go side-effect
 	// import (spec-1.19 R-fix); tests rely on that, not a test-only import.
 	"github.com/sqlrush/opendbx/internal/platform/config"
+	"github.com/sqlrush/opendbx/internal/platform/logger"
 )
 
 // noComposeDriver implements db.Driver but NOT db.DSNComposer.
@@ -137,5 +140,92 @@ func TestOpenConnection(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "pw") {
 		t.Errorf("OpenConnection error leaked password: %s", err.Error())
+	}
+}
+
+// --- spec-2.3a D-4: db_query registration ---
+
+// TestDBQueryExecutors_NoConnection — zero connections → not registered.
+func TestDBQueryExecutors_NoConnection(t *testing.T) {
+	t.Parallel()
+	if got := DBQueryExecutors(&config.Config{}); got != nil {
+		t.Errorf("no connection → %v; want nil (not registered)", got)
+	}
+}
+
+// TestDBQueryExecutors_Ambiguous — multiple connections, no default → not
+// registered (the differentiated-reason path; codex/cr MED-2).
+func TestDBQueryExecutors_Ambiguous(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{Connections: []config.ConnectionConfig{
+		{Alias: "a", Driver: "postgres", Host: "h", Database: "d", User: "u"},
+		{Alias: "b", Driver: "postgres", Host: "h", Database: "d", User: "u"},
+	}}
+	if got := DBQueryExecutors(cfg); got != nil {
+		t.Errorf("ambiguous → %v; want nil (not registered)", got)
+	}
+}
+
+// TestDBQueryExecutors_Registered — a selectable connection registers exactly
+// one db_query executor WITHOUT opening it (startup is DB-I/O-free).
+func TestDBQueryExecutors_Registered(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{Connections: []config.ConnectionConfig{
+		{Alias: "only", Driver: "postgres", Host: "h", Database: "d", User: "u"},
+	}}
+	got := DBQueryExecutors(cfg)
+	if len(got) != 1 || got[0].Name() != "db_query" {
+		t.Fatalf("registered = %v; want one db_query executor", got)
+	}
+}
+
+// TestConnUnavailableReason — each ActiveConnection error maps to a distinct
+// actionable reason (codex/cr MED-2).
+func TestConnUnavailableReason(t *testing.T) {
+	t.Parallel()
+	_, noneErr := ActiveConnection(&config.Config{}, "")
+	_, ambErr := ActiveConnection(&config.Config{Connections: []config.ConnectionConfig{
+		{Alias: "a"}, {Alias: "b"},
+	}}, "")
+	none := connUnavailableReason(noneErr)
+	amb := connUnavailableReason(ambErr)
+	if none == amb {
+		t.Errorf("no-connection (%q) and ambiguous (%q) reasons must differ", none, amb)
+	}
+	if !strings.Contains(amb, "default_connection") {
+		t.Errorf("ambiguous reason should hint default_connection: %q", amb)
+	}
+}
+
+// TestWarnIfInsecureSSL_FileOnly — the warning must reach the debug file
+// only, never stderr, so it cannot tear the TUI cell grid under
+// --debug-to-stderr (spec-2.3a codex MED-3). NOT parallel: mutates
+// os.Stderr + the logger global.
+func TestWarnIfInsecureSSL_FileOnly(t *testing.T) {
+	logPath := t.TempDir() + "/ssl.log"
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = oldStderr }()
+
+	if err := logger.Init(logger.InitInput{SessionID: "ssl", LogPath: logPath, DebugToStderr: true}); err != nil {
+		t.Fatalf("logger.Init: %v", err)
+	}
+	warnIfInsecureSSL(config.ConnectionConfig{Alias: "a", SSLMode: "disable"})
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close pipe: %v", err)
+	}
+	stderrRaw, _ := io.ReadAll(r)
+	if strings.Contains(string(stderrRaw), "TLS") {
+		t.Errorf("insecure-SSL warning tore the TUI via stderr: %q", stderrRaw)
+	}
+	// It must still be recorded in the debug file.
+	fileRaw, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(fileRaw), "TLS") {
+		t.Errorf("warning missing from debug file:\n%s", fileRaw)
 	}
 }

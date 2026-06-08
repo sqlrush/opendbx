@@ -81,6 +81,11 @@ func classify(err error) error {
 			return sanitized(db.ErrAuthFailed.Code(), err)
 		case "3D000": // invalid_catalog_name — target database does not exist
 			return sanitized(db.ErrConnectFailed.Code(), err)
+		case "25006": // read_only_sql_transaction — a write/DDL hit the db_query
+			// READ ONLY tx. This is the ONLY 25-class code mapped specially
+			// (spec-2.3a D-2 / cr HIGH-1): 0A000 (feature_not_supported) is
+			// NOT a read-only signal and stays QUERY_FAILED via the default.
+			return sanitized(db.ErrReadOnlyViolation.Code(), err)
 		}
 		switch pgErr.Code[:2] { // SQLSTATE class
 		case "28": // invalid_authorization_specification / invalid_password
@@ -89,7 +94,10 @@ func classify(err error) error {
 			return sanitized(db.ErrConnectFailed.Code(), err)
 		case "53", "57": // insufficient_resources / operator_intervention
 			return sanitized(db.ErrUnavailable.Code(), err)
-		default: // 42 syntax / 3D other / 23 integrity / ...
+		default: // 42 syntax / 3D other / 23 integrity / 25 (non-25006) txn-state / ...
+			// opendbx: 25-class other than 25006 (e.g. 25001 active_sql_transaction)
+			// falls through to QUERY_FAILED — a simplification; 25006 is handled by
+			// the override above (spec-2.3a ❌-11 / cr LOW-1).
 			return sanitized(db.ErrQueryFailed.Code(), err)
 		}
 	}

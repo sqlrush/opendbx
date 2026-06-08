@@ -5,10 +5,10 @@
 // File driver.go — provider-agnostic database driver interface (spec-1.18
 // D-1). The minimal common set across PG / MySQL / Oracle / openGauss
 // (§ 3.7 multi-DB matrix): connection lifecycle + liveness + a version
-// health probe. NOTHING query-shaped — query execution arrives in spec-2.1
-// as a CAPABILITY interface (QueryConn = Conn + Query...), never by adding
-// methods to Conn (that would be a Go interface break for every fake and
-// future driver).
+// health probe. NOTHING query-shaped — query execution arrived in spec-2.3a
+// (errata: the original note said spec-2.1) as a CAPABILITY interface
+// (QueryConn = Conn + Query...), never by adding methods to Conn (that would
+// be a Go interface break for every fake and future driver).
 //
 // Design: spec-1.18-pg-driver.
 
@@ -34,7 +34,7 @@ type Driver interface {
 
 // Conn is a live connection (or pool) to one database instance. FROZEN to
 // lifecycle + health for spec-1.18; query capability is added separately in
-// spec-2.1 via a composed QueryConn interface.
+// spec-2.3a via the composed QueryConn interface (query.go).
 type Conn interface {
 	// Ping verifies the connection is alive, honouring ctx.
 	Ping(ctx context.Context) error

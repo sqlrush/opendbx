@@ -19,6 +19,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -98,5 +99,95 @@ func TestIntegrationConnectRefusedNoLeak(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), distinctiveSecret) || strings.Contains(err.Error(), "password") {
 		t.Errorf("error leaked credentials: %s", err.Error())
+	}
+}
+
+// --- spec-2.3a D-6: real-PG read-only Query parked cases ---
+
+func openOrSkip(t *testing.T) (db.QueryConn, func()) {
+	t.Helper()
+	dsn := dsnOrSkip(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	conn, err := db.Open(ctx, "postgres", dsn)
+	if err != nil {
+		cancel()
+		t.Fatalf("Open: %v", err)
+	}
+	qc, ok := conn.(db.QueryConn)
+	if !ok {
+		_ = conn.Close()
+		cancel()
+		t.Fatal("postgres Conn does not implement db.QueryConn")
+	}
+	return qc, func() { _ = conn.Close(); cancel() }
+}
+
+// TestIntegrationQuerySmoke — SELECT 1 round-trips through the read-only tx.
+func TestIntegrationQuerySmoke(t *testing.T) {
+	qc, done := openOrSkip(t)
+	defer done()
+	res, err := qc.Query(context.Background(), "SELECT 1 AS one", db.QueryOptions{})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(res.Columns) != 1 || res.Columns[0] != "one" || len(res.Rows) != 1 || res.Rows[0][0] != "1" {
+		t.Errorf("unexpected result: %+v", res)
+	}
+}
+
+// TestIntegrationPgStatActivity — a real pg_stat_* diagnostic query returns
+// known columns (the scenario bundled skills will drive via db_query).
+func TestIntegrationPgStatActivity(t *testing.T) {
+	qc, done := openOrSkip(t)
+	defer done()
+	res, err := qc.Query(context.Background(),
+		"SELECT datname, state FROM pg_stat_activity LIMIT 5", db.QueryOptions{})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(res.Columns) != 2 || res.Columns[0] != "datname" || res.Columns[1] != "state" {
+		t.Errorf("columns = %v; want [datname state]", res.Columns)
+	}
+}
+
+// TestIntegrationReadOnlyViolation — a write is rejected server-side as
+// SQLSTATE 25006 → DB.READONLY_VIOLATION (spec-2.3a R-1 authoritative gate).
+func TestIntegrationReadOnlyViolation(t *testing.T) {
+	qc, done := openOrSkip(t)
+	defer done()
+	_, err := qc.Query(context.Background(),
+		"CREATE TABLE opendbx_readonly_probe (id int)", db.QueryOptions{})
+	if err == nil {
+		t.Fatal("CREATE TABLE in read-only tx returned nil error")
+	}
+	var ec interface{ Code() string }
+	if !errors.As(err, &ec) || ec.Code() != db.ErrReadOnlyViolation.Code() {
+		t.Errorf("write err = %v; want DB.READONLY_VIOLATION", err)
+	}
+}
+
+// TestIntegrationMultiStatementRejected — extended protocol rejects a
+// multi-statement string (the injection-shape second gate).
+func TestIntegrationMultiStatementRejected(t *testing.T) {
+	qc, done := openOrSkip(t)
+	defer done()
+	_, err := qc.Query(context.Background(),
+		"SELECT 1; DROP TABLE IF EXISTS opendbx_x", db.QueryOptions{})
+	if err == nil {
+		t.Fatal("multi-statement query returned nil error; extended protocol should reject")
+	}
+}
+
+// TestIntegrationNumericRendering — a NUMERIC column renders as decimal text
+// (the formatCell type-table contract against a real value, not a struct).
+func TestIntegrationNumericRendering(t *testing.T) {
+	qc, done := openOrSkip(t)
+	defer done()
+	res, err := qc.Query(context.Background(), "SELECT 12345.67::numeric AS n", db.QueryOptions{})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if res.Rows[0][0] != "12345.67" {
+		t.Errorf("numeric rendered as %q; want 12345.67", res.Rows[0][0])
 	}
 }

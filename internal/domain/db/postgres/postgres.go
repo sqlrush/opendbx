@@ -31,6 +31,15 @@ var _ db.Driver = Driver{}
 // Open's success path is unit-testable without a real PostgreSQL (spec-1.18
 // R-fix; post-impl go-reviewer MED-1).
 //
+// INVARIANT (spec-2.3a arch MED-2): the pool must NOT be configured with
+// pgx.QueryExecModeSimpleProtocol. db_query's read-only safety leans on the
+// extended protocol rejecting multi-statement input as a secondary gate
+// (the READ ONLY tx is the authoritative gate); simple protocol would batch
+// `SELECT 1; DROP ...` in one round trip. pgxpool.New uses the pgx default
+// (cache_statement, an extended-protocol mode), so this holds as long as no
+// DefaultQueryExecMode override is introduced — guarded by
+// TestNewPoolUsesExtendedProtocol.
+//
 //nolint:gochecknoglobals // spec-1.18 R-fix: test seam, mirrors the database/sql driver-constructor pattern.
 var newPool = func(ctx context.Context, dsn string) (pgxPool, error) {
 	return pgxpool.New(ctx, dsn)

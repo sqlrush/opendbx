@@ -140,10 +140,16 @@ func newChatModel() program.Model {
 	// log + skip; interact always starts (user decision 4/4 — no panic).
 	// Skipped on the provider-error path: the session cannot chat, so the
 	// filesystem scan would be wasted I/O (post-impl cr LOW-1).
-	var skillExecs []diagnose.ToolExecutor
+	var execs []diagnose.ToolExecutor
 	var skillPrompt string
 	if perr == nil {
+		var skillExecs []diagnose.ToolExecutor
 		skillExecs, skillPrompt = skillsForChat(DiscoverSkills(cfg))
+		execs = append(execs, skillExecs...)
+		// spec-2.3a D-4: register db_query when a connection can be selected
+		// (without opening it — lazy; startup stays DB-I/O-free). No usable
+		// connection → not registered + a differentiated debug log.
+		execs = append(execs, DBQueryExecutors(cfg)...)
 	}
 	opts := llmapp.Options{
 		ModelName:      cfg.LLM.ActiveModel,
@@ -151,7 +157,7 @@ func newChatModel() program.Model {
 		StripThink:     cfg.LLM.StripThink,
 		ThinkingMode:   thinkingModeFromConfig(cfg.LLM.ThinkingMode),
 		ThinkingBudget: cfg.LLM.ThinkingBudget,
-		Registry:       diagnoseRegistryWith(skillExecs...),
+		Registry:       diagnoseRegistryWith(execs...),
 		SystemPrompt:   skillPrompt,
 		// spec-1.21 D-6 user-config knobs reach the runtime here.
 		// Per-turn LLM timeout reuses LLMConfig.RequestTimeout per spec
