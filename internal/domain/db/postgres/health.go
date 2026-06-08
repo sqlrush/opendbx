@@ -24,10 +24,12 @@ import (
 )
 
 // pgxPool is the subset of *pgxpool.Pool that pgConn uses. Kept minimal so a
-// fake can stand in for unit tests.
+// fake can stand in for unit tests. spec-2.3a D-2 adds BeginTx for the
+// read-only query path; *pgxpool.Pool satisfies it unchanged.
 type pgxPool interface {
 	Ping(ctx context.Context) error
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
 	Close()
 }
 

@@ -139,3 +139,57 @@ func TestOpenConnection(t *testing.T) {
 		t.Errorf("OpenConnection error leaked password: %s", err.Error())
 	}
 }
+
+// --- spec-2.3a D-4: db_query registration ---
+
+// TestDBQueryExecutors_NoConnection — zero connections → not registered.
+func TestDBQueryExecutors_NoConnection(t *testing.T) {
+	t.Parallel()
+	if got := DBQueryExecutors(&config.Config{}); got != nil {
+		t.Errorf("no connection → %v; want nil (not registered)", got)
+	}
+}
+
+// TestDBQueryExecutors_Ambiguous — multiple connections, no default → not
+// registered (the differentiated-reason path; codex/cr MED-2).
+func TestDBQueryExecutors_Ambiguous(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{Connections: []config.ConnectionConfig{
+		{Alias: "a", Driver: "postgres", Host: "h", Database: "d", User: "u"},
+		{Alias: "b", Driver: "postgres", Host: "h", Database: "d", User: "u"},
+	}}
+	if got := DBQueryExecutors(cfg); got != nil {
+		t.Errorf("ambiguous → %v; want nil (not registered)", got)
+	}
+}
+
+// TestDBQueryExecutors_Registered — a selectable connection registers exactly
+// one db_query executor WITHOUT opening it (startup is DB-I/O-free).
+func TestDBQueryExecutors_Registered(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{Connections: []config.ConnectionConfig{
+		{Alias: "only", Driver: "postgres", Host: "h", Database: "d", User: "u"},
+	}}
+	got := DBQueryExecutors(cfg)
+	if len(got) != 1 || got[0].Name() != "db_query" {
+		t.Fatalf("registered = %v; want one db_query executor", got)
+	}
+}
+
+// TestConnUnavailableReason — each ActiveConnection error maps to a distinct
+// actionable reason (codex/cr MED-2).
+func TestConnUnavailableReason(t *testing.T) {
+	t.Parallel()
+	_, noneErr := ActiveConnection(&config.Config{}, "")
+	_, ambErr := ActiveConnection(&config.Config{Connections: []config.ConnectionConfig{
+		{Alias: "a"}, {Alias: "b"},
+	}}, "")
+	none := connUnavailableReason(noneErr)
+	amb := connUnavailableReason(ambErr)
+	if none == amb {
+		t.Errorf("no-connection (%q) and ambiguous (%q) reasons must differ", none, amb)
+	}
+	if !strings.Contains(amb, "default_connection") {
+		t.Errorf("ambiguous reason should hint default_connection: %q", amb)
+	}
+}

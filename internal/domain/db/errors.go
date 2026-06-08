@@ -67,4 +67,16 @@ var (
 		"未注册的数据库 driver",
 		"检查 driver 名是否受支持 (当前: postgres); 确认对应 driver 包已 import",
 	)
+	// ErrReadOnlyViolation — a write / DDL statement was attempted inside the
+	// server-side READ ONLY transaction the query tool runs every statement
+	// in (SQLSTATE 25006 read_only_sql_transaction). This is the db_query
+	// behavior contract surfaced to the model: it must distinguish "SQL is
+	// wrong" (ErrQueryFailed) from "this tool refuses writes" so it can
+	// self-correct toward a read-only statement (spec-2.3a D-5; 中文 per
+	// the existing DB.* convention, spec-2.3a Q11).
+	ErrReadOnlyViolation = errcode.Register(
+		"DB.READONLY_VIOLATION",
+		"语句被拒绝: 只读会话",
+		"db_query 仅执行只读语句; 写操作 (INSERT/UPDATE/DDL) 被服务端拒绝 (SQLSTATE 25006)",
+	)
 )

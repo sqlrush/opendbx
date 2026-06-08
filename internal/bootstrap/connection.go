@@ -18,7 +18,10 @@ package bootstrap
 
 import (
 	"context"
+	"errors"
 
+	"github.com/sqlrush/opendbx/internal/app/diagnose"
+	"github.com/sqlrush/opendbx/internal/app/tools/dbquery"
 	"github.com/sqlrush/opendbx/internal/domain/db"
 	"github.com/sqlrush/opendbx/internal/platform/config"
 	"github.com/sqlrush/opendbx/internal/platform/errcode"
@@ -90,7 +93,11 @@ func warnIfInsecureSSL(conn config.ConnectionConfig) {
 	}
 	switch mode {
 	case "disable", "allow", "prefer":
-		logger.L().Warn("数据库连接未强制 TLS，凭据与查询可能明文传输",
+		// file-only: spec-2.3a moved OpenConnection to a lazy tool-execution
+		// path; a normal logger.Warn would tear the TUI cell grid under
+		// --debug-to-stderr (codex MED-3). WarnForceFile is file-only and
+		// never touches stderr (mirrors the spec-2.3 InfoForceFile precedent).
+		logger.WarnForceFile("数据库连接未强制 TLS，凭据与查询可能明文传输",
 			logger.Attr{Key: "alias", Value: conn.Alias},
 			logger.Attr{Key: "sslmode", Value: mode},
 			logger.Attr{Key: "hint", Value: "生产环境请设 sslmode=require 或更高"},
@@ -114,4 +121,40 @@ func OpenConnection(ctx context.Context, cfg *config.Config, cliAlias string) (d
 	warnIfInsecureSSL(conn)
 	// errcode-lint:exempt -- spec-1.18 D-4: db.Open returns a sanitized db.* errcode (or nil); this is the single sanctioned secret.Expose() call site (spec-1.19 D-8).
 	return db.Open(ctx, conn.Driver, secret.Expose())
+}
+
+// DBQueryExecutors returns the db_query tool executor when a connection can
+// be selected from config (spec-2.3a D-4). It does NOT open the connection —
+// selection only — so startup stays DB-I/O-free (the tool opens lazily on
+// first Execute, spec-2.3a Q4). When no connection is usable it registers
+// nothing and logs a differentiated reason (distinguishing "none configured"
+// from "ambiguous — set default_connection"; codex/cr MED).
+func DBQueryExecutors(cfg *config.Config) []diagnose.ToolExecutor {
+	if _, err := ActiveConnection(cfg, ""); err != nil {
+		logger.InfoForceFile("db_query tool not registered",
+			"spec", "2.3a", "reason", connUnavailableReason(err))
+		return nil
+	}
+	openFn := func(ctx context.Context) (db.Conn, error) {
+		return OpenConnection(ctx, cfg, "")
+	}
+	return []diagnose.ToolExecutor{dbquery.New(openFn)}
+}
+
+// connUnavailableReason maps an ActiveConnection error to an actionable
+// debug-log reason (spec-2.3a D-4 / cr MED-2: ambiguous must not look like
+// "no connection").
+func connUnavailableReason(err error) string {
+	var ec errcode.Error
+	if errors.As(err, &ec) {
+		switch ec.Code() {
+		case ErrNoConnection.Code():
+			return "no database connection configured"
+		case ErrAmbiguous.Code():
+			return "multiple connections but no default_connection set; set default_connection or pass --connection-alias"
+		case ErrUnknownAlias.Code():
+			return "configured connection alias not found"
+		}
+	}
+	return "connection selection failed"
 }

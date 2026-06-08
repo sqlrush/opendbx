@@ -28,6 +28,7 @@ import (
 	// so the registry is populated before we read it.
 	_ "github.com/sqlrush/opendbx/internal/app/skills"        // spec-2.1 D-6: SKILL.* codes
 	_ "github.com/sqlrush/opendbx/internal/app/skills/invoke" // spec-2.3 D-6: SKILL.* invoke codes
+	_ "github.com/sqlrush/opendbx/internal/app/tools/dbquery" // spec-2.3a D-5: DB.QUERY_INPUT_INVALID
 	_ "github.com/sqlrush/opendbx/internal/entrypoints"
 	"github.com/sqlrush/opendbx/internal/platform/errcode"
 	_ "github.com/sqlrush/opendbx/internal/platform/logger"

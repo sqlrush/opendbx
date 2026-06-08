@@ -69,11 +69,19 @@ type fakePool struct {
 	pingErr error
 	row     pgx.Row
 	closes  int
+	// spec-2.3a D-2: read-only query path.
+	tx         pgx.Tx
+	beginErr   error
+	lastTxOpts pgx.TxOptions
 }
 
 func (p *fakePool) Ping(context.Context) error                       { return p.pingErr }
 func (p *fakePool) QueryRow(context.Context, string, ...any) pgx.Row { return p.row }
 func (p *fakePool) Close()                                           { p.closes++ }
+func (p *fakePool) BeginTx(_ context.Context, o pgx.TxOptions) (pgx.Tx, error) {
+	p.lastTxOpts = o
+	return p.tx, p.beginErr
+}
 
 func TestPgConnPing(t *testing.T) {
 	ok := &pgConn{pool: &fakePool{}}
